@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Required for explicit package/signature verification before optional cross-APK bridge calls. -->
+    <queries>
+        <package android:name="com.moyu.remote" />
+        <provider android:authorities="com.moyu.remote.chatbridge" />
+    </queries>
+
+    <application
+        android:name=".MoyuChatApplication"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false"
+        android:label="Moyu Chat"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

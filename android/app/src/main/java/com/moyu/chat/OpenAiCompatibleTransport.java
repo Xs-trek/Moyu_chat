@@ -1,0 +1,143 @@
+package com.moyu.chat;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.Call;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+
+/** Protocol transport for OpenAI-compatible Chat Completions and Responses APIs. */
+final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
+    static final String CHAT_COMPLETIONS = "openai-chat-completions";
+    static final String RESPONSES = "openai-responses";
+    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+    private final OkHttpClient http = new OkHttpClient.Builder()
+            .retryOnConnectionFailure(false)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.SECONDS)
+            .build();
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+
+    @Override public Turn stream(ChatDatabase.Provider provider, String apiKey, String model, CanonicalPrompt prompt, Sink sink) {
+        TerminalSink guarded = new TerminalSink(sink);
+        if (provider == null || apiKey == null || apiKey.isEmpty()) { guarded.onError("provider_not_configured", "Provider 或 API Key 未配置", false); return () -> {}; }
+        String protocol = provider.protocol;
+        if (!(CHAT_COMPLETIONS.equals(protocol) || RESPONSES.equals(protocol))) { guarded.onError("unsupported_protocol", "当前 Provider 协议不受支持", false); return () -> {}; }
+        try {
+            String base = ProviderEndpoint.normalize(provider.baseUrl);
+            String path = CHAT_COMPLETIONS.equals(protocol) ? "/chat/completions" : "/responses";
+            JSONObject body = CHAT_COMPLETIONS.equals(protocol) ? chatBody(model, prompt) : responsesBody(model, prompt, provider.maxOutputTokens);
+            Request request = new Request.Builder().url(base + path)
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Accept", "text/event-stream")
+                    .post(RequestBody.create(JSON, body.toString())).build();
+            Call call = http.newCall(request);
+            executor.execute(() -> run(call, protocol, guarded));
+            return call::cancel;
+        } catch (Exception error) { guarded.onError("bad_provider_config", safe(error), false); return () -> {}; }
+    }
+
+    private void run(Call call, String protocol, ChatTransport.Sink sink) {
+        try (Response response = call.execute()) {
+            if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return; }
+            if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream(), StandardCharsets.UTF_8))) {
+                for (String line; (line = reader.readLine()) != null;) {
+                    if (!line.startsWith("data:")) continue;
+                    String data = line.substring(5).trim();
+                    if (data.isEmpty()) continue;
+                    if ("[DONE]".equals(data)) { sink.onCompleted(); return; }
+                    JSONObject event;
+                    try { event = new JSONObject(data); } catch (Exception ignored) { continue; }
+                    if (CHAT_COMPLETIONS.equals(protocol)) parseChat(event, sink); else parseResponses(event, sink);
+                }
+            }
+            sink.onCompleted();
+        } catch (IOException error) {
+            if (call.isCanceled()) sink.onError("cancelled", "已中断", false);
+            else sink.onError("network_error", safe(error), true);
+        }
+    }
+
+    /** Keep Chat Completions request fields intentionally minimal for broad third-party compatibility. */
+    private static JSONObject chatBody(String model, CanonicalPrompt prompt) throws Exception {
+        JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", prompt.instructions));
+        for (int i = 0; i < prompt.messages.length(); i++) {
+            JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
+            String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
+            messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+        }
+        return new JSONObject().put("model", model).put("messages", messages).put("stream", true);
+    }
+
+    private static JSONObject responsesBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
+        JSONArray input = new JSONArray();
+        for (int i = 0; i < prompt.messages.length(); i++) {
+            JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
+            String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
+            input.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+        }
+        JSONObject body = new JSONObject().put("model", model).put("instructions", prompt.instructions).put("input", input).put("stream", true);
+        if (maxOutputTokens > 0) body.put("max_output_tokens", maxOutputTokens);
+        return body;
+    }
+
+    private static void parseChat(JSONObject event, ChatTransport.Sink sink) {
+        JSONObject error = event.optJSONObject("error");
+        if (error != null) { sink.onError(error.optString("code", "provider_error"), error.optString("message", "Provider error"), false); return; }
+        JSONArray choices = event.optJSONArray("choices");
+        if (choices != null && choices.length() > 0) {
+            JSONObject first = choices.optJSONObject(0); JSONObject delta = first == null ? null : first.optJSONObject("delta");
+            String text = delta == null ? "" : delta.optString("content", ""); if (!text.isEmpty()) sink.onTextDelta(text);
+        }
+        JSONObject usage = event.optJSONObject("usage");
+        if (usage != null) sink.onUsage(usage.has("prompt_tokens") ? usage.optInt("prompt_tokens") : null, usage.has("completion_tokens") ? usage.optInt("completion_tokens") : null);
+    }
+
+    private static void parseResponses(JSONObject event, ChatTransport.Sink sink) {
+        String type = event.optString("type");
+        if ("response.output_text.delta".equals(type)) {
+            String delta = event.optString("delta", ""); if (!delta.isEmpty()) sink.onTextDelta(delta); return;
+        }
+        if ("response.completed".equals(type)) {
+            JSONObject response = event.optJSONObject("response"); emitResponseUsage(response, sink); sink.onCompleted(); return;
+        }
+        if ("response.incomplete".equals(type)) {
+            JSONObject response = event.optJSONObject("response"); emitResponseUsage(response, sink);
+            JSONObject details = response == null ? null : response.optJSONObject("incomplete_details");
+            String reason = details == null ? "unknown" : details.optString("reason", "unknown");
+            sink.onError("response_incomplete", "Response incomplete: " + reason, false); return;
+        }
+        if ("response.failed".equals(type)) {
+            JSONObject response = event.optJSONObject("response"); JSONObject error = response == null ? null : response.optJSONObject("error");
+            sink.onError(error == null ? "response_failed" : error.optString("code", "response_failed"), error == null ? "Response failed" : error.optString("message", "Response failed"), true); return;
+        }
+        if ("error".equals(type)) {
+            JSONObject nested = event.optJSONObject("error");
+            String code = nested == null ? event.optString("code", "provider_error") : nested.optString("code", nested.optString("type", "provider_error"));
+            String message = nested == null ? event.optString("message", "Provider error") : nested.optString("message", "Provider error");
+            sink.onError(code, message, false);
+        }
+    }
+
+    private static void emitResponseUsage(JSONObject response, ChatTransport.Sink sink) {
+        JSONObject usage = response == null ? null : response.optJSONObject("usage");
+        if (usage != null) sink.onUsage(usage.has("input_tokens") ? usage.optInt("input_tokens") : null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null);
+    }
+
+    private static String safe(Exception error) { String message = error.getMessage(); return message == null || message.isEmpty() ? error.getClass().getSimpleName() : message; }
+    @Override public void close() { executor.shutdownNow(); }
+}
