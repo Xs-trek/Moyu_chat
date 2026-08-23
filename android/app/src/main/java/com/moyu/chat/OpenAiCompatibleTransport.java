@@ -31,7 +31,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             .build();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
 
-    @Override public Turn stream(ChatDatabase.Provider provider, String apiKey, String model, CanonicalPrompt prompt, Sink sink) {
+    @Override public Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort, CanonicalPrompt prompt, Sink sink) {
         TerminalSink guarded = new TerminalSink(sink);
         if (provider == null || apiKey == null || apiKey.isEmpty()) { guarded.onError("provider_not_configured", "Provider 或 API Key 未配置", false); return () -> {}; }
         String protocol = provider.protocol;
