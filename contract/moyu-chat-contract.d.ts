@@ -22,6 +22,7 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.interrupt', { localSessionId: string }>
   | UiIntent<'chat.session.delete', { localSessionId: string }>
   | UiIntent<'provider.configure.open', { providerId?: string }>
+  | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
   | UiIntent<'branch.sources.refresh', Record<string, never>>
   | UiIntent<'branch.create.remote', { sourceId: string; throughSeq?: number }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
