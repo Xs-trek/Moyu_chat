@@ -28,10 +28,16 @@ final class ContextBudgetManager {
     }
 
     Result select(String instructions, JSONArray chronological, int contextTokens, int outputTokens) {
+        return select(instructions, chronological, contextTokens, 0, outputTokens);
+    }
+
+    Result select(String instructions, JSONArray chronological, int contextTokens, int inputTokens, int outputTokens) {
         int total = contextTokens > 0 ? contextTokens : DEFAULT_CONTEXT_TOKENS;
         int output = outputTokens > 0 ? outputTokens : DEFAULT_OUTPUT_TOKENS;
         int safety = Math.min(MAX_SAFETY_TOKENS, Math.max(256, total / 16));
-        int budget = total - output - safety;
+        int totalInput = total - output;
+        int declaredInput = inputTokens > 0 ? inputTokens : totalInput;
+        int budget = Math.min(totalInput, declaredInput) - safety;
         if (budget < MIN_INPUT_BUDGET) throw new IllegalArgumentException("context/output budget leaves no usable input window");
 
         int used = estimate(instructions) + MESSAGE_OVERHEAD_TOKENS;
