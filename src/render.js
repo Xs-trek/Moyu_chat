@@ -71,7 +71,7 @@ function providers(view) {
       h('section', { class: 'stack' }, (provider.models || []).map((model) => h('div', { class: 'card' },
         h('div', { class: 'row' }, h('strong', { text: model.displayName || model.modelId }), h('code', { text: model.modelId }), h('span', { class: 'grow' }), badge(model.defaultReasoning || 'default')),
         h('small', { class: 'muted', text: `context ${model.contextTokens} · input ${model.inputTokens || 'auto'} · output ${model.maxOutputTokens}${model.reasoningLevels ? ` · reasoning ${model.reasoningLevels}` : ''}` }),
-        h('div', { class: 'row' }, button('Chat', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn primary small'), button('编辑模型', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small'))
+        h('div', { class: 'row' }, reasoningControl(model), h('span', { class: 'grow' }), button('Chat', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn primary small'), button('编辑模型', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small'))
       )))
     ))));
 }
