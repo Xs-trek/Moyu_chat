@@ -49,7 +49,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     @Override public void onCreate(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,model TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,max_output_tokens INTEGER NOT NULL DEFAULT 4096,updated_at TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,auth_mode TEXT NOT NULL DEFAULT 'bearer',model TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,max_output_tokens INTEGER NOT NULL DEFAULT 4096,updated_at TEXT NOT NULL)");
         db.execSQL("CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,provider_id TEXT NOT NULL,model TEXT NOT NULL,state TEXT NOT NULL,updated_at TEXT NOT NULL,draft TEXT NOT NULL DEFAULT '',origin_snapshot_id TEXT,parent_session_id TEXT,preview TEXT)");
         db.execSQL("CREATE TABLE timeline(item_key TEXT PRIMARY KEY,session_id TEXT NOT NULL,local_seq INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(session_id) REFERENCES sessions(local_id) ON DELETE CASCADE,UNIQUE(session_id,local_seq))");
         db.execSQL("CREATE INDEX timeline_session_seq ON timeline(session_id,local_seq)");
