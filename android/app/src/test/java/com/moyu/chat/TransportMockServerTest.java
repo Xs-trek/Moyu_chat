@@ -56,7 +56,9 @@ public class TransportMockServerTest {
     private ChatDatabase.Provider provider(String protocol) {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
         p.id = "test"; p.displayName = "test"; p.protocol = protocol;
-        p.baseUrl = server.url("/v1").toString(); p.model = "test-model";
+        p.authMode = ProviderAuth.defaultForProtocol(protocol);
+        p.baseUrl = AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? server.url("/").toString() : server.url("/v1").toString();
+        p.model = "test-model";
         p.contextTokens = 32_000; p.maxOutputTokens = 1_024;
         return p;
     }
