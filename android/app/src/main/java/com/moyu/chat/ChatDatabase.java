@@ -305,5 +305,5 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     private static Session readSession(Cursor c) { Session s = new Session(); s.id = c.getString(0); s.title = c.getString(1); s.providerId = c.getString(2); s.model = c.getString(3); s.state = c.getString(4); s.updatedAt = c.getString(5); s.draft = c.getString(6); s.originSnapshotId = c.isNull(7) ? null : c.getString(7); s.parentSessionId = c.isNull(8) ? null : c.getString(8); s.preview = c.isNull(9) ? null : c.getString(9); return s; }
-    private static Provider readProvider(Cursor c) { Provider p = new Provider(); p.id = c.getString(0); p.displayName = c.getString(1); p.protocol = c.getString(2); p.baseUrl = c.getString(3); p.model = c.getString(4); p.contextTokens = c.getInt(5); p.maxOutputTokens = c.getInt(6); return p; }
+    private static Provider readProvider(Cursor c) { Provider p = new Provider(); p.id = c.getString(0); p.displayName = c.getString(1); p.protocol = c.getString(2); p.baseUrl = c.getString(3); p.authMode = c.getString(4); p.model = c.getString(5); p.contextTokens = c.getInt(6); p.maxOutputTokens = c.getInt(7); return p; }
 }
