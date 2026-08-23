@@ -15,11 +15,14 @@ document.addEventListener('click', (event) => {
   else if (action === 'open-session') postIntent('chat.session.open', { localSessionId: target.dataset.sessionId });
   else if (action === 'new-chat') {
     const view = window.__moyuChatView;
-    const provider = view?.providers?.find((item) => item.configured) || view?.providers?.[0];
-    if (!provider) return setNotice({ level: 'warning', text: '请先配置 Provider' });
-    postIntent('chat.session.create', { providerId: provider.providerId, model: provider.model });
+    const provider = view?.providers?.find((item) => item.configured) || view?.providers?.find((item) => item.models?.length);
+    const model = provider?.models?.[0];
+    if (!provider || !model) return setNotice({ level: 'warning', text: '请先配置 Provider 和 Model' });
+    postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId });
   }
+  else if (action === 'new-chat-model') postIntent('chat.session.create', { providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId });
   else if (action === 'configure-provider') postIntent('provider.configure.open', target.dataset.providerId ? { providerId: target.dataset.providerId } : {});
+  else if (action === 'configure-model') postIntent('model.configure.open', { providerId: target.dataset.providerId, ...(target.dataset.modelProfileId ? { modelProfileId: target.dataset.modelProfileId } : {}) });
   else if (action === 'refresh-sources') postIntent('branch.sources.refresh', {});
   else if (action === 'branch-remote') postIntent('branch.create.remote', { sourceId: target.dataset.sourceId });
   else if (action === 'branch-local') postIntent('branch.create.local', { localSessionId: target.dataset.sessionId });
