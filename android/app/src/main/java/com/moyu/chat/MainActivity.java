@@ -75,7 +75,8 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             ChatDatabase.Provider p = existing == null ? new ChatDatabase.Provider() : existing;
             LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(28, 18, 28, 18);
             EditText name = field(form, "显示名称", p.displayName == null ? "AI Provider" : p.displayName, false, false);
-            EditText protocol = field(form, "协议: openai-responses / openai-chat-completions / anthropic-messages", p.protocol == null ? OpenAiCompatibleTransport.RESPONSES : p.protocol, false, false);
+            EditText protocol = field(form, "协议: openai-chat-completions / openai-responses / anthropic-messages", p.protocol == null ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : p.protocol, false, false);
+            EditText auth = field(form, "Auth: bearer / x-api-key / api-key", p.authMode == null ? ProviderAuth.BEARER : p.authMode, false, false);
             EditText base = field(form, "Base URL（留空按协议默认；如 https://api.openai.com/v1）", p.baseUrl == null ? suggestedBaseUrl(p.protocol) : p.baseUrl, false, false);
             EditText model = field(form, "Model", p.model == null ? "" : p.model, false, false);
             EditText context = field(form, "Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
