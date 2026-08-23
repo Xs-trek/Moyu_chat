@@ -111,6 +111,13 @@ final class ChatCoordinator implements AutoCloseable {
                     host.openProviderEditor(providerId.trim().isEmpty() ? null : db.getProvider(providerId));
                     break;
                 }
+                case "model.configure.open": {
+                    String providerId = required(p, "providerId"); ChatDatabase.Provider provider = db.getProvider(providerId);
+                    if (provider == null) throw new IllegalArgumentException("provider not found");
+                    String profileId = p.optString("modelProfileId", "");
+                    host.openModelEditor(provider, profileId.trim().isEmpty() ? null : db.getModelProfile(profileId));
+                    break;
+                }
                 case "branch.sources.refresh": refreshSources(); break;
                 case "branch.create.remote": createRemoteBranch(required(p, "sourceId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
