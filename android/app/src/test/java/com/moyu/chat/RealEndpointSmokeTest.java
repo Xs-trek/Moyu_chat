@@ -46,9 +46,10 @@ public class RealEndpointSmokeTest {
         return new CanonicalPrompt("You are a smoke test.", messages, false, 10, 0, 1);
     }
 
-    private static ChatDatabase.Provider provider(String protocol, String baseUrl, String model) {
+    private static ChatDatabase.Provider provider(String protocol, String baseUrl, String model, String authMode) {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
         p.id = "smoke"; p.displayName = "smoke"; p.protocol = protocol;
+        p.authMode = ProviderAuth.normalize(authMode, protocol);
         p.baseUrl = baseUrl; p.model = model;
         p.contextTokens = 32_000; p.maxOutputTokens = 512;
         return p;
