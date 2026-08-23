@@ -57,13 +57,31 @@ final class ChatCoordinator implements AutoCloseable {
                 provider.protocol = bounded(provider.protocol, 64, "protocol");
                 if (!transports.supports(provider.protocol)) throw new IllegalArgumentException("unsupported protocol");
                 provider.authMode = ProviderAuth.normalize(provider.authMode, provider.protocol);
+                provider.reasoningWire = ReasoningPolicy.normalizeWire(provider.reasoningWire, provider.protocol);
                 provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
                 provider.model = bounded(provider.model, 256, "model");
                 if (provider.contextTokens < 2048 || provider.contextTokens > 4_000_000) throw new IllegalArgumentException("context tokens out of range");
+                if (provider.inputTokens < 0 || provider.inputTokens > provider.contextTokens) throw new IllegalArgumentException("input tokens out of range");
                 if (provider.maxOutputTokens < 256 || provider.maxOutputTokens >= provider.contextTokens) throw new IllegalArgumentException("max output tokens out of range");
                 db.saveProvider(provider);
                 if (apiKey != null && !apiKey.trim().isEmpty()) secrets.put(provider.id, apiKey.trim());
                 emitView();
+            } catch (Exception error) { host.showMessage(safe(error)); }
+        });
+    }
+
+    void saveModelProfile(ChatDatabase.ModelProfile profile) {
+        worker.execute(() -> {
+            try {
+                if (profile == null || db.getProvider(profile.providerId) == null) throw new IllegalArgumentException("provider not found");
+                profile.id = bounded(profile.id, 160, "model profile id");
+                profile.providerId = bounded(profile.providerId, 128, "provider id");
+                profile.modelId = bounded(profile.modelId, 256, "model id");
+                profile.displayName = bounded(profile.displayName == null || profile.displayName.trim().isEmpty() ? profile.modelId : profile.displayName, 128, "model display name");
+                profile.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
+                profile.defaultReasoning = ReasoningPolicy.normalizeEffort(profile.defaultReasoning);
+                if (!ReasoningPolicy.allows(profile.reasoningLevels, profile.defaultReasoning)) throw new IllegalArgumentException("default reasoning not supported by model profile");
+                db.saveModelProfile(profile); emitView();
             } catch (Exception error) { host.showMessage(safe(error)); }
         });
     }
