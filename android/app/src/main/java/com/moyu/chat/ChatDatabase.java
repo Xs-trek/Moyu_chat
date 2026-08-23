@@ -24,7 +24,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     public static final class Provider {
-        public String id, displayName, protocol, baseUrl, model;
+        public String id, displayName, baseUrl, model;
+        public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
+        public String authMode = ProviderAuth.BEARER;
         public int contextTokens = ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
         public int maxOutputTokens = ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
     }
