@@ -132,6 +132,36 @@ public class ChatDatabaseTest {
         assertEquals(1, upgraded.snapshotItems("legacy-snap").length());
     }
 
+    @Test public void upgradeFromV4CreatesDeploymentScopedModelProfileAndSessionSnapshot() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(4);
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+        ChatDatabase.Provider provider = upgraded.getProvider("legacy-p");
+        assertEquals(ReasoningPolicy.WIRE_OPENAI_RESPONSES, provider.reasoningWire);
+        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
+        assertNotNull(profile); assertEquals(ContextBudgetManager.DEFAULT_CONTEXT_TOKENS, profile.contextTokens);
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        assertEquals(profile.id, session.modelProfileId); assertEquals(profile.contextTokens, session.contextTokens);
+        assertEquals(profile.maxOutputTokens, session.maxOutputTokens); assertEquals(ReasoningPolicy.DEFAULT, session.reasoningEffort);
+    }
+
+    @Test public void oneProviderCanOwnMultipleModelsAndSessionSnapshotsCapabilities() {
+        ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; db.saveProvider(provider);
+        ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
+        second.id = "profile-b"; second.providerId = provider.id; second.modelId = "model-b"; second.displayName = "Model B";
+        second.contextTokens = 128_000; second.inputTokens = 96_000; second.maxOutputTokens = 8_192;
+        second.reasoningLevels = "low,high,xhigh"; second.defaultReasoning = "high"; db.saveModelProfile(second);
+        assertEquals(2, db.listModelProfiles(provider.id).size());
+
+        ChatDatabase.Session session = db.createSession(second, null, null, null, "xhigh");
+        assertEquals("model-b", session.model); assertEquals(128_000, session.contextTokens); assertEquals(96_000, session.inputTokens);
+        assertEquals(8_192, session.maxOutputTokens); assertEquals("xhigh", session.reasoningEffort);
+
+        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; db.saveModelProfile(second);
+        ChatDatabase.Session reloaded = db.getSession(session.id);
+        assertEquals("session keeps resolved model limits after profile edits", 128_000, reloaded.contextTokens);
+        assertEquals(96_000, reloaded.inputTokens); assertEquals("xhigh", reloaded.reasoningEffort);
+    }
+
     /** Rebuilds the v1 schema (pre token budgets / parent ids / snapshot provenance) with seed rows. */
     private void createLegacyDatabase(int version) throws Exception {
         android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
