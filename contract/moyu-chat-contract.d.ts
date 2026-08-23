@@ -29,16 +29,27 @@ export type MoyuChatIntent =
   | UiIntent<'handoff.create', { localSessionId: string }>
   | UiIntent<'handoff.submit', { handoffId: string }>;
 
+export interface ModelProfileView {
+  modelProfileId: string;
+  modelId: string;
+  displayName: string;
+  contextTokens: number;
+  inputTokens: number;
+  maxOutputTokens: number;
+  reasoningLevels: string;
+  defaultReasoning: string;
+}
+
 export interface ProviderView {
   providerId: string;
   displayName: string;
   protocol: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | string;
   authMode: 'bearer' | 'x-api-key' | 'api-key' | string;
+  reasoningWire: 'none' | 'openai-responses' | 'openai-chat-effort' | 'anthropic-effort' | string;
   model: string;
+  models: ModelProfileView[];
   hasCredential: boolean;
   configured: boolean;
-  contextTokens: number;
-  maxOutputTokens: number;
 }
 
 export interface OriginView {
