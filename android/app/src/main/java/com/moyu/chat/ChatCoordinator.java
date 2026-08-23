@@ -252,7 +252,19 @@ final class ChatCoordinator implements AutoCloseable {
         if (closed || !uiReady) return;
         try {
             JSONObject view = new JSONObject().put("route", route).put("now", Instant.now().toString()).put("appearance", new JSONObject().put("theme", theme).put("resolvedTheme", "dark".equals(theme) ? "dark" : "light"));
-            JSONArray providers = new JSONArray(); for (ChatDatabase.Provider p : db.listProviders()) providers.put(new JSONObject().put("providerId", p.id).put("displayName", p.displayName).put("protocol", p.protocol).put("model", p.model).put("hasCredential", secrets.has(p.id)).put("configured", secrets.has(p.id)).put("contextTokens", p.contextTokens).put("maxOutputTokens", p.maxOutputTokens)); view.put("providers", providers);
+            JSONArray providers = new JSONArray();
+            for (ChatDatabase.Provider p : db.listProviders()) {
+                JSONArray models = new JSONArray();
+                for (ChatDatabase.ModelProfile m : db.listModelProfiles(p.id)) models.put(new JSONObject()
+                        .put("modelProfileId", m.id).put("modelId", m.modelId).put("displayName", m.displayName)
+                        .put("contextTokens", m.contextTokens).put("inputTokens", m.inputTokens).put("maxOutputTokens", m.maxOutputTokens)
+                        .put("reasoningLevels", m.reasoningLevels).put("defaultReasoning", m.defaultReasoning));
+                String defaultModel = models.length() > 0 ? models.optJSONObject(0).optString("modelId", p.model) : p.model;
+                providers.put(new JSONObject().put("providerId", p.id).put("displayName", p.displayName).put("protocol", p.protocol)
+                        .put("authMode", p.authMode).put("reasoningWire", p.reasoningWire).put("model", defaultModel)
+                        .put("hasCredential", secrets.has(p.id)).put("configured", secrets.has(p.id) && models.length() > 0).put("models", models));
+            }
+            view.put("providers", providers);
             JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : db.listSessions()) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
             if (activeSessionId != null) { ChatDatabase.Session active = db.getSession(activeSessionId); if (active != null) view.put("activeLocalSessionId", activeSessionId).put("activeSession", sessionJson(active, true)); }
             RemoteDataBridge.Status rs = remoteBridge.status(); JSONObject remote = new JSONObject().put("available", rs.available); if (rs.contractVersion > 0) remote.put("contractVersion", rs.contractVersion); if (rs.reason != null) remote.put("reason", rs.reason);
