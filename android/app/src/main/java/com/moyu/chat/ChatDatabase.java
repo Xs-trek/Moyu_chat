@@ -106,11 +106,31 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return createSession(providerId, model, title, originSnapshotId, null);
     }
 
+    /** Compatibility entry point: resolve the deployment-scoped model profile, creating one from legacy provider defaults when needed. */
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId, String parentSessionId) {
+        ModelProfile profile = findModelProfile(providerId, model);
+        if (profile == null) {
+            Provider provider = getProvider(providerId);
+            if (provider == null) throw new IllegalArgumentException("provider not found");
+            profile = legacyProfile(provider, model == null || model.trim().isEmpty() ? provider.model : model.trim());
+            saveModelProfile(profile);
+        }
+        return createSession(profile, title, originSnapshotId, parentSessionId, profile.defaultReasoning);
+    }
+
+    public synchronized Session createSession(ModelProfile profile, String title, String originSnapshotId,
+                                              String parentSessionId, String reasoningEffort) {
+        if (profile == null) throw new IllegalArgumentException("model profile required");
         Session s = new Session();
         s.id = UUID.randomUUID().toString();
-        s.providerId = providerId;
-        s.model = model;
+        s.providerId = profile.providerId;
+        s.modelProfileId = profile.id;
+        s.model = profile.modelId;
+        s.contextTokens = profile.contextTokens;
+        s.inputTokens = profile.inputTokens;
+        s.maxOutputTokens = profile.maxOutputTokens;
+        s.reasoningEffort = ReasoningPolicy.normalizeEffort(reasoningEffort == null ? profile.defaultReasoning : reasoningEffort);
+        if (!ReasoningPolicy.allows(profile.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("reasoning effort not supported by model profile");
         s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim();
         s.state = "idle";
         s.updatedAt = Instant.now().toString();
@@ -119,6 +139,17 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.parentSessionId = parentSessionId;
         saveSession(s);
         return s;
+    }
+
+    /** Branches preserve the source session's resolved model limits and effort even if the profile is edited later. */
+    public synchronized Session branchSession(Session source, String title, String originSnapshotId, String parentSessionId) {
+        if (source == null) throw new IllegalArgumentException("source session required");
+        Session s = new Session();
+        s.id = UUID.randomUUID().toString(); s.providerId = source.providerId; s.modelProfileId = source.modelProfileId; s.model = source.model;
+        s.contextTokens = source.contextTokens; s.inputTokens = source.inputTokens; s.maxOutputTokens = source.maxOutputTokens;
+        s.reasoningEffort = source.reasoningEffort == null ? ReasoningPolicy.DEFAULT : source.reasoningEffort;
+        s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.draft = "";
+        s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId; saveSession(s); return s;
     }
 
     public synchronized void saveSession(Session s) {
