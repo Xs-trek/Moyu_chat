@@ -99,6 +99,7 @@ public class TransportMockServerTest {
         assertEquals("system", body.getJSONArray("messages").getJSONObject(0).optString("role"));
         assertEquals("SYSTEM-INSTRUCTIONS", body.getJSONArray("messages").getJSONObject(0).optString("content"));
         assertEquals("user", body.getJSONArray("messages").getJSONObject(1).optString("role"));
+        assertEquals(1_024, body.optInt("max_tokens"));
     }
 
     @Test public void chatCompletionsErrorEventIsTerminalAndSingle() throws Exception {
