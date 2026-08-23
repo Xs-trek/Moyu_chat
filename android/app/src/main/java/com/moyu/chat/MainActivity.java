@@ -105,7 +105,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         if (protocol == null) return "";
         String value = protocol.trim();
         if (OpenAiCompatibleTransport.RESPONSES.equals(value) || OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(value)) return "https://api.openai.com/v1";
-        if (AnthropicMessagesTransport.PROTOCOL.equals(value)) return "https://api.anthropic.com/v1";
+        if (AnthropicMessagesTransport.PROTOCOL.equals(value)) return "https://api.anthropic.com";
         return "";
     }
 
