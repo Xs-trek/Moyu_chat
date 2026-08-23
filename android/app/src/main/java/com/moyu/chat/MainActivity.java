@@ -104,6 +104,35 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         });
     }
 
+    @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) {
+        runOnUiThread(() -> {
+            if (provider == null) return;
+            ChatDatabase.ModelProfile p = existing == null ? new ChatDatabase.ModelProfile() : existing;
+            LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(28, 18, 28, 18);
+            EditText name = field(form, "模型显示名称", p.displayName == null ? "" : p.displayName, false, false);
+            EditText model = field(form, "Model ID（实际发送给 API）", p.modelId == null ? "" : p.modelId, false, false);
+            EditText context = field(form, "Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
+            EditText input = field(form, "Max input tokens（0=按 context-output 自动）", String.valueOf(Math.max(0, p.inputTokens)), false, true);
+            EditText output = field(form, "Max output tokens", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
+            EditText levels = field(form, "Reasoning levels（逗号分隔；留空=不暴露档位）", p.reasoningLevels == null ? "" : p.reasoningLevels, false, false);
+            EditText effort = field(form, "Default reasoning: default / none / low / medium / high / xhigh / max", p.defaultReasoning == null ? ReasoningPolicy.DEFAULT : p.defaultReasoning, false, false);
+            AlertDialog dialog = new AlertDialog.Builder(this).setTitle((existing == null ? "新增模型 · " : "编辑模型 · ") + provider.displayName).setView(form).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+            dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                try {
+                    if (p.id == null) p.id = "model-" + UUID.randomUUID();
+                    p.providerId = provider.id; p.modelId = model.getText().toString().trim();
+                    p.displayName = name.getText().toString().trim();
+                    p.contextTokens = Integer.parseInt(context.getText().toString().trim());
+                    p.inputTokens = Integer.parseInt(input.getText().toString().trim());
+                    p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
+                    p.reasoningLevels = levels.getText().toString().trim(); p.defaultReasoning = effort.getText().toString().trim();
+                    coordinator.saveModelProfile(p); dialog.dismiss();
+                } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
+            }));
+            dialog.show();
+        });
+    }
+
     /** UI-level suggestions only; transports never hardcode vendor addresses, only standard protocol paths. */
     private static String suggestedBaseUrl(String protocol) {
         if (protocol == null) return "";
