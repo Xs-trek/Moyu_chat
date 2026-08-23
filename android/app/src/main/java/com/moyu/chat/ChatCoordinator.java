@@ -213,8 +213,9 @@ final class ChatCoordinator implements AutoCloseable {
     private void createRemoteBranch(String sourceId, Integer throughSeq) throws Exception {
         if (!remoteBridge.status().available) throw new IllegalStateException("RemoteDataBridge unavailable");
         ChatDatabase.Provider provider = preferredProvider(); if (provider == null) throw new IllegalStateException("configure a Chat provider before importing a Remote branch");
+        ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); if (profile == null) throw new IllegalStateException("configure a model before importing a Remote branch");
         ChatDatabase.Snapshot snapshot = snapshots.importRemote(remoteBridge.createSnapshot(sourceId, throughSeq));
-        ChatDatabase.Session branch = db.createSession(provider.id, provider.model, "分支 · " + snapshot.sourceTitle, snapshot.id, null);
+        ChatDatabase.Session branch = db.createSession(profile, "分支 · " + snapshot.sourceTitle, snapshot.id, null, profile.defaultReasoning);
         activate(branch.id);
     }
 
