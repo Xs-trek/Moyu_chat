@@ -166,8 +166,9 @@ final class ChatCoordinator implements AutoCloseable {
         if (provider == null || key == null) throw new IllegalStateException("provider credential missing");
         ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
 
-        // Preflight the exact prompt before mutating durable chat history.
-        CanonicalPrompt prompt = contexts.build(session, provider.contextTokens, provider.maxOutputTokens, input);
+        // Preflight the exact prompt before mutating durable chat history. Session owns the resolved model limits.
+        CanonicalPrompt prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input);
+        provider.maxOutputTokens = session.maxOutputTokens; // request-local provider copy; transport only needs the wire output cap.
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         db.appendTimeline(id, "user:" + UUID.randomUUID(), user); db.setDraft(id, "");
         session = db.getSession(id);
