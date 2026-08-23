@@ -180,7 +180,7 @@ final class ChatCoordinator implements AutoCloseable {
         String usageKey = "usage:turn:" + UUID.randomUUID();
         JSONObject usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString()).put("context", prompt.diagnostics());
         boolean[] usagePersisted = new boolean[]{false};
-        ChatTransport.Turn turn = transport.stream(provider, key, session.model, prompt, new ChatTransport.Sink() {
+        ChatTransport.Turn turn = transport.stream(provider, key, session.model, session.reasoningEffort, prompt, new ChatTransport.Sink() {
             @Override public void onTextDelta(String delta) { worker.execute(() -> { try { textOut.append(delta); db.replaceTimelineBody(streamKey, new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true)); emitView(); } catch (Exception ignored) { } }); }
             @Override public void onUsage(Integer in, Integer out) { worker.execute(() -> { try { if (in != null) usageState.put("inputTokens", in); if (out != null) usageState.put("outputTokens", out); if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState); else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; } } catch (Exception ignored) { } }); }
             @Override public void onCompleted() { worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), null)); }
