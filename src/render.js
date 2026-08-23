@@ -57,8 +57,16 @@ function timelineItem(item) {
 }
 
 function providers(view) {
-  return h('main', { class: 'page' }, h('div', { class: 'section-head' }, h('div', {}, h('h1', { text: 'Provider' }), h('p', { class: 'muted', text: '密钥只在 Android 原生界面录入，不进入 WebView。' })), button('＋ 配置', 'configure-provider', {}, 'btn primary')),
-    h('section', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card' }, h('div', { class: 'row' }, h('strong', { text: provider.displayName }), badge(provider.protocol), h('span', { class: 'grow' }), badge(provider.hasCredential ? '凭据已配置' : '缺少凭据', provider.hasCredential ? 'good' : 'warn')), h('p', { class: 'muted', text: `Model · ${provider.model || '未设置'}` }), button('原生配置', 'configure-provider', { providerId: provider.providerId }, 'btn small')))));
+  return h('main', { class: 'page' }, h('div', { class: 'section-head' }, h('div', {}, h('h1', { text: 'Provider / Models' }), h('p', { class: 'muted', text: 'Endpoint/Auth 属于 Provider；context/input/output/reasoning 能力属于该 endpoint 下的 Model Profile。' })), button('＋ Provider', 'configure-provider', {}, 'btn primary')),
+    h('section', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card' },
+      h('div', { class: 'row' }, h('strong', { text: provider.displayName }), badge(provider.protocol), badge(provider.reasoningWire || 'none'), h('span', { class: 'grow' }), badge(provider.hasCredential ? '凭据已配置' : '缺少凭据', provider.hasCredential ? 'good' : 'warn')),
+      h('div', { class: 'row' }, button('编辑 Provider', 'configure-provider', { providerId: provider.providerId }, 'btn small'), button('＋ 模型', 'configure-model', { providerId: provider.providerId }, 'btn small')),
+      h('section', { class: 'stack' }, (provider.models || []).map((model) => h('div', { class: 'card' },
+        h('div', { class: 'row' }, h('strong', { text: model.displayName || model.modelId }), h('code', { text: model.modelId }), h('span', { class: 'grow' }), badge(model.defaultReasoning || 'default')),
+        h('small', { class: 'muted', text: `context ${model.contextTokens} · input ${model.inputTokens || 'auto'} · output ${model.maxOutputTokens}${model.reasoningLevels ? ` · reasoning ${model.reasoningLevels}` : ''}` }),
+        h('div', { class: 'row' }, button('Chat', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn primary small'), button('编辑模型', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small'))
+      )))
+    ))));
 }
 
 function imports(view) {
