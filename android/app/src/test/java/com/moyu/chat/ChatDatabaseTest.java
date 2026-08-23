@@ -110,6 +110,26 @@ public class ChatDatabaseTest {
         assertEquals(1, snap.itemCount);
         assertEquals("source_item_count must be backfilled", snap.itemCount, snap.sourceItemCount);
         assertFalse(snap.truncated);
+        assertEquals(ProviderAuth.BEARER, upgraded.getProvider("legacy-p").authMode);
+        assertEquals(ProviderAuth.X_API_KEY, upgraded.getProvider("legacy-a").authMode);
+    }
+
+    @Test public void upgradeFromV3PreservesProviderSessionTimelineAndMigratesAuth() throws Exception {
+        db.close();
+        context.deleteDatabase("moyu-chat.db");
+        createLegacyDatabase(3);
+        ChatDatabase upgraded = new ChatDatabase(context);
+        upgraded.getWritableDatabase();
+
+        ChatDatabase.Provider openAi = upgraded.getProvider("legacy-p");
+        ChatDatabase.Provider anthropic = upgraded.getProvider("legacy-a");
+        assertNotNull(openAi);
+        assertNotNull(anthropic);
+        assertEquals(ProviderAuth.BEARER, openAi.authMode);
+        assertEquals(ProviderAuth.X_API_KEY, anthropic.authMode);
+        assertNotNull(upgraded.getSession("legacy-s"));
+        assertEquals(2, upgraded.timeline("legacy-s").length());
+        assertEquals(1, upgraded.snapshotItems("legacy-snap").length());
     }
 
     /** Rebuilds the v1 schema (pre token budgets / parent ids / snapshot provenance) with seed rows. */
