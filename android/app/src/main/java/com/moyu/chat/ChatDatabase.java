@@ -85,6 +85,21 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
             db.execSQL("UPDATE providers SET auth_mode='x-api-key' WHERE protocol='anthropic-messages'");
         }
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE providers ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
+            db.execSQL("ALTER TABLE providers ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("UPDATE providers SET reasoning_wire='openai-responses' WHERE protocol='openai-responses'");
+            db.execSQL("UPDATE providers SET reasoning_wire='anthropic-effort' WHERE protocol='anthropic-messages'");
+            db.execSQL("CREATE TABLE model_profiles(profile_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,model_id TEXT NOT NULL,display_name TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL DEFAULT 4096,reasoning_levels TEXT NOT NULL DEFAULT '',default_reasoning TEXT NOT NULL DEFAULT 'default',updated_at TEXT NOT NULL,FOREIGN KEY(provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,UNIQUE(provider_id,model_id))");
+            db.execSQL("INSERT INTO model_profiles(profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,updated_at) SELECT provider_id || ':default',provider_id,model,model,context_tokens,input_tokens,max_output_tokens,'','default',updated_at FROM providers WHERE model<>''");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN model_profile_id TEXT");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 32000");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 4096");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'default'");
+            db.execSQL("UPDATE sessions SET model_profile_id=provider_id || ':default'");
+            db.execSQL("UPDATE sessions SET context_tokens=COALESCE((SELECT context_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),32000), input_tokens=COALESCE((SELECT input_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),0), max_output_tokens=COALESCE((SELECT max_output_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),4096)");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
