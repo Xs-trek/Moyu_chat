@@ -74,14 +74,16 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     /** Keep Chat Completions request fields intentionally minimal for broad third-party compatibility. */
-    private static JSONObject chatBody(String model, CanonicalPrompt prompt) throws Exception {
+    private static JSONObject chatBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
         JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", prompt.instructions));
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
             messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
         }
-        return new JSONObject().put("model", model).put("messages", messages).put("stream", true);
+        JSONObject body = new JSONObject().put("model", model).put("messages", messages).put("stream", true);
+        if (maxOutputTokens > 0) body.put("max_tokens", maxOutputTokens);
+        return body;
     }
 
     private static JSONObject responsesBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
