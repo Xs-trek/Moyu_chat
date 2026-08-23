@@ -149,6 +149,7 @@ public class ChatDatabaseTest {
             if (!trimmed.isEmpty()) raw.execSQL(trimmed);
         }
         raw.execSQL("INSERT INTO providers VALUES('legacy-p','Legacy','openai-responses','https://legacy.example/v1','legacy-model','2020-01-01T00:00:00Z')");
+        raw.execSQL("INSERT INTO providers VALUES('legacy-a','Legacy Anthropic','anthropic-messages','https://legacy-anthropic.example','legacy-claude','2020-01-01T00:00:00Z')");
         raw.execSQL("INSERT INTO sessions VALUES('legacy-s','Legacy session','legacy-p','legacy-model','completed','2020-01-01T00:00:00Z','','legacy-snap',NULL)");
         raw.execSQL("INSERT INTO timeline VALUES('k1','legacy-s',1,'{\"kind\":\"message\",\"role\":\"user\",\"text\":\"legacy user\",\"createdAt\":\"2020-01-01T00:00:00Z\"}','2020-01-01T00:00:00Z')");
         raw.execSQL("INSERT INTO timeline VALUES('k2','legacy-s',2,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}','2020-01-01T00:00:01Z')");
