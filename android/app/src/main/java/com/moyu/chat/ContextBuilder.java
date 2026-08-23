@@ -12,6 +12,10 @@ final class ContextBuilder {
     ContextBuilder(ChatDatabase db) { this.db = db; }
 
     CanonicalPrompt build(ChatDatabase.Session session, int contextTokens, int outputTokens, String pendingUserText) throws Exception {
+        return build(session, contextTokens, 0, outputTokens, pendingUserText);
+    }
+
+    CanonicalPrompt build(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens, String pendingUserText) throws Exception {
         ChatDatabase.Snapshot snapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         JSONArray inherited = snapshot == null ? new JSONArray() : db.snapshotItems(snapshot.id);
         JSONArray local = db.timeline(session.id);
