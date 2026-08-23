@@ -75,12 +75,16 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             ChatDatabase.Provider p = existing == null ? new ChatDatabase.Provider() : existing;
             LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(28, 18, 28, 18);
             EditText name = field(form, "显示名称", p.displayName == null ? "AI Provider" : p.displayName, false, false);
+            boolean isNew = existing == null;
             EditText protocol = field(form, "协议: openai-chat-completions / openai-responses / anthropic-messages", p.protocol == null ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : p.protocol, false, false);
             EditText auth = field(form, "Auth: bearer / x-api-key / api-key", p.authMode == null ? ProviderAuth.BEARER : p.authMode, false, false);
+            EditText reasoningWire = field(form, "Reasoning wire: none / openai-responses / openai-chat-effort / anthropic-effort", p.reasoningWire == null ? ReasoningPolicy.defaultWireForProtocol(p.protocol) : p.reasoningWire, false, false);
             EditText base = field(form, "Base URL（留空按协议默认；如 https://api.openai.com/v1）", p.baseUrl == null ? suggestedBaseUrl(p.protocol) : p.baseUrl, false, false);
-            EditText model = field(form, "Model", p.model == null ? "" : p.model, false, false);
-            EditText context = field(form, "Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
-            EditText output = field(form, "Max output tokens", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
+            EditText model = field(form, "初始 Model ID（创建后请在 Provider 页管理模型）", p.model == null ? "" : p.model, false, false);
+            EditText context = field(form, "初始 Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
+            EditText inputLimit = field(form, "初始 Max input tokens（0=按 context-output 自动计算）", String.valueOf(Math.max(0, p.inputTokens)), false, true);
+            EditText output = field(form, "初始 Max output tokens", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
+            model.setEnabled(isNew); context.setEnabled(isNew); inputLimit.setEnabled(isNew); output.setEnabled(isNew);
             EditText key = field(form, "API Key（留空保留已有）", "", true, false);
             AlertDialog dialog = new AlertDialog.Builder(this).setTitle(existing == null ? "配置 Provider" : "编辑 Provider").setView(form).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
