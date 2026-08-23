@@ -198,14 +198,14 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized Provider getProvider(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,model,context_tokens,max_output_tokens FROM providers WHERE provider_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,model,context_tokens,max_output_tokens FROM providers WHERE provider_id=?", new String[]{id})) {
             return c.moveToFirst() ? readProvider(c) : null;
         }
     }
 
     public synchronized List<Provider> listProviders() {
         ArrayList<Provider> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,model,context_tokens,max_output_tokens FROM providers ORDER BY display_name", null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,model,context_tokens,max_output_tokens FROM providers ORDER BY display_name", null)) {
             while (c.moveToNext()) out.add(readProvider(c));
         }
         return out;
