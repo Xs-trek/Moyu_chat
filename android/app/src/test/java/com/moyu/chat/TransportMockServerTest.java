@@ -252,6 +252,44 @@ public class TransportMockServerTest {
         assertFalse(body.optString("system").contains("A1-lead"));
     }
 
+    @Test public void reasoningWireFormatsMapSemanticEffortWithoutArbitraryJson() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
+        ChatDatabase.Provider responses = provider(OpenAiCompatibleTransport.RESPONSES);
+        responses.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES;
+        RecordingSink r1 = new RecordingSink();
+        openAi.stream(responses, "test-key", "test-model", ReasoningPolicy.HIGH, prompt("user", "hi"), r1); r1.awaitTerminal();
+        JSONObject b1 = new JSONObject(bodyOf());
+        assertEquals("high", b1.getJSONObject("reasoning").optString("effort"));
+
+        server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
+        ChatDatabase.Provider chat = provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        chat.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
+        RecordingSink r2 = new RecordingSink();
+        openAi.stream(chat, "test-key", "test-model", ReasoningPolicy.MEDIUM, prompt("user", "hi"), r2); r2.awaitTerminal();
+        JSONObject b2 = new JSONObject(bodyOf());
+        assertEquals("medium", b2.optString("reasoning_effort"));
+
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        ChatDatabase.Provider claude = provider(AnthropicMessagesTransport.PROTOCOL);
+        claude.reasoningWire = ReasoningPolicy.WIRE_ANTHROPIC_EFFORT;
+        RecordingSink r3 = new RecordingSink();
+        anthropic.stream(claude, "test-key", "claude-test", ReasoningPolicy.XHIGH, prompt("user", "hi"), r3); r3.awaitTerminal();
+        JSONObject b3 = new JSONObject(bodyOf());
+        assertEquals("xhigh", b3.getJSONObject("output_config").optString("effort"));
+    }
+
+    @Test public void defaultReasoningLeavesProviderNativeDefaultUntouched() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
+        ChatDatabase.Provider responses = provider(OpenAiCompatibleTransport.RESPONSES);
+        responses.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES;
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(responses, "test-key", "test-model", ReasoningPolicy.DEFAULT, prompt("user", "hi"), sink); sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        assertFalse(body.has("reasoning"));
+        assertFalse(body.has("reasoning_effort"));
+        assertFalse(body.has("output_config"));
+    }
+
     @Test public void authModesMapToExpectedHeadersAndNeverEnterBody() throws Exception {
         assertAuthMode(ProviderAuth.BEARER, "Authorization", "Bearer test-key");
         assertAuthMode(ProviderAuth.X_API_KEY, "x-api-key", "test-key");
