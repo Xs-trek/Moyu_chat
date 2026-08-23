@@ -15,7 +15,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 /** Chat-only credential storage. Provider API keys are never projected into WebView state. */
-final class ChatSecretStore {
+class ChatSecretStore {
     private static final String ALIAS="moyu-chat-provider-secrets-v1";
     private final SharedPreferences prefs;
     ChatSecretStore(Context c){prefs=c.getSharedPreferences("moyu_chat_secure",Context.MODE_PRIVATE);}

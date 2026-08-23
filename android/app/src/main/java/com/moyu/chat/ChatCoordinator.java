@@ -32,11 +32,15 @@ final class ChatCoordinator implements AutoCloseable {
     private String theme;
     private JSONArray remoteSources = new JSONArray();
 
-    ChatCoordinator(MoyuChatApplication app, Host host) {
-        this.db = app.database(); this.secrets = app.secrets(); this.host = host;
+    ChatCoordinator(MoyuChatApplication app, Host host) { this(app, host, app.secrets(), new AndroidRemoteDataBridge(app)); }
+
+    /** Production wires the ContentResolver bridge; JVM tests inject fakes for the optional Remote side. */
+    ChatCoordinator(MoyuChatApplication app, Host host, ChatSecretStore secrets, RemoteDataBridge bridge) {
+        this.db = app.database(); this.secrets = secrets; this.host = host;
         this.contexts = new ContextBuilder(db); this.snapshots = new SnapshotService(db);
-        this.remoteBridge = new AndroidRemoteDataBridge(app);
-        this.db.recoverInterruptedSessions();
+        this.remoteBridge = bridge;
+        // Recovery runs on the same single worker as every intent, so it is ordered before any send.
+        worker.execute(() -> { db.recoverInterruptedSessions(); emitView(); });
         this.route = validRoute(db.setting("route", "home"));
         this.activeSessionId = empty(db.setting("activeSessionId", ""));
         this.theme = validTheme(db.setting("theme", "system"));
@@ -82,7 +86,12 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.saveDraft": db.setDraft(required(p, "localSessionId"), p.optString("text", "")); break;
                 case "chat.session.interrupt": interrupt(required(p, "localSessionId")); break;
                 case "chat.session.delete": deleteSession(required(p, "localSessionId")); break;
-                case "provider.configure.open": host.openProviderEditor(db.getProvider(p.optString("providerId", null))); break;
+                // Absent providerId means "configure a new provider"; never bind null into the DB layer.
+                case "provider.configure.open": {
+                    String providerId = p.optString("providerId", "");
+                    host.openProviderEditor(providerId.trim().isEmpty() ? null : db.getProvider(providerId));
+                    break;
+                }
                 case "branch.sources.refresh": refreshSources(); break;
                 case "branch.create.remote": createRemoteBranch(required(p, "sourceId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
@@ -114,7 +123,9 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void send(String id, String text) throws Exception {
-        String trimmed = text == null ? "" : text.trim(); if (trimmed.isEmpty()) return;
+        // trim is an emptiness check only; the stored/prompted/sent text stays byte-for-byte original.
+        String input = text == null ? "" : text;
+        if (input.trim().isEmpty()) return;
         ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("session not found");
         if (activeTurns.containsKey(id)) throw new IllegalStateException("session busy");
         ChatDatabase.Provider provider = db.getProvider(session.providerId); String key = secrets.get(session.providerId);
@@ -122,8 +133,8 @@ final class ChatCoordinator implements AutoCloseable {
         ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
 
         // Preflight the exact prompt before mutating durable chat history.
-        CanonicalPrompt prompt = contexts.build(session, provider.contextTokens, provider.maxOutputTokens, trimmed);
-        JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", trimmed).put("createdAt", Instant.now().toString());
+        CanonicalPrompt prompt = contexts.build(session, provider.contextTokens, provider.maxOutputTokens, input);
+        JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         db.appendTimeline(id, "user:" + UUID.randomUUID(), user); db.setDraft(id, "");
         session = db.getSession(id);
         session.state = "running"; session.updatedAt = Instant.now().toString(); db.saveSession(session);
@@ -191,6 +202,7 @@ final class ChatCoordinator implements AutoCloseable {
 
     private void submitHandoff(String handoffId) throws Exception {
         ChatDatabase.Handoff h = db.getHandoff(handoffId); if (h == null) throw new IllegalArgumentException("handoff not found");
+        if ("submitted".equals(h.state)) throw new IllegalStateException("handoff already submitted");
         if (!remoteBridge.status().available) throw new IllegalStateException("RemoteDataBridge unavailable; handoff remains local");
         remoteBridge.submitHandoff(new JSONObject(h.payload)); h.state = "submitted"; db.saveHandoff(h);
     }

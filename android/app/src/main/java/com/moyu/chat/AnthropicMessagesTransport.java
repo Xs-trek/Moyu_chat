@@ -45,13 +45,22 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         } catch (Exception error) { guarded.onError("bad_provider_config", safe(error), false); return () -> {}; }
     }
 
+    /**
+     * Wire encoding only; the canonical prompt stays provider-neutral. Anthropic requires the first
+     * message to be a user turn; consecutive same-role turns are combined server-side (Messages API
+     * reference), so no local merging is done. A leading assistant run can only come from budget
+     * truncation or an imported snapshot edge; it is dropped, never promoted into the system prefix,
+     * because conversation history is context, not application authority.
+     */
     private static JSONObject body(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
         JSONArray messages = new JSONArray();
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
+            if (messages.length() == 0 && !"user".equals(role)) continue; // drop the leading assistant run
             messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
         }
+        if (messages.length() == 0) throw new IllegalArgumentException("prompt must contain at least one user message");
         return new JSONObject().put("model", model).put("system", prompt.instructions).put("messages", messages)
                 .put("max_tokens", maxOutputTokens > 0 ? maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS).put("stream", true);
     }

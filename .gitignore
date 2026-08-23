@@ -1,0 +1,18 @@
+# Build outputs
+build/
+android/app/build/
+.gradle/
+
+# Generated WebView assets (synced by syncMoyuChatUi task)
+android/app/src/main/assets/ui/
+
+# Local toolchain
+.tools/
+android/local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Node
+node_modules/

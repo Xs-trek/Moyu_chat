@@ -76,7 +76,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(28, 18, 28, 18);
             EditText name = field(form, "显示名称", p.displayName == null ? "AI Provider" : p.displayName, false, false);
             EditText protocol = field(form, "协议: openai-responses / openai-chat-completions / anthropic-messages", p.protocol == null ? OpenAiCompatibleTransport.RESPONSES : p.protocol, false, false);
-            EditText base = field(form, "Base URL，例如 https://api.openai.com/v1", p.baseUrl == null ? "https://api.openai.com/v1" : p.baseUrl, false, false);
+            EditText base = field(form, "Base URL（留空按协议默认；如 https://api.openai.com/v1）", p.baseUrl == null ? suggestedBaseUrl(p.protocol) : p.baseUrl, false, false);
             EditText model = field(form, "Model", p.model == null ? "" : p.model, false, false);
             EditText context = field(form, "Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
             EditText output = field(form, "Max output tokens", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
@@ -85,13 +85,26 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
                     if (p.id == null) p.id = "provider-" + UUID.randomUUID();
-                    p.displayName = name.getText().toString().trim(); p.protocol = protocol.getText().toString().trim(); p.baseUrl = base.getText().toString().trim(); p.model = model.getText().toString().trim();
+                    p.displayName = name.getText().toString().trim(); p.protocol = protocol.getText().toString().trim();
+                    p.baseUrl = base.getText().toString().trim();
+                    if (p.baseUrl.isEmpty()) p.baseUrl = suggestedBaseUrl(p.protocol); // per-protocol suggestion, blank for unknown protocols
+                    if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
+                    p.model = model.getText().toString().trim();
                     p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
                     coordinator.saveProvider(p, key.getText().toString()); dialog.dismiss();
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
             }));
             dialog.show();
         });
+    }
+
+    /** UI-level suggestions only; transports never hardcode vendor addresses, only standard protocol paths. */
+    private static String suggestedBaseUrl(String protocol) {
+        if (protocol == null) return "";
+        String value = protocol.trim();
+        if (OpenAiCompatibleTransport.RESPONSES.equals(value) || OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(value)) return "https://api.openai.com/v1";
+        if (AnthropicMessagesTransport.PROTOCOL.equals(value)) return "https://api.anthropic.com/v1";
+        return "";
     }
 
     private EditText field(LinearLayout parent, String hint, String value, boolean secret, boolean numeric) {

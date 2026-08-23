@@ -19,8 +19,8 @@ final class ContextBuilder {
         appendVisible(projected, inherited);
         int inheritedCount = projected.length();
         appendVisible(projected, local);
-        String pending = pendingUserText == null ? "" : pendingUserText.trim();
-        if (!pending.isEmpty()) projected.put(new JSONObject().put("role", "user").put("text", pending));
+        String pending = pendingUserText == null ? "" : pendingUserText;
+        if (!pending.trim().isEmpty()) projected.put(new JSONObject().put("role", "user").put("text", pending));
         int localCount = projected.length() - inheritedCount;
 
         String provisional = promptPolicy.instructions(snapshot, false);

@@ -31,6 +31,6 @@ If Moyu Remote is absent, disabled, has no database, or the PC is offline, Local
 
 ## Current implementation scope
 
-This workspace contains architecture docs and a statically reviewable implementation baseline only. It has **not** been compiled or executed here. A local development agent should perform Gradle/npm/build/runtime work and correct any compile/runtime issues before release.
+v0.0.1 RC status: the project compiles (debug + release/R8) and is covered by JVM unit tests (Robolectric + mock SSE endpoints), emulator instrumented tests for both bridge-absent and bridge-present cases, and an env-gated real-endpoint smoke suite (`RealEndpointSmokeTest`, executed only when `SMOKE_REAL=1` with credentials; skipped runs are not counted as verified).
 
-Initial transport scope is deliberately small but protocol-centric: OpenAI-compatible Chat Completions and OpenAI Responses are the two built-in transports. Provider definitions select a protocol; Session/Branch/Snapshot layers do not know which wire format is used. This follows the same maintenance direction seen in mature chat clients while avoiding a plugin framework.
+Transport scope is deliberately small but protocol-centric: `openai-responses`, `openai-chat-completions`, and `anthropic-messages` are the three built-in transports. Provider definitions select a protocol; Session/Branch/Snapshot layers do not know which wire format is used. Transports append only the standard protocol paths (`/responses`, `/chat/completions`, `/messages`) and never hardcode vendor base URLs. This follows the same maintenance direction seen in mature chat clients while avoiding a plugin framework.

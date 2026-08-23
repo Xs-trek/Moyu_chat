@@ -97,6 +97,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     public synchronized Session getSession(String id) {
+        if (id == null) return null;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT local_id,title,provider_id,model,state,updated_at,draft,origin_snapshot_id,parent_session_id,preview FROM sessions WHERE local_id=?", new String[]{id})) {
             return c.moveToFirst() ? readSession(c) : null;
         }
@@ -171,6 +172,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized JSONArray timelineThrough(String sessionId, Integer throughSeq) {
         JSONArray out = new JSONArray();
+        if (sessionId == null) return out;
         String sql = throughSeq == null
                 ? "SELECT body FROM timeline WHERE session_id=? ORDER BY local_seq"
                 : "SELECT body FROM timeline WHERE session_id=? AND local_seq<=? ORDER BY local_seq";
@@ -189,6 +191,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     public synchronized Provider getProvider(String id) {
+        if (id == null) return null;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,model,context_tokens,max_output_tokens FROM providers WHERE provider_id=?", new String[]{id})) {
             return c.moveToFirst() ? readProvider(c) : null;
         }
@@ -222,6 +225,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     public synchronized Snapshot getSnapshot(String id) {
+        if (id == null) return null;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_type,source_id,source_title,source_runtime,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE snapshot_id=?", new String[]{id})) {
             if (!c.moveToFirst()) return null;
             Snapshot s = new Snapshot(); s.id = c.getString(0); s.sourceType = c.getString(1); s.sourceId = c.getString(2); s.sourceTitle = c.getString(3);
@@ -231,6 +235,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized JSONArray snapshotItems(String id) {
         JSONArray out = new JSONArray();
+        if (id == null) return out;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT body FROM snapshot_items WHERE snapshot_id=? ORDER BY ordinal", new String[]{id})) {
             while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
         }
@@ -245,6 +250,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     public synchronized Handoff getHandoff(String id) {
+        if (id == null) return null;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT handoff_id,branch_session_id,state,summary,payload,created_at FROM handoffs WHERE handoff_id=?", new String[]{id})) {
             if (!c.moveToFirst()) return null; Handoff h = new Handoff(); h.id = c.getString(0); h.branchSessionId = c.getString(1); h.state = c.getString(2); h.summary = c.getString(3); h.payload = c.getString(4); h.createdAt = c.getString(5); return h;
         }

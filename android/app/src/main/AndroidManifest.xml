@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Signature-level permission declared by Moyu Remote; granted at install when both APKs share a signing key. -->
+    <uses-permission android:name="com.moyu.remote.permission.CHAT_BRIDGE" />
 
     <!-- Required for explicit package/signature verification before optional cross-APK bridge calls. -->
     <queries>
@@ -11,6 +13,7 @@
         android:name=".MoyuChatApplication"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:label="Moyu Chat"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true">
