@@ -68,7 +68,9 @@ export interface SessionView {
   title: string;
   providerId: string;
   providerName: string;
+  modelProfileId?: string;
   model: string;
+  reasoningEffort: string;
   state: SessionState;
   updatedAt: string;
   preview?: string;
