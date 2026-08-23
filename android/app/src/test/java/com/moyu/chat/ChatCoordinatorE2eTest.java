@@ -116,7 +116,9 @@ public class ChatCoordinatorE2eTest {
     private ChatDatabase.Provider mockProvider(String protocol) {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
         p.id = "mock-provider"; p.displayName = "Mock"; p.protocol = protocol;
-        p.baseUrl = server.url("/v1").toString(); p.model = "mock-model";
+        p.authMode = ProviderAuth.defaultForProtocol(protocol);
+        p.baseUrl = AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? server.url("/").toString() : server.url("/v1").toString();
+        p.model = "mock-model";
         p.contextTokens = 32_000; p.maxOutputTokens = 4_096;
         return p;
     }
