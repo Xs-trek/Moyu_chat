@@ -17,18 +17,28 @@ import java.util.UUID;
 /** Chat-owned database. It never opens or attaches the Remote APK database. */
 public final class ChatDatabase extends SQLiteOpenHelper {
     private static final String NAME = "moyu-chat.db";
-    private static final int VERSION = 4;
+    private static final int VERSION = 5;
 
     public static final class Session {
-        public String id, title, providerId, model, state, updatedAt, draft, originSnapshotId, parentSessionId, preview;
+        public String id, title, providerId, modelProfileId, model, reasoningEffort, state, updatedAt, draft, originSnapshotId, parentSessionId, preview;
+        public int contextTokens, inputTokens, maxOutputTokens;
     }
 
+    /** Endpoint/deployment configuration. Legacy model/budget fields remain only for v4 migration and one-step provider creation. */
     public static final class Provider {
         public String id, displayName, baseUrl, model;
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         public String authMode = ProviderAuth.BEARER;
+        public String reasoningWire = ReasoningPolicy.WIRE_NONE;
         public int contextTokens = ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
+        public int inputTokens = 0;
         public int maxOutputTokens = ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
+    }
+
+    /** Model capabilities are scoped to one concrete provider deployment, not a global model name. */
+    public static final class ModelProfile {
+        public String id, providerId, modelId, displayName, reasoningLevels, defaultReasoning;
+        public int contextTokens, inputTokens, maxOutputTokens;
     }
 
     public static final class Snapshot {
