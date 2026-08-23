@@ -17,7 +17,7 @@ import java.util.UUID;
 /** Chat-owned database. It never opens or attaches the Remote APK database. */
 public final class ChatDatabase extends SQLiteOpenHelper {
     private static final String NAME = "moyu-chat.db";
-    private static final int VERSION = 3;
+    private static final int VERSION = 4;
 
     public static final class Session {
         public String id, title, providerId, model, state, updatedAt, draft, originSnapshotId, parentSessionId, preview;
