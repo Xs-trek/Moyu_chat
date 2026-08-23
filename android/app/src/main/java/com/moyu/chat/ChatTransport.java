@@ -9,5 +9,9 @@ interface ChatTransport {
     }
     interface Turn { void cancel(); }
 
-    Turn stream(ChatDatabase.Provider provider, String apiKey, String model, CanonicalPrompt prompt, Sink sink);
+    Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort, CanonicalPrompt prompt, Sink sink);
+
+    default Turn stream(ChatDatabase.Provider provider, String apiKey, String model, CanonicalPrompt prompt, Sink sink) {
+        return stream(provider, apiKey, model, ReasoningPolicy.DEFAULT, prompt, sink);
+    }
 }
