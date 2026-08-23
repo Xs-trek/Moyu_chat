@@ -28,10 +28,10 @@ final class ContextBuilder {
         int localCount = projected.length() - inheritedCount;
 
         String provisional = promptPolicy.instructions(snapshot, false);
-        ContextBudgetManager.Result first = budgets.select(provisional, projected, contextTokens, outputTokens);
+        ContextBudgetManager.Result first = budgets.select(provisional, projected, contextTokens, inputTokens, outputTokens);
         String instructions = promptPolicy.instructions(snapshot, first.truncated);
         ContextBudgetManager.Result finalResult = first.truncated
-                ? budgets.select(instructions, projected, contextTokens, outputTokens)
+                ? budgets.select(instructions, projected, contextTokens, inputTokens, outputTokens)
                 : first;
         return new CanonicalPrompt(instructions, finalResult.messages, finalResult.truncated,
                 finalResult.estimatedTokens, inheritedCount, localCount);
