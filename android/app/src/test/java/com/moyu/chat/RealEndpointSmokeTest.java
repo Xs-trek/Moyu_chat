@@ -80,7 +80,8 @@ public class RealEndpointSmokeTest {
             runTurn(transport,
                     provider(OpenAiCompatibleTransport.RESPONSES,
                             System.getenv().getOrDefault("SMOKE_OPENAI_BASE_URL", "https://api.openai.com/v1"),
-                            System.getenv().getOrDefault("SMOKE_OPENAI_MODEL", "gpt-4o-mini")),
+                            System.getenv().getOrDefault("SMOKE_OPENAI_MODEL", "gpt-4o-mini"),
+                            System.getenv().getOrDefault("SMOKE_OPENAI_AUTH_MODE", ProviderAuth.BEARER)),
                     System.getenv("SMOKE_OPENAI_API_KEY"), "openai-responses");
         }
     }
@@ -93,7 +94,8 @@ public class RealEndpointSmokeTest {
             runTurn(transport,
                     provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS,
                             System.getenv().getOrDefault("SMOKE_OPENAI_BASE_URL", "https://api.openai.com/v1"),
-                            System.getenv().getOrDefault("SMOKE_OPENAI_MODEL", "gpt-4o-mini")),
+                            System.getenv().getOrDefault("SMOKE_OPENAI_MODEL", "gpt-4o-mini"),
+                            System.getenv().getOrDefault("SMOKE_OPENAI_AUTH_MODE", ProviderAuth.BEARER)),
                     System.getenv("SMOKE_OPENAI_API_KEY"), "openai-chat-completions");
         }
     }
@@ -104,9 +106,9 @@ public class RealEndpointSmokeTest {
         try (AnthropicMessagesTransport transport = new AnthropicMessagesTransport()) {
             runTurn(transport,
                     provider(AnthropicMessagesTransport.PROTOCOL,
-                            // The transport appends /messages, so the default base is the v1 root.
-                            System.getenv().getOrDefault("SMOKE_ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
-                            System.getenv().getOrDefault("SMOKE_ANTHROPIC_MODEL", "claude-3-5-haiku-latest")),
+                            System.getenv().getOrDefault("SMOKE_ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+                            System.getenv().getOrDefault("SMOKE_ANTHROPIC_MODEL", "claude-3-5-haiku-latest"),
+                            System.getenv().getOrDefault("SMOKE_ANTHROPIC_AUTH_MODE", ProviderAuth.X_API_KEY)),
                     System.getenv("SMOKE_ANTHROPIC_API_KEY"), "anthropic-messages");
         }
     }
