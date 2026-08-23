@@ -21,9 +21,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   # OpenAI Responses and/or Chat Completions (both run unless SMOKE_OPENAI_PROTOCOL selects one)
  *   SMOKE_OPENAI_API_KEY=...            SMOKE_OPENAI_BASE_URL=https://api.openai.com/v1
  *   SMOKE_OPENAI_MODEL=gpt-4o-mini      SMOKE_OPENAI_PROTOCOL=openai-responses|openai-chat-completions
- *   # Anthropic Messages (transport appends /messages, so the v1 root is the correct base)
- *   SMOKE_ANTHROPIC_API_KEY=...         SMOKE_ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+ *   SMOKE_OPENAI_AUTH_MODE=bearer       # bearer | x-api-key | api-key
+ *   # Anthropic Messages (transport appends /v1/messages to the configured root)
+ *   SMOKE_ANTHROPIC_API_KEY=...         SMOKE_ANTHROPIC_BASE_URL=https://api.anthropic.com
  *   SMOKE_ANTHROPIC_MODEL=claude-3-5-haiku-latest
+ *   SMOKE_ANTHROPIC_AUTH_MODE=x-api-key # bearer | x-api-key | api-key
  */
 public class RealEndpointSmokeTest {
 
