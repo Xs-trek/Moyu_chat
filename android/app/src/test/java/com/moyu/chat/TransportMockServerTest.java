@@ -252,6 +252,39 @@ public class TransportMockServerTest {
         assertFalse(body.optString("system").contains("A1-lead"));
     }
 
+    @Test public void authModesMapToExpectedHeadersAndNeverEnterBody() throws Exception {
+        assertAuthMode(ProviderAuth.BEARER, "Authorization", "Bearer test-key");
+        assertAuthMode(ProviderAuth.X_API_KEY, "x-api-key", "test-key");
+        assertAuthMode(ProviderAuth.API_KEY, "api-key", "test-key");
+    }
+
+    private void assertAuthMode(String authMode, String expectedHeader, String expectedValue) throws Exception {
+        server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
+        ChatDatabase.Provider p = provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        p.authMode = authMode;
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(p, "test-key", "test-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        RecordedRequest request = server.takeRequest(10, TimeUnit.SECONDS);
+        assertNotNull(request);
+        assertEquals(expectedValue, request.getHeader(expectedHeader));
+        if (!"Authorization".equals(expectedHeader)) assertNull(request.getHeader("Authorization"));
+        if (!"x-api-key".equals(expectedHeader)) assertNull(request.getHeader("x-api-key"));
+        if (!"api-key".equals(expectedHeader)) assertNull(request.getHeader("api-key"));
+        assertFalse("credential must never enter request JSON", request.getBody().readUtf8().contains("test-key"));
+    }
+
+    @Test public void anthropicUsesRootPlusV1MessagesPath() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        RecordedRequest request = server.takeRequest(10, TimeUnit.SECONDS);
+        assertNotNull(request);
+        assertEquals("/v1/messages", request.getPath());
+        assertEquals("test-key", request.getHeader("x-api-key"));
+    }
+
     // ---------- HTTP error mapping ----------
 
     @Test public void httpErrorsMapToCodeAndRetryability() throws Exception {
