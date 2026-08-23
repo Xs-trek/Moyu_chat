@@ -56,6 +56,7 @@ final class ChatCoordinator implements AutoCloseable {
                 provider.displayName = bounded(provider.displayName, 128, "display name");
                 provider.protocol = bounded(provider.protocol, 64, "protocol");
                 if (!transports.supports(provider.protocol)) throw new IllegalArgumentException("unsupported protocol");
+                provider.authMode = ProviderAuth.normalize(provider.authMode, provider.protocol);
                 provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
                 provider.model = bounded(provider.model, 256, "model");
                 if (provider.contextTokens < 2048 || provider.contextTokens > 4_000_000) throw new IllegalArgumentException("context tokens out of range");
