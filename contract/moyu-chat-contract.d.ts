@@ -32,6 +32,7 @@ export interface ProviderView {
   providerId: string;
   displayName: string;
   protocol: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | string;
+  authMode: 'bearer' | 'x-api-key' | 'api-key' | string;
   model: string;
   hasCredential: boolean;
   configured: boolean;
