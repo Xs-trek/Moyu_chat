@@ -276,7 +276,10 @@ final class ChatCoordinator implements AutoCloseable {
 
     private JSONObject sessionJson(ChatDatabase.Session s, boolean detail) throws Exception {
         ChatDatabase.Provider p = db.getProvider(s.providerId);
-        JSONObject o = new JSONObject().put("localSessionId", s.id).put("title", s.title).put("providerId", s.providerId).put("providerName", p == null ? s.providerId : p.displayName).put("model", s.model).put("state", s.state).put("updatedAt", s.updatedAt);
+        JSONObject o = new JSONObject().put("localSessionId", s.id).put("title", s.title).put("providerId", s.providerId).put("providerName", p == null ? s.providerId : p.displayName)
+                .put("modelProfileId", s.modelProfileId == null ? JSONObject.NULL : s.modelProfileId).put("model", s.model)
+                .put("reasoningEffort", s.reasoningEffort == null ? ReasoningPolicy.DEFAULT : s.reasoningEffort)
+                .put("state", s.state).put("updatedAt", s.updatedAt);
         if (s.preview != null) o.put("preview", s.preview);
         if (s.originSnapshotId != null) { ChatDatabase.Snapshot snap = db.getSnapshot(s.originSnapshotId); if (snap != null) o.put("origin", new JSONObject().put("snapshotId", snap.id).put("sourceType", snap.sourceType).put("sourceTitle", snap.sourceTitle).put("sourceRuntime", snap.sourceRuntime == null ? JSONObject.NULL : snap.sourceRuntime).put("createdAt", snap.createdAt).put("itemCount", snap.itemCount).put("sourceItemCount", snap.sourceItemCount).put("truncated", snap.truncated)); }
         if (detail) o.put("messages", db.timeline(s.id)).put("composerDraft", s.draft == null ? "" : s.draft).put("canSend", p != null && secrets.has(s.providerId) && !activeTurns.containsKey(s.id)).put("canInterrupt", activeTurns.containsKey(s.id));
