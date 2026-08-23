@@ -12,7 +12,7 @@ import java.util.concurrent.Executors;
 
 /** Native-only domain coordinator. UI knows intents/view models; provider keys never cross the bridge. */
 final class ChatCoordinator implements AutoCloseable {
-    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void showMessage(String text); }
+    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); void showMessage(String text); }
 
     private final ChatDatabase db;
     private final ChatSecretStore secrets;
