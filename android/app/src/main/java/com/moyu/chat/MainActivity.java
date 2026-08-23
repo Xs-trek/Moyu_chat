@@ -78,7 +78,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             boolean isNew = existing == null;
             EditText protocol = field(form, "协议: openai-chat-completions / openai-responses / anthropic-messages", p.protocol == null ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : p.protocol, false, false);
             EditText auth = field(form, "Auth: bearer / x-api-key / api-key", p.authMode == null ? ProviderAuth.BEARER : p.authMode, false, false);
-            EditText reasoningWire = field(form, "Reasoning wire: none / openai-responses / openai-chat-effort / anthropic-effort", p.reasoningWire == null ? ReasoningPolicy.defaultWireForProtocol(p.protocol) : p.reasoningWire, false, false);
+            EditText reasoningWire = field(form, "Reasoning wire（留空按协议默认）: none / openai-responses / openai-chat-effort / anthropic-effort", isNew ? "" : (p.reasoningWire == null ? "" : p.reasoningWire), false, false);
             EditText base = field(form, "Base URL（留空按协议默认；如 https://api.openai.com/v1）", p.baseUrl == null ? suggestedBaseUrl(p.protocol) : p.baseUrl, false, false);
             EditText model = field(form, "初始 Model ID（创建后请在 Provider 页管理模型）", p.model == null ? "" : p.model, false, false);
             EditText context = field(form, "初始 Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
