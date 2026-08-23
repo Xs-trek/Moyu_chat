@@ -49,6 +49,7 @@ public class ChatCoordinatorE2eTest {
         volatile boolean editorOpened;
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
         @Override public void openProviderEditor(ChatDatabase.Provider existing) { editorProvider = existing; editorOpened = true; }
+        @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
         @Override public void showMessage(String text) { toasts.add(text); }
     }
 
