@@ -133,10 +133,18 @@ final class ChatCoordinator implements AutoCloseable {
         String providerId = required(p, "providerId");
         ChatDatabase.Provider provider = db.getProvider(providerId);
         if (provider == null) throw new IllegalStateException("provider not configured");
-        String model = bounded(nonEmpty(p.optString("model", provider.model), provider.model), 256, "model");
+        ChatDatabase.ModelProfile profile = null;
+        String profileId = p.optString("modelProfileId", "").trim();
+        if (!profileId.isEmpty()) profile = db.getModelProfile(profileId);
+        if (profile == null) {
+            String requestedModel = p.optString("model", "").trim();
+            profile = requestedModel.isEmpty() ? db.firstModelProfile(providerId) : db.findModelProfile(providerId, requestedModel);
+        }
+        if (profile == null || !providerId.equals(profile.providerId)) throw new IllegalStateException("model profile not configured");
         String requestedTitle = p.optString("title", "").trim();
         String title = requestedTitle.isEmpty() ? null : bounded(requestedTitle, 200, "title");
-        ChatDatabase.Session s = db.createSession(providerId, model, title, null);
+        String effort = p.optString("reasoningEffort", profile.defaultReasoning);
+        ChatDatabase.Session s = db.createSession(profile, title, null, null, effort);
         activate(s.id);
     }
 
