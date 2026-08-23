@@ -87,6 +87,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                 try {
                     if (p.id == null) p.id = "provider-" + UUID.randomUUID();
                     p.displayName = name.getText().toString().trim(); p.protocol = protocol.getText().toString().trim();
+                    p.authMode = auth.getText().toString().trim();
                     p.baseUrl = base.getText().toString().trim();
                     if (p.baseUrl.isEmpty()) p.baseUrl = suggestedBaseUrl(p.protocol); // per-protocol suggestion, blank for unknown protocols
                     if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
