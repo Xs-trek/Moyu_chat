@@ -33,7 +33,8 @@ if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery h
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
-if (!coordinator.includes('contexts.build(session, provider.contextTokens, provider.maxOutputTokens, input)')) fail('send must preflight the pending user input before durable mutation');
+if (!coordinator.includes('contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input)')) fail('send must preflight pending input using the session-snapshotted model limits before durable mutation');
+if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_id')) fail('deployment-scoped model profile/session binding missing');
 if (/\bput\("text",\s*trimmed\b/.test(coordinator)) fail('send must store the raw user text; trim is only an emptiness check');
 if (!coordinator.includes('db.recoverInterruptedSessions()')) fail('coordinator must recover stale running sessions at startup');
 
