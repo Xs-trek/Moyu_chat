@@ -56,6 +56,13 @@ function timelineItem(item) {
   return null;
 }
 
+function reasoningControl(model) {
+  const levels = String(model.reasoningLevels || '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (!levels.length) return badge('reasoning · provider default', 'quiet');
+  const values = ['default', ...levels.filter((x) => x !== 'default')];
+  return h('select', { class: 'reasoning-select', dataset: { reasoningSelect: '1' } }, values.map((level) => h('option', { value: level, selected: level === (model.defaultReasoning || 'default'), text: level })));
+}
+
 function providers(view) {
   return h('main', { class: 'page' }, h('div', { class: 'section-head' }, h('div', {}, h('h1', { text: 'Provider / Models' }), h('p', { class: 'muted', text: 'Endpoint/Auth 属于 Provider；context/input/output/reasoning 能力属于该 endpoint 下的 Model Profile。' })), button('＋ Provider', 'configure-provider', {}, 'btn primary')),
     h('section', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card' },
