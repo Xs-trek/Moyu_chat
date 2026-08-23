@@ -82,6 +82,17 @@ public class ContextBudgetManagerTest {
     }
 
     @Test
+    public void explicitInputLimitCapsPromptEvenWhenTotalContextIsLarge() throws Exception {
+        ContextBudgetManager manager = new ContextBudgetManager();
+        JSONArray all = new JSONArray();
+        for (int i = 0; i < 120; i++) all.put(message(i % 2 == 0 ? "user" : "assistant", "bounded input message " + i + " with enough padding to consume tokens"));
+        ContextBudgetManager.Result result = manager.select(INSTRUCTIONS, all, 128_000, 4_000, 4_096);
+        assertTrue("deployment max-input must constrain active prompt independently of total context", result.truncated);
+        assertTrue(result.messages.length() < all.length());
+        assertEquals("bounded input message 119 with enough padding to consume tokens", result.messages.getJSONObject(result.messages.length() - 1).optString("text"));
+    }
+
+    @Test
     public void estimatorIsConservativeForCjkAndLatin() {
         ContextBudgetManager manager = new ContextBudgetManager();
         // 10 CJK chars = 30 UTF-8 bytes -> at least 10 tokens (bytes/3), never below code points.
