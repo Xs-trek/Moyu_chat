@@ -169,6 +169,12 @@ public class ChatDatabaseTest {
         raw.close();
     }
 
+    @Test public void newProviderDefaultsToChatCompletionsBearer() {
+        ChatDatabase.Provider p = new ChatDatabase.Provider();
+        assertEquals(OpenAiCompatibleTransport.CHAT_COMPLETIONS, p.protocol);
+        assertEquals(ProviderAuth.BEARER, p.authMode);
+    }
+
     // ---------- interrupted streaming recovery ----------
 
     @Test public void recoverInterruptedSessionsCleansStaleStreamingRowsOnly() throws Exception {
