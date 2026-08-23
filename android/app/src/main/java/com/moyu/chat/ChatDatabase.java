@@ -251,21 +251,58 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         int updated = db.update("providers", v, "provider_id=?", new String[]{p.id});
         if (updated == 0) db.insertWithOnConflict("providers", null, v, SQLiteDatabase.CONFLICT_ABORT);
+        if (listModelProfiles(p.id).isEmpty() && p.model != null && !p.model.trim().isEmpty()) saveModelProfile(legacyProfile(p, p.model.trim()));
     }
 
     public synchronized Provider getProvider(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,model,context_tokens,max_output_tokens FROM providers WHERE provider_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,reasoning_wire,model,context_tokens,input_tokens,max_output_tokens FROM providers WHERE provider_id=?", new String[]{id})) {
             return c.moveToFirst() ? readProvider(c) : null;
         }
     }
 
     public synchronized List<Provider> listProviders() {
         ArrayList<Provider> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,model,context_tokens,max_output_tokens FROM providers ORDER BY display_name", null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,reasoning_wire,model,context_tokens,input_tokens,max_output_tokens FROM providers ORDER BY display_name", null)) {
             while (c.moveToNext()) out.add(readProvider(c));
         }
         return out;
+    }
+
+    public synchronized void saveModelProfile(ModelProfile profile) {
+        if (profile == null) throw new IllegalArgumentException("model profile required");
+        ContentValues v = modelProfileValues(profile);
+        SQLiteDatabase db = getWritableDatabase();
+        int updated = db.update("model_profiles", v, "profile_id=?", new String[]{profile.id});
+        if (updated == 0) db.insertWithOnConflict("model_profiles", null, v, SQLiteDatabase.CONFLICT_ABORT);
+    }
+
+    public synchronized ModelProfile getModelProfile(String id) {
+        if (id == null) return null;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning FROM model_profiles WHERE profile_id=?", new String[]{id})) {
+            return c.moveToFirst() ? readModelProfile(c) : null;
+        }
+    }
+
+    public synchronized ModelProfile findModelProfile(String providerId, String modelId) {
+        if (providerId == null || modelId == null) return null;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning FROM model_profiles WHERE provider_id=? AND model_id=?", new String[]{providerId, modelId})) {
+            return c.moveToFirst() ? readModelProfile(c) : null;
+        }
+    }
+
+    public synchronized List<ModelProfile> listModelProfiles(String providerId) {
+        ArrayList<ModelProfile> out = new ArrayList<>();
+        if (providerId == null) return out;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning FROM model_profiles WHERE provider_id=? ORDER BY display_name,model_id", new String[]{providerId})) {
+            while (c.moveToNext()) out.add(readModelProfile(c));
+        }
+        return out;
+    }
+
+    public synchronized ModelProfile firstModelProfile(String providerId) {
+        List<ModelProfile> profiles = listModelProfiles(providerId);
+        return profiles.isEmpty() ? null : profiles.get(0);
     }
 
     public synchronized void saveSnapshot(Snapshot snapshot, JSONArray items) {
