@@ -80,6 +80,8 @@ public class ChatDatabaseTest {
         assertEquals("token columns must default after v1 upgrade",
                 ContextBudgetManager.DEFAULT_CONTEXT_TOKENS, p.contextTokens);
         assertEquals(ContextBudgetManager.DEFAULT_OUTPUT_TOKENS, p.maxOutputTokens);
+        assertEquals(ProviderAuth.BEARER, p.authMode);
+        assertEquals(ProviderAuth.X_API_KEY, upgraded.getProvider("legacy-a").authMode);
 
         ChatDatabase.Session s = upgraded.getSession("legacy-s");
         assertNotNull("session row must survive migration", s);
