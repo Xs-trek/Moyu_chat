@@ -381,11 +381,44 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     private static ContentValues providerValues(Provider p) {
         ContentValues v = new ContentValues();
-        v.put("provider_id", p.id); v.put("display_name", p.displayName); v.put("protocol", p.protocol); v.put("base_url", p.baseUrl); v.put("auth_mode", ProviderAuth.normalize(p.authMode, p.protocol)); v.put("model", p.model);
+        v.put("provider_id", p.id); v.put("display_name", p.displayName); v.put("protocol", p.protocol); v.put("base_url", p.baseUrl);
+        v.put("auth_mode", ProviderAuth.normalize(p.authMode, p.protocol));
+        v.put("reasoning_wire", ReasoningPolicy.normalizeWire(p.reasoningWire, p.protocol));
+        v.put("model", p.model == null ? "" : p.model);
         v.put("context_tokens", p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS);
+        v.put("input_tokens", Math.max(0, p.inputTokens));
         v.put("max_output_tokens", p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS);
         v.put("updated_at", Instant.now().toString());
         return v;
+    }
+
+    private static ContentValues modelProfileValues(ModelProfile p) {
+        if (p.id == null || p.id.trim().isEmpty() || p.providerId == null || p.providerId.trim().isEmpty()) throw new IllegalArgumentException("model profile id/provider required");
+        String modelId = p.modelId == null ? "" : p.modelId.trim(); if (modelId.isEmpty()) throw new IllegalArgumentException("model id required");
+        int context = p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
+        int input = Math.max(0, p.inputTokens);
+        int output = p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
+        if (context < 2_048 || context > 4_000_000) throw new IllegalArgumentException("context tokens out of range");
+        if (input > context) throw new IllegalArgumentException("input tokens out of range");
+        if (output < 256 || output >= context) throw new IllegalArgumentException("max output tokens out of range");
+        String levels = ReasoningPolicy.normalizeLevels(p.reasoningLevels);
+        String defaultReasoning = ReasoningPolicy.normalizeEffort(p.defaultReasoning);
+        if (!ReasoningPolicy.allows(levels, defaultReasoning)) throw new IllegalArgumentException("default reasoning not allowed by model profile");
+        ContentValues v = new ContentValues();
+        v.put("profile_id", p.id); v.put("provider_id", p.providerId); v.put("model_id", modelId);
+        v.put("display_name", p.displayName == null || p.displayName.trim().isEmpty() ? modelId : p.displayName.trim());
+        v.put("context_tokens", context); v.put("input_tokens", input); v.put("max_output_tokens", output);
+        v.put("reasoning_levels", levels); v.put("default_reasoning", defaultReasoning); v.put("updated_at", Instant.now().toString());
+        return v;
+    }
+
+    private static ModelProfile legacyProfile(Provider provider, String model) {
+        ModelProfile p = new ModelProfile(); p.id = provider.id + ":default"; p.providerId = provider.id;
+        p.modelId = model == null ? "" : model.trim(); p.displayName = p.modelId;
+        p.contextTokens = provider.contextTokens > 0 ? provider.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
+        p.inputTokens = Math.max(0, provider.inputTokens);
+        p.maxOutputTokens = provider.maxOutputTokens > 0 ? provider.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
+        p.reasoningLevels = ""; p.defaultReasoning = ReasoningPolicy.DEFAULT; return p;
     }
 
     private static ContentValues handoffValues(Handoff h) {
