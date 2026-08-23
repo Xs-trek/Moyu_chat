@@ -283,7 +283,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     private static ContentValues providerValues(Provider p) {
         ContentValues v = new ContentValues();
-        v.put("provider_id", p.id); v.put("display_name", p.displayName); v.put("protocol", p.protocol); v.put("base_url", p.baseUrl); v.put("model", p.model);
+        v.put("provider_id", p.id); v.put("display_name", p.displayName); v.put("protocol", p.protocol); v.put("base_url", p.baseUrl); v.put("auth_mode", ProviderAuth.normalize(p.authMode, p.protocol)); v.put("model", p.model);
         v.put("context_tokens", p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS);
         v.put("max_output_tokens", p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS);
         v.put("updated_at", Instant.now().toString());
