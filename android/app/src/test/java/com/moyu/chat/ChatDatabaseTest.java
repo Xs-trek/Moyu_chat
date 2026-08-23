@@ -144,6 +144,18 @@ public class ChatDatabaseTest {
         assertEquals(profile.maxOutputTokens, session.maxOutputTokens); assertEquals(ReasoningPolicy.DEFAULT, session.reasoningEffort);
     }
 
+    @Test public void upgradeFromV4DoesNotMisbindSessionModelOverrideToProviderDefaultProfile() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(4);
+        android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
+        raw.execSQL("UPDATE sessions SET model='legacy-session-override' WHERE local_id='legacy-s'"); raw.close();
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        assertEquals("legacy-session-override", session.model);
+        assertNull("an old session-level model override must not point at the provider default model profile", session.modelProfileId);
+        assertEquals(ContextBudgetManager.DEFAULT_CONTEXT_TOKENS, session.contextTokens);
+        assertEquals(ContextBudgetManager.DEFAULT_OUTPUT_TOKENS, session.maxOutputTokens);
+    }
+
     @Test public void oneProviderCanOwnMultipleModelsAndSessionSnapshotsCapabilities() {
         ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; db.saveProvider(provider);
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
