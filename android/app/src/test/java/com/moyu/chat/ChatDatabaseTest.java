@@ -159,6 +159,11 @@ public class ChatDatabaseTest {
             raw.execSQL("ALTER TABLE providers ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 4096");
             raw.execSQL("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT");
         }
+        if (version >= 3) {
+            raw.execSQL("ALTER TABLE snapshots ADD COLUMN source_item_count INTEGER NOT NULL DEFAULT 0");
+            raw.execSQL("ALTER TABLE snapshots ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0");
+            raw.execSQL("UPDATE snapshots SET source_item_count=item_count WHERE source_item_count=0");
+        }
         raw.execSQL("INSERT INTO snapshot_items VALUES('legacy-snap',0,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}')");
         raw.execSQL("PRAGMA user_version = " + version);
         raw.close();
