@@ -369,7 +369,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     private static ContentValues sessionValues(Session s) {
         ContentValues v = new ContentValues();
-        v.put("local_id", s.id); v.put("title", s.title); v.put("provider_id", s.providerId); v.put("model", s.model);
+        v.put("local_id", s.id); v.put("title", s.title); v.put("provider_id", s.providerId); v.put("model_profile_id", s.modelProfileId); v.put("model", s.model);
+        v.put("context_tokens", s.contextTokens > 0 ? s.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS);
+        v.put("input_tokens", Math.max(0, s.inputTokens));
+        v.put("max_output_tokens", s.maxOutputTokens > 0 ? s.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS);
+        v.put("reasoning_effort", ReasoningPolicy.normalizeEffort(s.reasoningEffort));
         v.put("state", s.state); v.put("updated_at", s.updatedAt); v.put("draft", s.draft == null ? "" : s.draft);
         v.put("origin_snapshot_id", s.originSnapshotId); v.put("parent_session_id", s.parentSessionId); v.put("preview", s.preview);
         return v;
