@@ -19,7 +19,7 @@ Status: v0.0.1 RC. The original baseline has since been compiled, fixed, and ver
 
 ## Remaining notes for the next agent / release
 
-1. Run the real-endpoint smoke with credentials before shipping: `SMOKE_REAL=1`, `SMOKE_OPENAI_API_KEY`, optional `SMOKE_OPENAI_BASE_URL` / `SMOKE_OPENAI_MODEL` / `SMOKE_OPENAI_PROTOCOL`, and `SMOKE_ANTHROPIC_API_KEY` / `SMOKE_ANTHROPIC_BASE_URL` / `SMOKE_ANTHROPIC_MODEL`.
+1. Run the real-endpoint smoke with credentials before shipping: `SMOKE_REAL=1`, `SMOKE_OPENAI_API_KEY`, optional `SMOKE_OPENAI_BASE_URL` / `SMOKE_OPENAI_MODEL` / `SMOKE_OPENAI_PROTOCOL` / `SMOKE_OPENAI_AUTH_MODE`, and `SMOKE_ANTHROPIC_API_KEY` / `SMOKE_ANTHROPIC_BASE_URL` / `SMOKE_ANTHROPIC_MODEL` / `SMOKE_ANTHROPIC_AUTH_MODE`. Anthropic base URLs use the API root form (for the official endpoint: `https://api.anthropic.com`); the transport appends `/v1/messages`.
 2. Production Moyu Remote release builds must include `ChatBridgeProvider` (implemented in the `moyu_ui` workspace copy; not yet part of the `D:\CC` release pipeline). Both APKs must share a signing key; install Remote before Chat so the signature permission is granted at install time.
 3. Release APK needs a real signing config; current release artifact is unsigned.
 4. Toolchain lives in `.tools/` (gitignored); `android/local.properties` points at the local SDK.
