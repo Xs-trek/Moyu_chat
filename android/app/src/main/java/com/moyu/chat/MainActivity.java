@@ -96,7 +96,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                     if (p.baseUrl.isEmpty()) p.baseUrl = suggestedBaseUrl(p.protocol); // per-protocol suggestion, blank for unknown protocols
                     if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
                     p.model = model.getText().toString().trim();
-                    p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
+                    p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(inputLimit.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
                     coordinator.saveProvider(p, key.getText().toString()); dialog.dismiss();
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
             }));
