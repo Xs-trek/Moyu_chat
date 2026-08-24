@@ -102,7 +102,7 @@ if (!render.includes('openConfirmDialog') || !styles.includes('modal-backdrop'))
 if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'")) fail('history edit/rollback UI intents missing');
 if (!coordinator.includes('editMessageBranch(') || !coordinator.includes('rollbackMessageBranch(')) fail('history edit/rollback must create durable local branches');
 if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.includes('reasoning-block')) fail('provider-emitted reasoning must have an explicit display toggle');
-if (!mainUi.includes("postIntent('context.intelligence.set'") || !render.includes('智能上下文')) fail('Smart Context must have an explicit user-facing toggle');
+if (!mainUi.includes("postIntent('context.mode.default.set'") || !render.includes('上下文 · 自动') || !render.includes('上下文 · 极简') || !render.includes('上下文 · Moyu 智能')) fail('context modes must be explicitly selectable when creating sessions');
 if (!render.includes('contextPreparing') || !render.includes('整理上下文')) fail('hidden preprocessing must be visible as a bounded UI state');
 if (!coordinator.includes('reasoningOut') || !coordinator.includes('outputTokensPerSecond') || !coordinator.includes('cachedInputTokens')) fail('reasoning/usage observability pipeline missing');
 if (!styles.includes('text-align:left') || !render.includes(' token/s')) fail('usage statistics must be left-aligned and use token units');
