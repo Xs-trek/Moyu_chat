@@ -558,6 +558,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         v.put("state", s.state); v.put("updated_at", s.updatedAt); v.put("draft", s.draft == null ? "" : s.draft);
         v.put("draft_media", s.draftMedia == null || s.draftMedia.trim().isEmpty() ? "[]" : s.draftMedia);
         v.put("origin_snapshot_id", s.originSnapshotId); v.put("parent_session_id", s.parentSessionId); v.put("preview", s.preview);
+        v.put("context_mode", ContextMode.normalize(s.contextMode));
         v.put("task_profile", s.taskProfile == null ? "" : s.taskProfile);
         v.put("context_checkpoint", s.contextCheckpoint == null ? "" : s.contextCheckpoint);
         v.put("checkpoint_covered_items", Math.max(0, s.checkpointCoveredItems));
