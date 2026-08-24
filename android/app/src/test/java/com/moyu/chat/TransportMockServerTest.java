@@ -42,6 +42,7 @@ public class TransportMockServerTest {
         final AtomicInteger terminals = new AtomicInteger();
         volatile int inputTokens = -1, outputTokens = -1;
         volatile String errorCode, errorSummary; volatile Boolean retryable; volatile boolean completed;
+        volatile String imageMime, imageBase64, imageFileName;
         final CountDownLatch terminal = new CountDownLatch(1);
         @Override public void onTextDelta(String delta) { text.append(delta); }
         @Override public void onUsage(Integer in, Integer out) { if (in != null) inputTokens = in; if (out != null) outputTokens = out; }
