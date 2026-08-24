@@ -591,10 +591,13 @@ final class ChatCoordinator implements AutoCloseable {
         if (taskProfile != null) o.put("taskProfile", taskProfile.toJson());
         o.put("hasContextCheckpoint", ContextCheckpoint.fromStored(s.contextCheckpoint) != null);
         if (originSnap != null) o.put("origin", new JSONObject().put("snapshotId", originSnap.id).put("sourceType", originSnap.sourceType).put("sourceTitle", originSnap.sourceTitle).put("sourceRuntime", originSnap.sourceRuntime == null ? JSONObject.NULL : originSnap.sourceRuntime).put("createdAt", originSnap.createdAt).put("itemCount", originSnap.itemCount).put("sourceItemCount", originSnap.sourceItemCount).put("truncated", originSnap.truncated));
-        if (detail) o.put("messages", displayTimeline(s)).put("composerDraft", s.draft == null ? "" : s.draft)
-                .put("draftMedia", db.draftMedia(s.id)).put("canAttachImage", ChatDatabase.supportsModality(s.inputModalities, "image") && !active)
-                .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", activeTurns.containsKey(s.id))
-                .put("contextPreparing", preparing);
+        if (detail) {
+            o.put("messages", displayTimeline(s)).put("composerDraft", s.draft == null ? "" : s.draft)
+                    .put("draftMedia", db.draftMedia(s.id)).put("canAttachImage", ChatDatabase.supportsModality(s.inputModalities, "image") && !active)
+                    .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", activeTurns.containsKey(s.id))
+                    .put("contextPreparing", preparing);
+            if (webPreparing) o.put("webPreparingStage", webPreparingStage);
+        }
         return o;
     }
 
