@@ -95,6 +95,20 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     @Override public void dispatch(JSONObject envelope) { String script = "window.dispatchEvent(new CustomEvent('moyu:view',{detail:JSON.parse(" + JSONObject.quote(envelope.toString()) + ")}));"; runOnUiThread(() -> { if (webView != null) webView.evaluateJavascript(script, null); }); }
     @Override public void showMessage(String text) { runOnUiThread(() -> Toast.makeText(this, text, Toast.LENGTH_LONG).show()); }
 
+    @Override public void openExternalUrl(String url) {
+        runOnUiThread(() -> {
+            try {
+                Uri uri = Uri.parse(url == null ? "" : url.trim());
+                if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getHost().trim().isEmpty()) {
+                    throw new IllegalArgumentException("Only HTTPS external links are allowed");
+                }
+                startActivity(new Intent(Intent.ACTION_VIEW, uri));
+            } catch (Exception error) {
+                Toast.makeText(this, error.getMessage() == null ? "Unable to open link" : error.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
     @Override public void openImagePicker(String sessionId) {
         runOnUiThread(() -> {
             pendingImageSessionId = sessionId;
