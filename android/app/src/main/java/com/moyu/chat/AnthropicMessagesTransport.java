@@ -208,6 +208,22 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         return false;
     }
 
+    private static void collectWebSources(Object value, ChatTransport.Sink sink) {
+        if (value instanceof JSONObject) {
+            JSONObject object = (JSONObject) value;
+            String url = object.optString("url", "");
+            if (url.startsWith("https://") || url.startsWith("http://")) {
+                String title = object.optString("title", "");
+                sink.onWebSource(url, title == null || title.trim().isEmpty() ? url : title.trim());
+            }
+            JSONArray names = object.names(); if (names == null) return;
+            for (int i = 0; i < names.length(); i++) collectWebSources(object.opt(names.optString(i)), sink);
+        } else if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            for (int i = 0; i < array.length(); i++) collectWebSources(array.opt(i), sink);
+        }
+    }
+
     private static String safe(Exception error) { String message = error.getMessage(); return message == null || message.isEmpty() ? error.getClass().getSimpleName() : message; }
     @Override public void close() { executor.shutdownNow(); }
 }
