@@ -124,6 +124,40 @@ function settings(view) {
   return h('main', { class: 'page' }, h('h1', { text: '设置' }), h('section', { class: 'card' }, h('div', { class: 'row' }, h('strong', { text: '主题' }), h('span', { class: 'grow' }), button(`${view.appearance.theme} → ${nextTheme}`, 'theme', { theme: nextTheme }, 'btn small'))), h('section', { class: 'card' }, h('strong', { text: '数据边界' }), h('p', { class: 'muted', text: 'Chat 使用自己的数据库。RemoteDataBridge 只提供 Snapshot/Handoff，不共享 SQLite 文件。' })));
 }
 
+function selectionInside(node) {
+  const selection = window.getSelection?.();
+  if (!node || !selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode) return false;
+  return node.contains(selection.anchorNode) || node.contains(selection.focusNode);
+}
+
+/** Patch the volatile conversation projection without replacing the focused composer/IME subtree. */
+export function patchConversation() {
+  const view = getState().view;
+  const session = view?.activeSession;
+  const scroll = document.querySelector('.timeline-scroll');
+  if (!session || view.route !== 'conversation' || !scroll || scroll.dataset.sessionId !== session.localSessionId) return false;
+  window.__moyuChatView = view;
+  const running = session.state === 'running';
+  const timeline = scroll.querySelector('.timeline');
+  const anchor = captureTimelineAnchor();
+  if (timeline && !selectionInside(timeline)) {
+    timeline.replaceChildren(...session.messages.map((item) => timelineItem(item, running)).filter(Boolean));
+  } else if (!running && timeline) {
+    timeline.querySelectorAll('.streaming-state').forEach((node) => node.remove());
+  }
+
+  const composer = document.querySelector(`form[data-form="composer"][data-session-id="${CSS.escape(session.localSessionId)}"]`);
+  const send = composer?.querySelector('.send-btn');
+  if (send) { send.disabled = !session.canSend; send.textContent = running ? '发送中' : '发送'; }
+  const input = composer?.querySelector('textarea[name="message"]');
+  if (input) input.placeholder = session.canSend ? (String(session.inputModalities || '').split(',').includes('image') ? '输入消息，或仅发送图片' : '输入消息') : '等待当前回合结束';
+  const existingInterrupt = composer?.querySelector('[data-action="interrupt"]');
+  if (!session.canInterrupt && existingInterrupt) existingInterrupt.remove();
+  else if (session.canInterrupt && !existingInterrupt && send) send.before(button('中断', 'interrupt', { sessionId: session.localSessionId }, 'btn danger'));
+  if (anchor) requestAnimationFrame(() => restoreTimelineAnchor(anchor, session.localSessionId));
+  return true;
+}
+
 function resolvedTheme(view) {
   const configured = view?.appearance?.theme || 'system';
   if (configured === 'dark' || configured === 'light') return configured;
