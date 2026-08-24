@@ -31,8 +31,8 @@ const db = read('android/app/src/main/java/com/moyu/chat/ChatDatabase.java');
 if (/insertWithOnConflict\("sessions"[\s\S]{0,160}CONFLICT_REPLACE/.test(db)) fail('sessions must never use INSERT OR REPLACE because timeline has ON DELETE CASCADE');
 if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery hook missing');
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
-if (!db.includes('private static final int VERSION = 7')) fail('v0.0.2 requires SQLite schema v7');
-for (const marker of ['task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 smart-context persistence missing: ${marker}`);
+if (!db.includes('private static final int VERSION = 8')) fail('v0.0.2 context modes require SQLite schema v8');
+for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
 if (!coordinator.includes('contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia)')) fail('send must preflight pending text+media using the session-snapshotted model limits before durable mutation');
