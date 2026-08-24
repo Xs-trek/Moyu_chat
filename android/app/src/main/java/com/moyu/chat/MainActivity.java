@@ -3,6 +3,7 @@ package com.moyu.chat;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -16,6 +17,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -28,8 +31,10 @@ import java.util.UUID;
 
 public final class MainActivity extends Activity implements ChatCoordinator.Host {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
+    private static final int REQUEST_IMAGE = 4201;
     private WebView webView;
     private ChatCoordinator coordinator;
+    private String pendingImageSessionId;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -56,12 +61,30 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     private final class LocalClient extends WebViewClient {
         @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             Uri uri = request.getUrl();
-            if (!"https".equals(uri.getScheme()) || !"appassets.androidplatform.net".equals(uri.getHost()) || !uri.getPath().startsWith("/assets/ui/")) return blocked();
-            String relative = uri.getPath().substring("/assets/ui/".length()); if (relative.contains("..")) return blocked();
-            try { InputStream in = getAssets().open("ui/" + relative); Map<String,String> headers = new LinkedHashMap<>(); headers.put("Cache-Control", "no-store"); headers.put("X-Content-Type-Options", "nosniff"); return new WebResourceResponse(mime(relative), "UTF-8", 200, "OK", headers, in); }
-            catch (Exception error) { return blocked(); }
+            if (!"https".equals(uri.getScheme()) || !"appassets.androidplatform.net".equals(uri.getHost())) return blocked();
+            String path = uri.getPath() == null ? "" : uri.getPath();
+            if (path.startsWith("/assets/ui/")) {
+                String relative = path.substring("/assets/ui/".length()); if (relative.contains("..")) return blocked();
+                try { InputStream in = getAssets().open("ui/" + relative); return response(mime(relative), "UTF-8", in); }
+                catch (Exception error) { return blocked(); }
+            }
+            if (path.startsWith("/media/")) {
+                String mediaId = path.substring("/media/".length());
+                try {
+                    ChatMediaStore store = ((MoyuChatApplication) getApplication()).mediaStore();
+                    return response(store.mimeType(mediaId), null, store.open(mediaId));
+                } catch (Exception error) { return blocked(); }
+            }
+            return blocked();
         }
-        @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { Uri uri = request.getUrl(); return !("https".equals(uri.getScheme()) && "appassets.androidplatform.net".equals(uri.getHost()) && uri.getPath().startsWith("/assets/ui/")); }
+        @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            Uri uri = request.getUrl(); String path = uri.getPath() == null ? "" : uri.getPath();
+            return !("https".equals(uri.getScheme()) && "appassets.androidplatform.net".equals(uri.getHost()) && path.startsWith("/assets/ui/"));
+        }
+        private WebResourceResponse response(String mime, String encoding, InputStream in) {
+            Map<String,String> headers = new LinkedHashMap<>(); headers.put("Cache-Control", "no-store"); headers.put("X-Content-Type-Options", "nosniff");
+            return new WebResourceResponse(mime, encoding, 200, "OK", headers, in);
+        }
         private WebResourceResponse blocked() { return new WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", new LinkedHashMap<>(), new ByteArrayInputStream(new byte[0])); }
     }
 
@@ -70,30 +93,46 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     @Override public void dispatch(JSONObject envelope) { String script = "window.dispatchEvent(new CustomEvent('moyu:view',{detail:JSON.parse(" + JSONObject.quote(envelope.toString()) + ")}));"; runOnUiThread(() -> { if (webView != null) webView.evaluateJavascript(script, null); }); }
     @Override public void showMessage(String text) { runOnUiThread(() -> Toast.makeText(this, text, Toast.LENGTH_LONG).show()); }
 
+    @Override public void openImagePicker(String sessionId) {
+        runOnUiThread(() -> {
+            pendingImageSessionId = sessionId;
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/jpeg", "image/png", "image/webp", "image/gif"});
+            startActivityForResult(intent, REQUEST_IMAGE);
+        });
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_IMAGE) return;
+        String sessionId = pendingImageSessionId; pendingImageSessionId = null;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null || sessionId == null) return;
+        ChatCoordinator c = coordinator; if (c != null) c.attachImageFromUri(sessionId, data.getData(), getContentResolver());
+    }
+
     @Override public void openProviderEditor(ChatDatabase.Provider existing) {
         runOnUiThread(() -> {
             ChatDatabase.Provider p = existing == null ? new ChatDatabase.Provider() : existing;
-            LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(28, 18, 28, 18);
-            EditText name = field(form, "显示名称", p.displayName == null ? "AI Provider" : p.displayName, false, false);
-            boolean isNew = existing == null;
-            EditText protocol = field(form, "协议: openai-chat-completions / openai-responses / anthropic-messages", p.protocol == null ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : p.protocol, false, false);
-            EditText auth = field(form, "Auth: bearer / x-api-key / api-key", p.authMode == null ? ProviderAuth.BEARER : p.authMode, false, false);
-            EditText reasoningWire = field(form, "Reasoning wire（留空按协议默认）: none / openai-responses / openai-chat-effort / anthropic-effort", isNew ? "" : (p.reasoningWire == null ? "" : p.reasoningWire), false, false);
-            EditText base = field(form, "Base URL（留空按协议默认；如 https://api.openai.com/v1）", p.baseUrl == null ? suggestedBaseUrl(p.protocol) : p.baseUrl, false, false);
-            EditText model = field(form, "初始 Model ID（创建后请在 Provider 页管理模型）", p.model == null ? "" : p.model, false, false);
-            EditText context = field(form, "初始 Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
-            EditText inputLimit = field(form, "初始 Max input tokens（0=按 context-output 自动计算）", String.valueOf(Math.max(0, p.inputTokens)), false, true);
-            EditText output = field(form, "初始 Max output tokens", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
+            LinearLayout form = editorForm(); boolean isNew = existing == null;
+            EditText name = field(form, "显示名称", "仅用于本机识别这个 endpoint，不会发送给模型。", "例如 OpenCode Go", p.displayName == null ? "AI Provider" : p.displayName, false, false);
+            EditText protocol = field(form, "协议 (protocol)", "决定请求体和固定路径：openai-chat-completions → /chat/completions；openai-responses → /responses；anthropic-messages → /v1/messages。", "openai-chat-completions", p.protocol == null ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : p.protocol, false, false);
+            EditText auth = field(form, "鉴权方式 (authMode)", "bearer = Authorization: Bearer <key>；x-api-key = x-api-key: <key>；api-key = api-key: <key>。密钥是否以 sk- 开头不决定鉴权方式。", "bearer", p.authMode == null ? ProviderAuth.BEARER : p.authMode, false, false);
+            EditText reasoningWire = field(form, "推理参数映射 (reasoningWire)", "把中立 reasoning 档位映射到该 endpoint 的 JSON。可用：none / openai-responses / openai-chat-effort / anthropic-effort。留空按协议默认。", "例如 openai-chat-effort", isNew ? "" : (p.reasoningWire == null ? "" : p.reasoningWire), false, false);
+            EditText base = field(form, "Base URL", "填写最终固定路径之前的前缀，不要写 /chat/completions、/responses 或 /v1/messages。例：OpenCode Go 的 Chat/Responses 用 https://opencode.ai/zen/go/v1；Anthropic 协议用 https://opencode.ai/zen/go。", "https://api.openai.com/v1", p.baseUrl == null ? suggestedBaseUrl(p.protocol) : p.baseUrl, false, false);
+            EditText model = field(form, "初始 Model ID", "仅在新建 Provider 时用于创建第一个 Model Profile；之后模型统一在 Provider 页面单独管理。这里填写 API body 实际发送的裸 model ID。", "例如 deepseek-v4-flash-vision-exp", p.model == null ? "" : p.model, false, false);
+            EditText context = field(form, "初始 Context tokens", "该模型部署的总上下文窗口。只用于创建初始 Model Profile；不是自动探测值。", "32000", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
+            EditText inputLimit = field(form, "初始 Max input tokens", "0 表示按 context - output - safety 自动计算；若托管平台有更低输入上限，请填写实际限制。", "0", String.valueOf(Math.max(0, p.inputTokens)), false, true);
+            EditText output = field(form, "初始 Max output tokens", "单次响应允许的最大输出 token，用于本地预算和 API 请求字段。", "4096", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
             model.setEnabled(isNew); context.setEnabled(isNew); inputLimit.setEnabled(isNew); output.setEnabled(isNew);
-            EditText key = field(form, "API Key（留空保留已有）", "", true, false);
-            AlertDialog dialog = new AlertDialog.Builder(this).setTitle(existing == null ? "配置 Provider" : "编辑 Provider").setView(form).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+            EditText key = field(form, "API Key", "仅保存在 Android 原生安全存储中，不进入 WebView、SQLite 或消息正文。留空表示保留已有密钥。", "sk-…", "", true, false);
+            AlertDialog dialog = new AlertDialog.Builder(this).setTitle(existing == null ? "配置 Provider" : "编辑 Provider").setView(scroll(form)).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
                     if (p.id == null) p.id = "provider-" + UUID.randomUUID();
                     p.displayName = name.getText().toString().trim(); p.protocol = protocol.getText().toString().trim();
                     p.authMode = auth.getText().toString().trim(); p.reasoningWire = reasoningWire.getText().toString().trim();
                     p.baseUrl = base.getText().toString().trim();
-                    if (p.baseUrl.isEmpty()) p.baseUrl = suggestedBaseUrl(p.protocol); // per-protocol suggestion, blank for unknown protocols
+                    if (p.baseUrl.isEmpty()) p.baseUrl = suggestedBaseUrl(p.protocol);
                     if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
                     p.model = model.getText().toString().trim();
                     p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(inputLimit.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
@@ -108,23 +147,23 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         runOnUiThread(() -> {
             if (provider == null) return;
             ChatDatabase.ModelProfile p = existing == null ? new ChatDatabase.ModelProfile() : existing;
-            LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(28, 18, 28, 18);
-            EditText name = field(form, "模型显示名称", p.displayName == null ? "" : p.displayName, false, false);
-            EditText model = field(form, "Model ID（实际发送给 API）", p.modelId == null ? "" : p.modelId, false, false);
-            EditText context = field(form, "Context tokens", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
-            EditText input = field(form, "Max input tokens（0=按 context-output 自动）", String.valueOf(Math.max(0, p.inputTokens)), false, true);
-            EditText output = field(form, "Max output tokens", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
-            EditText levels = field(form, "Reasoning levels（逗号分隔；留空=不暴露档位）", p.reasoningLevels == null ? "" : p.reasoningLevels, false, false);
-            EditText effort = field(form, "Default reasoning: default / none / low / medium / high / xhigh / max", p.defaultReasoning == null ? ReasoningPolicy.DEFAULT : p.defaultReasoning, false, false);
-            AlertDialog dialog = new AlertDialog.Builder(this).setTitle((existing == null ? "新增模型 · " : "编辑模型 · ") + provider.displayName).setView(form).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+            LinearLayout form = editorForm();
+            EditText name = field(form, "模型显示名称", "仅用于本机 UI，可与实际 Model ID 不同。", "例如 DeepSeek V4 Flash Vision", p.displayName == null ? "" : p.displayName, false, false);
+            EditText model = field(form, "Model ID", "实际写入 API 请求 body 的 model 字符串。不要填写 OpenCode 客户端自己的 provider/model 前缀。", "deepseek-v4-flash-vision-exp", p.modelId == null ? "" : p.modelId, false, false);
+            EditText inputModalities = field(form, "输入模态 (inputModalities)", "text = 纯文本；text,image = 允许在 Chat 中选择图片并作为多模态 content block 发送。只有确认 endpoint 支持图片时才加入 image。", "text,image", p.inputModalities == null ? "text" : p.inputModalities, false, false);
+            EditText outputModalities = field(form, "输出模态 (outputModalities)", "text = 常规文本响应；text,image = 允许保存并显示 provider 返回的图片结果。该字段不会自动启用服务端 image_generation 工具。", "text", p.outputModalities == null ? "text" : p.outputModalities, false, false);
+            EditText context = field(form, "Context tokens", "该 endpoint 上这个模型的总上下文窗口；不同托管平台即使模型名相同也可不同。", "32000", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
+            EditText input = field(form, "Max input tokens", "0 = 自动使用 context - output - safety；若平台明确限制输入上限则填实际值。图片也会占用本地保守估算预算。", "0", String.valueOf(Math.max(0, p.inputTokens)), false, true);
+            EditText output = field(form, "Max output tokens", "本地预留的最大输出，同时映射到 max_tokens 或 max_output_tokens。", "4096", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
+            EditText levels = field(form, "支持的推理档位 (reasoningLevels)", "逗号分隔，例如 low,medium,high。留空表示 UI 不提供推理档位选择，也不会假设模型支持 reasoning。", "low,medium,high", p.reasoningLevels == null ? "" : p.reasoningLevels, false, false);
+            EditText effort = field(form, "默认推理档位 (defaultReasoning)", "default = 不发送额外 reasoning 参数；也可选 none / low / medium / high / xhigh / max，但必须包含在上面的支持列表中。", "default", p.defaultReasoning == null ? ReasoningPolicy.DEFAULT : p.defaultReasoning, false, false);
+            AlertDialog dialog = new AlertDialog.Builder(this).setTitle((existing == null ? "新增模型 · " : "编辑模型 · ") + provider.displayName).setView(scroll(form)).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
                     if (p.id == null) p.id = "model-" + UUID.randomUUID();
-                    p.providerId = provider.id; p.modelId = model.getText().toString().trim();
-                    p.displayName = name.getText().toString().trim();
-                    p.contextTokens = Integer.parseInt(context.getText().toString().trim());
-                    p.inputTokens = Integer.parseInt(input.getText().toString().trim());
-                    p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
+                    p.providerId = provider.id; p.modelId = model.getText().toString().trim(); p.displayName = name.getText().toString().trim();
+                    p.inputModalities = inputModalities.getText().toString().trim(); p.outputModalities = outputModalities.getText().toString().trim();
+                    p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(input.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
                     p.reasoningLevels = levels.getText().toString().trim(); p.defaultReasoning = effort.getText().toString().trim();
                     coordinator.saveModelProfile(p); dialog.dismiss();
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
@@ -142,7 +181,12 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         return "";
     }
 
-    private EditText field(LinearLayout parent, String hint, String value, boolean secret, boolean numeric) {
+    private LinearLayout editorForm() { LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(32, 24, 32, 24); return form; }
+    private ScrollView scroll(LinearLayout form) { ScrollView scroll = new ScrollView(this); scroll.addView(form, new ScrollView.LayoutParams(-1, -2)); return scroll; }
+
+    private EditText field(LinearLayout parent, String label, String help, String hint, String value, boolean secret, boolean numeric) {
+        TextView title = new TextView(this); title.setText(label); title.setTextSize(16); title.setPadding(0, 14, 0, 2); parent.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView description = new TextView(this); description.setText(help); description.setTextSize(12); description.setPadding(0, 0, 0, 4); parent.addView(description, new LinearLayout.LayoutParams(-1, -2));
         EditText input = new EditText(this); input.setHint(hint); input.setText(value); input.setSingleLine(true);
         if (secret) input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         else if (numeric) input.setInputType(InputType.TYPE_CLASS_NUMBER);
