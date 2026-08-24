@@ -339,7 +339,7 @@ export function patchConversation() {
   const timeline = scroll.querySelector('.timeline');
   const anchor = captureTimelineAnchor();
   if (timeline && !selectionInside(timeline)) {
-    timeline.replaceChildren(...session.messages.map((item) => timelineItem(item, running, session.localSessionId, Boolean(view.ui?.showReasoning))).filter(Boolean));
+    reconcileTimeline(timeline, session.messages, running, session.localSessionId, Boolean(view.ui?.showReasoning));
   } else if (!running && timeline) {
     timeline.querySelectorAll('.streaming-state').forEach((node) => node.remove());
   }
