@@ -101,6 +101,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("UPDATE sessions SET model_profile_id=provider_id || ':default' WHERE model=(SELECT model FROM providers WHERE providers.provider_id=sessions.provider_id)");
             db.execSQL("UPDATE sessions SET context_tokens=COALESCE((SELECT context_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),32000), input_tokens=COALESCE((SELECT input_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),0), max_output_tokens=COALESCE((SELECT max_output_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),4096)");
         }
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN input_modalities TEXT NOT NULL DEFAULT 'text'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN draft_media TEXT NOT NULL DEFAULT '[]'");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
