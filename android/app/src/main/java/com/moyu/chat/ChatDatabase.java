@@ -20,7 +20,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     private static final int VERSION = 6;
 
     public static final class Session {
-        public String id, title, providerId, modelProfileId, model, reasoningEffort, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
+        public String id, title, providerId, modelProfileId, model, reasoningEffort, inputModalities, outputModalities, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
         public int contextTokens, inputTokens, maxOutputTokens;
     }
 
