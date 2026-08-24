@@ -80,6 +80,9 @@ public class ChatCoordinatorE2eTest {
         secrets = new FakeSecretStore();
         coordinator = new ChatCoordinator(app, host, secrets, new UnavailableRemoteDataBridge());
         post("app.ready", new JSONObject());
+        // Legacy transport/state E2Es assert one provider request per user turn. v0.0.2 smart-context
+        // preflight has dedicated tests and is disabled here so these remain protocol-isolation tests.
+        post("context.intelligence.set", new JSONObject().put("enabled", false));
     }
 
     @After public void tearDown() throws Exception {
