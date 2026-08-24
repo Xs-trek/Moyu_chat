@@ -104,9 +104,20 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                         if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
                         continue;
                     }
-                    String data = line.substring(5).trim(); if (data.isEmpty()) continue;
-                    sawData = true; lastSemantic = now;
-                    JSONObject event; try { event = new JSONObject(data); } catch (Exception ignored) { continue; }
+                    String data = line.substring(5).trim();
+                    if (data.isEmpty()) {
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        continue;
+                    }
+                    sawData = true;
+                    JSONObject event;
+                    try { event = new JSONObject(data); }
+                    catch (Exception ignored) {
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        continue;
+                    }
+                    if (!event.optString("type", "").isEmpty()) lastSemantic = now;
+                    else if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
                     if (parse(event, sink)) return;
                 }
             }
