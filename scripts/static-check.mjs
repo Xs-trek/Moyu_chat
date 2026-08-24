@@ -74,6 +74,11 @@ if (mainUi.includes('window.confirm(')) fail('WebView actions must not depend on
 if (!render.includes('openConfirmDialog') || !styles.includes('modal-backdrop')) fail('app-owned confirmation surface missing');
 if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'")) fail('history edit/rollback UI intents missing');
 if (!coordinator.includes('editMessageBranch(') || !coordinator.includes('rollbackMessageBranch(')) fail('history edit/rollback must create durable local branches');
+if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.includes('reasoning-block')) fail('provider-emitted reasoning must have an explicit display toggle');
+if (!coordinator.includes('reasoningOut') || !coordinator.includes('outputTokensPerSecond') || !coordinator.includes('cachedInputTokens')) fail('reasoning/usage observability pipeline missing');
+const contextBuilder = read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java');
+if (contextBuilder.includes('optString("reasoning"')) fail('provider reasoning must never be projected into CanonicalPrompt');
+if (!styles.includes('text-align:left') || !render.includes(' token/s')) fail('usage statistics must be left-aligned and use token units');
 if (!openAiTransport.includes('.fastFallback(true)')) fail('OpenAI-compatible transport must retain fast IPv6/IPv4 fallback');
 
 const manifest = read('android/app/src/main/AndroidManifest.xml');
