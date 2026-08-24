@@ -42,9 +42,21 @@ if (!coordinator.includes('db.recoverInterruptedSessions()')) fail('coordinator 
 const registry = read('android/app/src/main/java/com/moyu/chat/ChatTransportRegistry.java');
 for (const protocol of ['CHAT_COMPLETIONS', 'RESPONSES', 'AnthropicMessagesTransport.PROTOCOL']) if (!registry.includes(protocol)) fail(`transport registry missing ${protocol}`);
 
+const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
+if (!mainActivity.includes('setVerticalScrollBarEnabled(false)') || !mainActivity.includes('setHorizontalScrollBarEnabled(false)')) fail('WebView chrome scrollbars must remain disabled');
+if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
+
+const styles = read('src/styles.css');
+for (const marker of ['overflow-x:hidden', 'conversation-active', '100dvh', 'timeline-scroll']) if (!styles.includes(marker)) fail(`native-feeling viewport/scroll constraint missing: ${marker}`);
+const bridge = read('src/bridge.js');
+if (!bridge.includes('MAX_MESSAGE_BYTES = 1024 * 1024') || !bridge.includes('revision <= getState().revision')) fail('WebView Host bridge size/revision guards missing');
+const renderGate = read('src/render-gate.js');
+if (!renderGate.includes('pointerActive') || !renderGate.includes('composing') || !renderGate.includes('document.activeElement')) fail('destructive render gate missing interaction guards');
+
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 if (!manifest.includes('android:allowBackup="false"')) fail('Android backup must remain disabled for local chat data/secrets');
 if (!manifest.includes('android:usesCleartextTraffic="false"')) fail('cleartext provider traffic must remain disabled in v0.0.1');
+if (!manifest.includes('android:windowSoftInputMode="adjustResize"')) fail('conversation viewport must resize with the Android keyboard');
 
 const html = read('index.html');
 if (!html.includes("connect-src 'none'")) fail('WebView CSP must block direct network connections');
