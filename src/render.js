@@ -29,6 +29,22 @@ function mediaGallery(items, removable = false, sessionId = '') {
   )));
 }
 
+/** App-owned confirmation UI. Do not depend on window.confirm/WebChromeClient behavior. */
+export function openConfirmDialog({ title, message, confirmText = '确认', danger = false, onConfirm }) {
+  document.querySelector('.modal-backdrop[data-moyu-modal]')?.remove();
+  const cancel = button('取消', 'modal-cancel', {}, 'btn');
+  const confirm = button(confirmText, 'modal-confirm', {}, `btn ${danger ? 'danger' : 'primary'}`);
+  const overlay = h('div', { class: 'modal-backdrop', dataset: { moyuModal: '1' } },
+    h('section', { class: 'modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': title || '确认操作' },
+      h('h2', { text: title || '确认操作' }), h('p', { text: message || '' }), h('div', { class: 'modal-actions' }, cancel, confirm)));
+  const close = () => overlay.remove();
+  cancel.addEventListener('click', close);
+  confirm.addEventListener('click', () => { close(); onConfirm?.(); });
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) close(); });
+  document.body.append(overlay);
+  confirm.focus();
+}
+
 function shell(view, body) {
   const routes = [['home','Chat'],['imports','分支'],['providers','Provider'],['handoffs','回传'],['settings','设置']];
   const conversationActive = view.route === 'conversation' && view.activeSession;
