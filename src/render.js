@@ -100,11 +100,41 @@ function streamStageLabel(stage) {
   return '等待响应';
 }
 
-function timelineItem(item, runtimeRunning = false, sessionId = '') {
+function tokenCount(value) { return Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : null; }
+function seconds(ms) { return `${(Math.max(0, Number(ms) || 0) / 1000).toFixed(2)}s`; }
+
+function usageSummary(item) {
+  const parts = [];
+  const input = tokenCount(item.inputTokens);
+  const output = tokenCount(item.outputTokens);
+  const estimated = tokenCount(item.context?.estimatedInputTokens);
+  if (input !== null) parts.push(`输入 ${input.toLocaleString()} token`);
+  else if (estimated !== null) parts.push(`输入 ≈${estimated.toLocaleString()} token`);
+  if (output !== null) parts.push(`输出 ${output.toLocaleString()} token`);
+  const cached = tokenCount(item.cachedInputTokens);
+  const cacheBase = tokenCount(item.cacheHitBaseTokens);
+  if (cached !== null) {
+    const rate = cacheBase && cacheBase > 0 ? ` (${Math.min(100, cached * 100 / cacheBase).toFixed(1)}%)` : '';
+    parts.push(`缓存命中 ${cached.toLocaleString()} token${rate}`);
+  }
+  const cacheWrite = tokenCount(item.cacheWriteInputTokens);
+  if (cacheWrite !== null && cacheWrite > 0) parts.push(`缓存写入 ${cacheWrite.toLocaleString()} token`);
+  const reasoningTokens = tokenCount(item.reasoningTokens);
+  if (reasoningTokens !== null && reasoningTokens > 0) parts.push(`推理 ${reasoningTokens.toLocaleString()} token`);
+  const speed = Number(item.outputTokensPerSecond);
+  if (Number.isFinite(speed) && speed > 0) parts.push(`输出 ${speed.toFixed(1)} token/s`);
+  if (item.firstOutputLatencyMs !== undefined) parts.push(`首输出 ${seconds(item.firstOutputLatencyMs)}`);
+  if (item.requestDurationMs !== undefined) parts.push(`总耗时 ${seconds(item.requestDurationMs)}`);
+  return parts.length ? parts.join(' · ') : '暂无 token usage';
+}
+
+function timelineItem(item, runtimeRunning = false, sessionId = '', showReasoning = false) {
   if (item.kind === 'message') {
     const finalized = !item.streaming && !runtimeRunning && Number(item.localSeq) > 0 && (item.role === 'user' || item.role === 'assistant');
+    const reasoning = item.role === 'assistant' ? String(item.reasoning || '') : '';
     return h('article', { class: `bubble ${item.role}` },
       h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? 'Moyu Chat' : '系统' }), item.inherited ? badge('历史', 'quiet') : null, h('small', { text: fmt(item.createdAt) })),
+      reasoning && showReasoning ? h('details', { class: 'reasoning-block', open: Boolean(item.streaming && runtimeRunning) }, h('summary', { text: '模型推理' }), h('pre', { class: 'reasoning-text', text: reasoning })) : null,
       item.text ? h('pre', { class: 'message', text: item.text }) : null,
       mediaGallery(item.attachments),
       item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: streamStageLabel(item.streamStage) }) : null,
@@ -112,7 +142,7 @@ function timelineItem(item, runtimeRunning = false, sessionId = '') {
         item.role === 'user' ? button('编辑', 'edit-message', { sessionId, localSeq: item.localSeq }, 'btn small') : null,
         button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
   }
-  if (item.kind === 'usage') return h('article', { class: 'usage', text: `输入 ${item.inputTokens || 0} · 输出 ${item.outputTokens || 0}` });
+  if (item.kind === 'usage') return h('article', { class: 'usage', text: usageSummary(item) });
   if (item.kind === 'error') return h('article', { class: 'error' }, h('strong', { text: item.summary }), h('code', { text: item.code }));
   return null;
 }
