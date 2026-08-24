@@ -231,12 +231,28 @@ final class ChatCoordinator implements AutoCloseable {
         JSONObject usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString()).put("context", prompt.diagnostics());
         boolean[] usagePersisted = new boolean[]{false};
         ChatTransport.Sink sink = new ChatTransport.Sink() {
-            @Override public void onStage(String stage) { worker.execute(() -> { try { if (stage == null || stage.trim().isEmpty()) return; streamStage[0] = stage.trim(); JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage[0]); if (outputMedia.length() > 0) next.put("attachments", outputMedia); db.replaceTimelineBody(streamKey, next); emitView(); } catch (Exception ignored) { } }); }
-            @Override public void onTextDelta(String delta) { worker.execute(() -> { try { streamStage[0] = "output"; textOut.append(delta); JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage[0]); if (outputMedia.length() > 0) next.put("attachments", outputMedia); db.replaceTimelineBody(streamKey, next); emitView(); } catch (Exception ignored) { } }); }
-            @Override public void onImage(String mimeType, String base64, String fileName) { if (!allowImageOutput) return; worker.execute(() -> { try { streamStage[0] = "output"; JSONObject image = mediaStore.saveBase64Image(mimeType, base64, fileName); outputMedia.put(image); JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage[0]).put("attachments", outputMedia); db.replaceTimelineBody(streamKey, next); emitView(); } catch (Exception error) { host.showMessage("image output ignored: " + safe(error)); } }); }
-            @Override public void onUsage(Integer in, Integer out) { worker.execute(() -> { try { if (in != null) usageState.put("inputTokens", in); if (out != null) usageState.put("outputTokens", out); if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState); else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; } } catch (Exception ignored) { } }); }
-            @Override public void onCompleted() { worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), outputMedia, null)); }
-            @Override public void onError(String code, String summary, boolean retryable) { worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), outputMedia, new String[]{code, summary})); }
+            private JSONObject liveProjection() throws Exception {
+                JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage[0]);
+                if (reasoningOut.length() > 0) next.put("reasoning", reasoningOut.toString());
+                if (outputMedia.length() > 0) next.put("attachments", outputMedia);
+                return next;
+            }
+            @Override public void onStage(String stage) { worker.execute(() -> { try { if (stage == null || stage.trim().isEmpty()) return; streamStage[0] = stage.trim(); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception ignored) { } }); }
+            @Override public void onReasoningDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { streamStage[0] = "reasoning"; reasoningOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception ignored) { } }); }
+            @Override public void onTextDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage[0] = "output"; textOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception ignored) { } }); }
+            @Override public void onImage(String mimeType, String base64, String fileName) { if (!allowImageOutput) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage[0] = "output"; JSONObject image = mediaStore.saveBase64Image(mimeType, base64, fileName); outputMedia.put(image); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception error) { host.showMessage("image output ignored: " + safe(error)); } }); }
+            @Override public void onUsage(Integer in, Integer out) { onUsageDetails(in, out, null, null, null, null); }
+            @Override public void onUsageDetails(Integer in, Integer out, Integer cached, Integer cacheWrite, Integer cacheBase, Integer reasoningTokens) { worker.execute(() -> { try {
+                if (in != null) usageState.put("inputTokens", Math.max(0, in));
+                if (out != null) usageState.put("outputTokens", Math.max(0, out));
+                if (cached != null) usageState.put("cachedInputTokens", Math.max(0, cached));
+                if (cacheWrite != null) usageState.put("cacheWriteInputTokens", Math.max(0, cacheWrite));
+                if (cacheBase != null) usageState.put("cacheHitBaseTokens", Math.max(0, cacheBase));
+                if (reasoningTokens != null) usageState.put("reasoningTokens", Math.max(0, reasoningTokens));
+                if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState); else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; }
+            } catch (Exception ignored) { } }); }
+            @Override public void onCompleted() { worker.execute(() -> { settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]); finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, null); }); }
+            @Override public void onError(String code, String summary, boolean retryable) { worker.execute(() -> { settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]); finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, new String[]{code, summary}); }); }
         };
         ChatTransport.Turn turn;
         try {
