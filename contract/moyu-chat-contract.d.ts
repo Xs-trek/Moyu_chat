@@ -143,6 +143,7 @@ export interface SessionDetailView extends SessionView {
   canSend: boolean;
   canInterrupt: boolean;
   contextPreparing?: boolean;
+  webPreparingStage?: 'web_search' | 'web_fetch' | string;
 }
 
 export interface RemoteBridgeView {
