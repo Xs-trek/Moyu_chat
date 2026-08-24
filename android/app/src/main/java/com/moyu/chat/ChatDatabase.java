@@ -307,7 +307,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized ModelProfile getModelProfile(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning FROM model_profiles WHERE profile_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,input_modalities,output_modalities FROM model_profiles WHERE profile_id=?", new String[]{id})) {
             return c.moveToFirst() ? readModelProfile(c) : null;
         }
     }
