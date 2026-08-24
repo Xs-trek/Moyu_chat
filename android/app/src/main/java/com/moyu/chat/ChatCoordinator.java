@@ -318,7 +318,9 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("state", s.state).put("updatedAt", s.updatedAt);
         if (s.preview != null) o.put("preview", s.preview);
         if (s.originSnapshotId != null) { ChatDatabase.Snapshot snap = db.getSnapshot(s.originSnapshotId); if (snap != null) o.put("origin", new JSONObject().put("snapshotId", snap.id).put("sourceType", snap.sourceType).put("sourceTitle", snap.sourceTitle).put("sourceRuntime", snap.sourceRuntime == null ? JSONObject.NULL : snap.sourceRuntime).put("createdAt", snap.createdAt).put("itemCount", snap.itemCount).put("sourceItemCount", snap.sourceItemCount).put("truncated", snap.truncated)); }
-        if (detail) o.put("messages", db.timeline(s.id)).put("composerDraft", s.draft == null ? "" : s.draft).put("canSend", p != null && secrets.has(s.providerId) && !activeTurns.containsKey(s.id)).put("canInterrupt", activeTurns.containsKey(s.id));
+        if (detail) o.put("messages", db.timeline(s.id)).put("composerDraft", s.draft == null ? "" : s.draft)
+                .put("draftMedia", db.draftMedia(s.id)).put("canAttachImage", ChatDatabase.supportsModality(s.inputModalities, "image") && !activeTurns.containsKey(s.id))
+                .put("canSend", p != null && secrets.has(s.providerId) && !activeTurns.containsKey(s.id)).put("canInterrupt", activeTurns.containsKey(s.id));
         return o;
     }
 
