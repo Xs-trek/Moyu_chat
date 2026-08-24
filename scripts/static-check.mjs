@@ -46,6 +46,8 @@ if (!coordinator.includes('db.beginTurn(') || !coordinator.includes('db.finalize
 if (!coordinator.includes('if (activeTurns.containsKey(id)) throw new IllegalStateException("interrupt the current turn before deleting this session")')) fail('running provider turns must not be deleted underneath asynchronous callbacks');
 if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
 if (!coordinator.includes('context.mode.default.set') || !coordinator.includes('defaultContextMode')) fail('v0.0.2 default context-mode authority missing');
+if (!coordinator.includes('web.mode.default.set') || !coordinator.includes('defaultWebMode') || !coordinator.includes('MoyuWebService')) fail('v0.0.2 Web-mode authority/orchestration missing');
+if (!coordinator.includes('ChatTurnOptions.NONE') && !read('android/app/src/main/java/com/moyu/chat/TaskRouter.java').includes('transport.complete(provider, apiKey, model, CanonicalPrompt.fromText')) fail('hidden preprocessing must not inherit main-turn Web options');
 if (!coordinator.includes('ContextMode.resolve(') || !coordinator.includes('taskRouter.route(') || !coordinator.includes('checkpointService.update(')) fail('v0.0.2 session context-mode/router/checkpoint orchestration missing');
 if (!coordinator.includes('.put("incomplete", true).put("terminalCode"')) fail('partial provider turns must preserve incomplete semantics');
 
