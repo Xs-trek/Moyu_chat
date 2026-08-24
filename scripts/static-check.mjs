@@ -40,6 +40,7 @@ if (/\bput\("text",\s*trimmed\b/.test(coordinator)) fail('send must store the ra
 if (!coordinator.includes('db.recoverInterruptedSessions()')) fail('coordinator must recover stale running sessions at startup');
 if (!coordinator.includes('"assistant:live:" + id + ":" + UUID.randomUUID()')) fail('every provider turn must use a unique live assistant key');
 if (!coordinator.includes('db.beginTurn(') || !coordinator.includes('db.finalizeTurn(')) fail('turn start/finalization must use the durable transactional state helpers');
+if (!coordinator.includes('if (activeTurns.containsKey(id)) throw new IllegalStateException("interrupt the current turn before deleting this session")')) fail('running provider turns must not be deleted underneath asynchronous callbacks');
 if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
 
 const openAiTransport = read('android/app/src/main/java/com/moyu/chat/OpenAiCompatibleTransport.java');
