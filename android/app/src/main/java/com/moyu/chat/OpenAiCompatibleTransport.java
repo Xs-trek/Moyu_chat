@@ -196,33 +196,34 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         }
     }
 
-    private static void parseResponses(JSONObject event, ChatTransport.Sink sink, Set<String> emittedImages) {
+    static boolean parseResponses(JSONObject event, ChatTransport.Sink sink, Set<String> emittedImages) {
         String type = event.optString("type");
         if ("response.output_text.delta".equals(type)) {
-            String delta = event.optString("delta", ""); if (!delta.isEmpty()) sink.onTextDelta(delta); return;
+            String delta = event.optString("delta", ""); if (!delta.isEmpty()) sink.onTextDelta(delta); return false;
         }
         if ("response.output_item.done".equals(type)) {
-            emitImageItem(event.optJSONObject("item"), sink, emittedImages); return;
+            emitImageItem(event.optJSONObject("item"), sink, emittedImages); return false;
         }
         if ("response.completed".equals(type)) {
-            JSONObject response = event.optJSONObject("response"); emitResponseImages(response, sink, emittedImages); emitResponseUsage(response, sink); sink.onCompleted(); return;
+            JSONObject response = event.optJSONObject("response"); emitResponseImages(response, sink, emittedImages); emitResponseUsage(response, sink); sink.onCompleted(); return true;
         }
         if ("response.incomplete".equals(type)) {
             JSONObject response = event.optJSONObject("response"); emitResponseImages(response, sink, emittedImages); emitResponseUsage(response, sink);
             JSONObject details = response == null ? null : response.optJSONObject("incomplete_details");
             String reason = details == null ? "unknown" : details.optString("reason", "unknown");
-            sink.onError("response_incomplete", "Response incomplete: " + reason, false); return;
+            sink.onError("response_incomplete", "Response incomplete: " + reason, false); return true;
         }
         if ("response.failed".equals(type)) {
             JSONObject response = event.optJSONObject("response"); JSONObject error = response == null ? null : response.optJSONObject("error");
-            sink.onError(error == null ? "response_failed" : error.optString("code", "response_failed"), error == null ? "Response failed" : error.optString("message", "Response failed"), true); return;
+            sink.onError(error == null ? "response_failed" : error.optString("code", "response_failed"), error == null ? "Response failed" : error.optString("message", "Response failed"), true); return true;
         }
         if ("error".equals(type)) {
             JSONObject nested = event.optJSONObject("error");
             String code = nested == null ? event.optString("code", "provider_error") : nested.optString("code", nested.optString("type", "provider_error"));
             String message = nested == null ? event.optString("message", "Provider error") : nested.optString("message", "Provider error");
-            sink.onError(code, message, false);
+            sink.onError(code, message, false); return true;
         }
+        return false;
     }
 
     private static void emitResponseImages(JSONObject response, ChatTransport.Sink sink, Set<String> emittedImages) {
