@@ -31,7 +31,8 @@ const db = read('android/app/src/main/java/com/moyu/chat/ChatDatabase.java');
 if (/insertWithOnConflict\("sessions"[\s\S]{0,160}CONFLICT_REPLACE/.test(db)) fail('sessions must never use INSERT OR REPLACE because timeline has ON DELETE CASCADE');
 if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery hook missing');
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
-if (!db.includes('private static final int VERSION = 8')) fail('v0.0.2 context modes require SQLite schema v8');
+if (!db.includes('private static final int VERSION = 9')) fail('v0.0.2 Web capability persistence requires SQLite schema v9');
+for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
