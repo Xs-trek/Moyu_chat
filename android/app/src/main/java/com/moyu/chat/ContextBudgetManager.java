@@ -19,11 +19,13 @@ final class ContextBudgetManager {
         final JSONArray messages;
         final boolean truncated;
         final int estimatedTokens;
+        final int omittedMessageCount;
 
-        Result(JSONArray messages, boolean truncated, int estimatedTokens) {
+        Result(JSONArray messages, boolean truncated, int estimatedTokens, int omittedMessageCount) {
             this.messages = messages;
             this.truncated = truncated;
             this.estimatedTokens = estimatedTokens;
+            this.omittedMessageCount = Math.max(0, omittedMessageCount);
         }
     }
 
@@ -31,6 +33,10 @@ final class ContextBudgetManager {
         return select(instructions, chronological, contextTokens, 0, outputTokens);
     }
 
+    /**
+     * Select complete user-led turns newest-first. A turn begins at a user message and includes the
+     * following assistant messages until the next user. Orphan leading assistants are never sent.
+     */
     Result select(String instructions, JSONArray chronological, int contextTokens, int inputTokens, int outputTokens) {
         int total = contextTokens > 0 ? contextTokens : DEFAULT_CONTEXT_TOKENS;
         int output = outputTokens > 0 ? outputTokens : DEFAULT_OUTPUT_TOKENS;
@@ -43,27 +49,52 @@ final class ContextBudgetManager {
         int used = estimate(instructions) + MESSAGE_OVERHEAD_TOKENS;
         if (used >= budget) throw new IllegalArgumentException("Moyu instructions exceed the configured input budget");
 
-        ArrayList<JSONObject> keptReverse = new ArrayList<>();
+        ArrayList<ArrayList<JSONObject>> groups = groupTurns(chronological);
+        ArrayList<ArrayList<JSONObject>> keptReverse = new ArrayList<>();
+        int keptMessages = 0;
         boolean truncated = false;
-        for (int i = chronological.length() - 1; i >= 0; i--) {
-            JSONObject item = chronological.optJSONObject(i);
-            if (item == null) continue;
-            int cost = estimate(item.optString("text", "")) + estimateMedia(item.optJSONArray("attachments")) + MESSAGE_OVERHEAD_TOKENS;
+        for (int i = groups.size() - 1; i >= 0; i--) {
+            ArrayList<JSONObject> group = groups.get(i);
+            if (group.isEmpty() || !"user".equals(group.get(0).optString("role"))) { truncated = true; continue; }
+            int cost = 0;
+            for (JSONObject item : group) cost += messageCost(item);
             if (used + cost > budget) {
-                if (keptReverse.isEmpty()) {
-                    throw new IllegalArgumentException("current input exceeds the configured context budget");
-                }
+                if (keptReverse.isEmpty()) throw new IllegalArgumentException("current input exceeds the configured context budget");
                 truncated = true;
                 break;
             }
-            keptReverse.add(item);
+            keptReverse.add(group);
+            keptMessages += group.size();
             used += cost;
         }
 
         Collections.reverse(keptReverse);
         JSONArray out = new JSONArray();
-        for (JSONObject item : keptReverse) out.put(item);
-        return new Result(out, truncated || out.length() < chronological.length(), used);
+        for (ArrayList<JSONObject> group : keptReverse) for (JSONObject item : group) out.put(item);
+        int original = chronological == null ? 0 : chronological.length();
+        int omitted = Math.max(0, original - keptMessages);
+        return new Result(out, truncated || omitted > 0, used, omitted);
+    }
+
+    private ArrayList<ArrayList<JSONObject>> groupTurns(JSONArray chronological) {
+        ArrayList<ArrayList<JSONObject>> groups = new ArrayList<>();
+        if (chronological == null) return groups;
+        ArrayList<JSONObject> current = null;
+        for (int i = 0; i < chronological.length(); i++) {
+            JSONObject item = chronological.optJSONObject(i); if (item == null) continue;
+            String role = item.optString("role", "");
+            if ("user".equals(role)) {
+                current = new ArrayList<>(); current.add(item); groups.add(current);
+            } else if ("assistant".equals(role)) {
+                if (current == null) { current = new ArrayList<>(); current.add(item); groups.add(current); }
+                else current.add(item);
+            }
+        }
+        return groups;
+    }
+
+    private int messageCost(JSONObject item) {
+        return estimate(item.optString("text", "")) + estimateMedia(item.optJSONArray("attachments")) + MESSAGE_OVERHEAD_TOKENS;
     }
 
     /** Image tokenization is provider-specific; reserve a conservative dimension-based budget per image. */
