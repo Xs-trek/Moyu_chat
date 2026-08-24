@@ -43,9 +43,13 @@ public class TransportMockServerTest {
         volatile int inputTokens = -1, outputTokens = -1;
         volatile String errorCode, errorSummary; volatile Boolean retryable; volatile boolean completed;
         volatile String imageMime, imageBase64, imageFileName;
+        final StringBuffer toolActivity = new StringBuffer();
+        final StringBuffer webSources = new StringBuffer();
         final CountDownLatch terminal = new CountDownLatch(1);
         @Override public void onTextDelta(String delta) { text.append(delta); }
         @Override public void onImage(String mimeType, String base64, String fileName) { imageMime = mimeType; imageBase64 = base64; imageFileName = fileName; }
+        @Override public void onToolActivity(String tool, String state) { if (toolActivity.length() > 0) toolActivity.append('|'); toolActivity.append(tool).append(':').append(state); }
+        @Override public void onWebSource(String url, String title) { if (webSources.length() > 0) webSources.append('|'); webSources.append(url).append('#').append(title); }
         @Override public void onUsage(Integer in, Integer out) { if (in != null) inputTokens = in; if (out != null) outputTokens = out; }
         @Override public void onCompleted() { if (terminals.incrementAndGet() == 1) completed = true; terminal.countDown(); }
         @Override public void onError(String code, String summary, boolean canRetry) {
