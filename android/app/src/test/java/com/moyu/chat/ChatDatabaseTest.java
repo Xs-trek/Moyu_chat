@@ -279,6 +279,40 @@ public class ChatDatabaseTest {
         assertEquals(2, db.timeline(healthy.id).length());
     }
 
+    @Test public void recoverInterruptedSessionsAlsoRepairsDivergedStreamingFlag() throws Exception {
+        db.saveProvider(provider("p-diverged"));
+        ChatDatabase.Session s = db.createSession("p-diverged", "m", null, null);
+        db.appendTimeline(s.id, "u", message("user", "question"));
+        db.appendTimeline(s.id, "live", new JSONObject().put("kind", "message").put("role", "assistant")
+                .put("text", "stale").put("streaming", true).put("createdAt", Instant.now().toString()));
+        s = db.getSession(s.id); s.state = "completed"; db.saveSession(s); // simulate a split state source
+
+        db.recoverInterruptedSessions();
+
+        assertEquals("a durable streaming row cannot survive cold start", "failed", db.getSession(s.id).state);
+        JSONArray timeline = db.timeline(s.id);
+        assertEquals(1, timeline.length());
+        assertEquals("question", timeline.getJSONObject(0).optString("text"));
+    }
+
+    @Test public void finalizeTurnSettlesLiveProjectionAndSessionTogether() throws Exception {
+        db.saveProvider(provider("p-finalize"));
+        ChatDatabase.Session s = db.createSession("p-finalize", "m", null, null);
+        JSONObject user = message("user", "question");
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
+        db.beginTurn(s.id, "u", user, "live", live);
+        assertEquals("running", db.getSession(s.id).state);
+        JSONObject done = new JSONObject(live.toString()).put("text", "answer").put("streaming", false);
+
+        db.finalizeTurn(s.id, "live", done, null, null, "completed");
+
+        assertEquals("completed", db.getSession(s.id).state);
+        JSONArray timeline = db.timeline(s.id);
+        assertEquals(2, timeline.length());
+        assertEquals("answer", timeline.getJSONObject(1).optString("text"));
+        assertFalse(timeline.getJSONObject(1).optBoolean("streaming", true));
+    }
+
     // ---------- snapshot immutability ----------
 
     @Test public void snapshotsAreAppendOnly() throws Exception {
