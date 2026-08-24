@@ -214,7 +214,64 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
-    public synchronized void deleteSession(String id) { getWritableDatabase().delete("sessions", "local_id=?", new String[]{id}); }
+    /** Deletes one local session and its now-unreferenced origin snapshot; timeline/handoffs cascade by FK. */
+    public synchronized void deleteSession(String id) {
+        if (id == null || id.trim().isEmpty()) throw new IllegalArgumentException("session id required");
+        SQLiteDatabase db = getWritableDatabase();
+        String originSnapshotId = null;
+        try (Cursor c = db.rawQuery("SELECT origin_snapshot_id FROM sessions WHERE local_id=?", new String[]{id})) {
+            if (!c.moveToFirst()) throw new IllegalArgumentException("session not found");
+            if (!c.isNull(0)) originSnapshotId = c.getString(0);
+        }
+        db.beginTransaction();
+        try {
+            if (db.delete("sessions", "local_id=?", new String[]{id}) != 1) throw new IllegalStateException("session delete failed");
+            if (originSnapshotId != null) {
+                boolean referenced;
+                try (Cursor c = db.rawQuery("SELECT 1 FROM sessions WHERE origin_snapshot_id=? LIMIT 1", new String[]{originSnapshotId})) {
+                    referenced = c.moveToFirst();
+                }
+                if (!referenced) db.delete("snapshots", "snapshot_id=?", new String[]{originSnapshotId});
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    /** Media GC authority: every durable JSON location that can legitimately retain a media descriptor. */
+    public synchronized java.util.Set<String> referencedMediaIds() {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        collectJsonColumn(getReadableDatabase(), "SELECT draft_media FROM sessions", out);
+        collectJsonColumn(getReadableDatabase(), "SELECT body FROM timeline", out);
+        collectJsonColumn(getReadableDatabase(), "SELECT body FROM snapshot_items", out);
+        collectJsonColumn(getReadableDatabase(), "SELECT payload FROM handoffs", out);
+        return out;
+    }
+
+    private static void collectJsonColumn(SQLiteDatabase db, String sql, java.util.Set<String> out) {
+        try (Cursor c = db.rawQuery(sql, null)) {
+            while (c.moveToNext()) {
+                String raw = c.getString(0); if (raw == null || raw.trim().isEmpty()) continue;
+                try {
+                    String trimmed = raw.trim();
+                    Object value = trimmed.startsWith("[") ? new JSONArray(trimmed) : new JSONObject(trimmed);
+                    collectMediaIds(value, out);
+                } catch (Exception ignored) { }
+            }
+        }
+    }
+
+    private static void collectMediaIds(Object value, java.util.Set<String> out) {
+        if (value instanceof JSONObject) {
+            JSONObject object = (JSONObject) value;
+            String mediaId = object.optString("mediaId", "").trim(); if (!mediaId.isEmpty()) out.add(mediaId);
+            JSONArray names = object.names(); if (names == null) return;
+            for (int i = 0; i < names.length(); i++) collectMediaIds(object.opt(names.optString(i)), out);
+        } else if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            for (int i = 0; i < array.length(); i++) collectMediaIds(array.opt(i), out);
+        }
+    }
+
     public synchronized void setDraft(String id, String draft) { ContentValues v = new ContentValues(); v.put("draft", draft == null ? "" : draft); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
 
     public synchronized JSONArray draftMedia(String id) {
