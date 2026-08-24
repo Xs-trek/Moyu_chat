@@ -23,6 +23,8 @@ export type MoyuChatIntent =
   | UiIntent<'chat.attachment.remove', { localSessionId: string; mediaId: string }>
   | UiIntent<'chat.session.interrupt', { localSessionId: string }>
   | UiIntent<'chat.session.delete', { localSessionId: string }>
+  | UiIntent<'chat.message.edit', { localSessionId: string; localSeq: number }>
+  | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
   | UiIntent<'provider.configure.open', { providerId?: string }>
   | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
   | UiIntent<'branch.sources.refresh', Record<string, never>>
