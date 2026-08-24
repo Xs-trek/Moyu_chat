@@ -43,7 +43,8 @@ document.addEventListener('submit', (event) => {
     const input = form.elements.namedItem('message');
     const text = String(input?.value || '');
     const sessionId = form.dataset.sessionId;
-    if (!text.trim() || !sessionId) return;
+    const hasDraftMedia = Boolean(window.__moyuChatView?.activeSession?.draftMedia?.length);
+    if ((!text.trim() && !hasDraftMedia) || !sessionId) return;
     postIntent('chat.session.send', { localSessionId: sessionId, text });
     input.value = '';
   }
