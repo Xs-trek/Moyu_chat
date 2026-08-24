@@ -194,6 +194,15 @@ public class ChatDatabaseTest {
         assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
     }
 
+    @Test public void localBranchesInheritFrozenContextMode() {
+        ChatDatabase.Provider provider = provider("p-mode"); db.saveProvider(provider);
+        ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); assertNotNull(profile);
+        ChatDatabase.Session source = db.createSession(profile, "source", null, null, ReasoningPolicy.DEFAULT, ContextMode.MINIMAL);
+        ChatDatabase.Session branch = db.branchSession(source, "branch", null, source.id);
+        assertEquals(ContextMode.MINIMAL, db.getSession(source.id).contextMode);
+        assertEquals(ContextMode.MINIMAL, db.getSession(branch.id).contextMode);
+    }
+
     @Test public void oneProviderCanOwnMultipleModelsAndSessionSnapshotsCapabilities() {
         ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; db.saveProvider(provider);
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
