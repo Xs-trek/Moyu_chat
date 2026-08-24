@@ -58,7 +58,7 @@ final class ChatMediaStore {
     String mimeType(String mediaId) throws Exception {
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true;
         try (InputStream in = open(mediaId)) { BitmapFactory.decodeStream(in, null, options); }
-        return normalizeMime(options.outMime);
+        return normalizeMime(options.outMimeType);
     }
 
     String dataUrl(JSONObject descriptor) throws Exception {
