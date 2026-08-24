@@ -30,7 +30,7 @@ code { font-family:var(--font-mono); overflow-wrap:anywhere; word-break:break-wo
 .muted { color:var(--muted); }
 .truncate-safe,.model-meta,.model-id,.session-meta { overflow-wrap:anywhere; word-break:break-word; min-width:0; }
 .app-shell { min-height:100vh; min-height:100dvh; padding-bottom:calc(72px + var(--safe-bottom)); }
-.app-shell.conversation-active { height:100vh; height:100dvh; min-height:0; padding:0; overflow:hidden; }
+.app-shell.conversation-active { width:100%; height:100%; min-height:0; padding:0; overflow:hidden; }
 .conversation-active>.topbar,.conversation-active>.nav { display:none; }
 .topbar { position:sticky; top:0; z-index:10; min-height:58px; padding:calc(var(--space-3) + var(--safe-top)) max(var(--space-4),var(--safe-right)) var(--space-3) max(var(--space-4),var(--safe-left)); background:var(--yellow); color:#111; border-bottom:var(--border); }
 .brand { font-size:var(--text-lg); font-weight:var(--weight-black); letter-spacing:-.02em; }
