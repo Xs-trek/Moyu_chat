@@ -83,8 +83,11 @@ final class SnapshotService {
             if (text.length() > MAX_TEXT_CHARS && reverse.isEmpty()) throw new IllegalArgumentException("latest snapshot message exceeds snapshot limit");
             if (reverse.size() >= MAX_ITEMS || chars + text.length() > MAX_TEXT_CHARS) { truncated = true; break; }
             chars += text.length();
-            reverse.add(new JSONObject().put("kind", "message").put("role", item.optString("role")).put("text", text)
-                    .put("createdAt", bounded(item.optString("createdAt", Instant.now().toString()), "createdAt")));
+            JSONObject normalizedItem = new JSONObject().put("kind", "message").put("role", item.optString("role")).put("text", text)
+                    .put("createdAt", bounded(item.optString("createdAt", Instant.now().toString()), "createdAt"));
+            JSONArray attachments = normalizeAttachments(item.optJSONArray("attachments"));
+            if (attachments.length() > 0) normalizedItem.put("attachments", attachments);
+            reverse.add(normalizedItem);
         }
         Collections.reverse(reverse);
         JSONArray out = new JSONArray(); for (JSONObject item : reverse) out.put(item);
