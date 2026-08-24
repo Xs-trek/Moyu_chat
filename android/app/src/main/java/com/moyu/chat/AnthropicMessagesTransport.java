@@ -173,6 +173,10 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         }
         if ("content_block_delta".equals(type)) {
             JSONObject delta = event.optJSONObject("delta");
+            if (delta != null && "citations_delta".equals(delta.optString("type"))) {
+                JSONObject citation = delta.optJSONObject("citation"); if (citation != null) collectWebSources(citation, sink);
+                return false;
+            }
             if (delta != null && "thinking_delta".equals(delta.optString("type"))) {
                 sink.onStage("reasoning");
                 String thinking = delta.optString("thinking", ""); if (!thinking.isEmpty()) sink.onReasoningDelta(thinking);
