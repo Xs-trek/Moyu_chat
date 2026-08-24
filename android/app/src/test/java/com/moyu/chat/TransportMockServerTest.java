@@ -112,6 +112,19 @@ public class TransportMockServerTest {
         assertEquals(1_024, body.optInt("max_tokens"));
     }
 
+    @Test public void chatCompletionsEncodesImageInputAsImageUrlPart() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "test-key", "vision-model", imagePrompt(), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        JSONArray content = body.getJSONArray("messages").getJSONObject(1).getJSONArray("content");
+        assertEquals("text", content.getJSONObject(0).optString("type"));
+        assertEquals("describe", content.getJSONObject(0).optString("text"));
+        assertEquals("image_url", content.getJSONObject(1).optString("type"));
+        assertEquals("data:image/png;base64,QUJD", content.getJSONObject(1).getJSONObject("image_url").optString("url"));
+    }
+
     @Test public void chatCompletionsErrorEventIsTerminalAndSingle() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"choices\":[{\"delta\":{\"content\":\"par\"}}]}\n\n" +
