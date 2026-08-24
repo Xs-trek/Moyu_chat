@@ -39,14 +39,15 @@ final class ContextBuilder {
         }
         int localCount = projected.length() - inheritedCount;
 
-        String provisional = promptPolicy.instructions(snapshot, false);
+        String provisional = promptPolicy.instructions(session, snapshot, false);
         ContextBudgetManager.Result first = budgets.select(provisional, projected, contextTokens, inputTokens, outputTokens);
-        String instructions = promptPolicy.instructions(snapshot, first.truncated);
+        String instructions = promptPolicy.instructions(session, snapshot, first.truncated);
         ContextBudgetManager.Result finalResult = first.truncated
                 ? budgets.select(instructions, projected, contextTokens, inputTokens, outputTokens)
                 : first;
         return new CanonicalPrompt(instructions, finalResult.messages, finalResult.truncated,
-                finalResult.estimatedTokens, inheritedCount, localCount);
+                finalResult.estimatedTokens, inheritedCount, localCount, finalResult.omittedMessageCount,
+                new JSONArray(projected.toString()));
     }
 
     private void appendVisible(JSONArray out, JSONArray source) throws Exception {
@@ -57,6 +58,18 @@ final class ContextBuilder {
             if (!("user".equals(role) || "assistant".equals(role))) continue;
             String text = item.optString("text", "");
             JSONArray attachments = projectAttachments(item.optJSONArray("attachments"));
+
+            if ("assistant".equals(role) && item.optBoolean("incomplete", false)) {
+                String code = item.optString("terminalCode", "interrupted");
+                text = "[Previous assistant response was incomplete (" + code + "). Treat it as partial context, not a completed answer.]"
+                        + (text.isEmpty() ? "" : "\n" + text);
+            }
+            // Provider-neutral v0.0.2 does not pretend assistant-generated image bytes can be replayed
+            // uniformly across all three protocol families. Preserve explicit semantic awareness.
+            if ("assistant".equals(role) && attachments.length() > 0) {
+                text = text + (text.isEmpty() ? "" : "\n") + "[The assistant produced image output in this historical turn; the image bytes are not replayed in provider-neutral context.]";
+                attachments = new JSONArray();
+            }
             if (text.trim().isEmpty() && attachments.length() == 0) continue;
             JSONObject visible = new JSONObject().put("role", role).put("text", text);
             if (attachments.length() > 0) visible.put("attachments", attachments);
