@@ -119,6 +119,9 @@ export interface SessionView {
   effectiveContextMode: 'minimal' | 'smart' | 'auto-minimal' | 'auto-smart';
   inputModalities: string;
   outputModalities: string;
+  nativeWebCapabilities: string;
+  webMode: WebMode;
+  effectiveWebBackend: string;
   state: SessionState;
   updatedAt: string;
   preview?: string;
