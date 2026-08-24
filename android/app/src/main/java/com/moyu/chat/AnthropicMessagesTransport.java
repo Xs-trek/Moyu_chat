@@ -60,11 +60,30 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
             if (messages.length() == 0 && !"user".equals(role)) continue; // drop the leading assistant run
-            messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+            JSONArray attachments = item.optJSONArray("attachments");
+            if ("user".equals(role) && attachments != null && attachments.length() > 0) {
+                JSONArray content = new JSONArray(); String text = item.optString("text", "");
+                if (!text.isEmpty()) content.put(new JSONObject().put("type", "text").put("text", text));
+                appendImages(content, attachments);
+                messages.put(new JSONObject().put("role", role).put("content", content));
+            } else {
+                messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+            }
         }
         if (messages.length() == 0) throw new IllegalArgumentException("prompt must contain at least one user message");
         return new JSONObject().put("model", model).put("system", prompt.instructions).put("messages", messages)
                 .put("max_tokens", maxOutputTokens > 0 ? maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS).put("stream", true);
+    }
+
+    private static void appendImages(JSONArray content, JSONArray attachments) throws Exception {
+        for (int i = 0; i < attachments.length(); i++) {
+            JSONObject image = attachments.optJSONObject(i); if (image == null || !"image".equals(image.optString("kind"))) continue;
+            String dataUrl = image.optString("dataUrl", ""), mime = image.optString("mimeType", "");
+            int comma = dataUrl.indexOf(','); if (comma < 0 || mime.isEmpty()) continue;
+            String data = dataUrl.substring(comma + 1); if (data.isEmpty()) continue;
+            content.put(new JSONObject().put("type", "image").put("source", new JSONObject()
+                    .put("type", "base64").put("media_type", mime).put("data", data)));
+        }
     }
 
     private void run(Call call, ChatTransport.Sink sink) {
