@@ -153,7 +153,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 Integer cached = usage.has("cache_read_input_tokens") ? usage.optInt("cache_read_input_tokens") : null;
                 Integer cacheWrite = usage.has("cache_creation_input_tokens") ? usage.optInt("cache_creation_input_tokens") : null;
                 int total = Math.max(0, uncached == null ? 0 : uncached) + Math.max(0, cached == null ? 0 : cached) + Math.max(0, cacheWrite == null ? 0 : cacheWrite);
-                sink.onUsageDetails(total > 0 ? total : uncached, output, cached, cacheWrite, total > 0 ? total : null);
+                sink.onUsageDetails(total > 0 ? total : uncached, output, cached, cacheWrite, total > 0 ? total : null, null);
             }
             return false;
         }
