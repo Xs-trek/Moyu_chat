@@ -1,4 +1,5 @@
 import { captureTimelineAnchor, restoreTimelineAnchor } from './scroll-anchor.js';
+import { renderSafeMarkdown } from './markdown.js';
 import { getState } from './state.js';
 
 function h(tag, attrs = {}, ...children) {
