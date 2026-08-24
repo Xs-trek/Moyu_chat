@@ -325,6 +325,7 @@ final class ChatCoordinator implements AutoCloseable {
             if (hasProjection) {
                 finished = new JSONObject(seed.toString()).put("text", text).put("streaming", false);
                 finished.remove("streamStage");
+                if (terminalError != null) finished.put("incomplete", true).put("terminalCode", terminalError[0]);
                 if (reasoning != null && !reasoning.isEmpty()) finished.put("reasoning", reasoning);
                 if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
             }
