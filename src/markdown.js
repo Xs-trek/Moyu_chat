@@ -8,7 +8,13 @@ function inlineFragment(text) {
   for (const match of source.matchAll(pattern)) {
     if (match.index > cursor) out.append(textNode(source.slice(cursor, match.index)));
     const token = match[0];
-    if (token.startsWith('`')) {
+    if (token.startsWith('[')) {
+      const link = token.match(/^\[([^\]]+)\]\((https:\/\/[^\s)]+)\)$/);
+      if (link) {
+        const control = document.createElement('button');
+        control.type = 'button'; control.className = 'md-link'; control.dataset.action = 'open-source'; control.dataset.url = link[2]; control.textContent = link[1]; out.append(control);
+      } else out.append(textNode(token));
+    } else if (token.startsWith('`')) {
       const code = document.createElement('code'); code.textContent = token.slice(1, -1); out.append(code);
     } else if (token.startsWith('**') || token.startsWith('__')) {
       const strong = document.createElement('strong'); strong.textContent = token.slice(2, -2); out.append(strong);
