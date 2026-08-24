@@ -190,9 +190,27 @@ Internally the ephemeral pre-budget projection is retained long enough to build 
 - `messages[]` <- canonical visible history
 - leading orphan assistant is eliminated before protocol encoding by the common budget layer
 
-## Smart Context switch
+## Session Context Modes
 
-Smart Context can be disabled in Settings. Disabled mode retains the v0.0.1-style provider-neutral behavior (with the v0.0.2 turn-aware/incomplete safety fixes): no Router call and no model-generated Checkpoint.
+Each Session freezes one explicit mode at creation time. A Settings value only supplies the default for future sessions.
+
+```text
+minimal
+- Router: off
+- model-generated Checkpoint: off
+- no additional preprocessing model calls
+
+auto
+- ordinary local Chat / local branch: Router off, Checkpoint on only when real context truncation occurs
+- Remote-origin Snapshot: Router on + Checkpoint on
+- the decision is local and deterministic; Auto never calls a model merely to decide the mode
+
+smart
+- Router: on
+- Checkpoint: on when truncation occurs
+```
+
+Local edit/rollback/branch sessions inherit the source Session mode. Remote import is a new Session and can explicitly choose any mode; choosing `auto` resolves from the imported Snapshot provenance. The UI exposes both the stored `contextMode` and the local `effectiveContextMode` so hidden preprocessing is never ambiguous.
 
 ## Future direction
 
