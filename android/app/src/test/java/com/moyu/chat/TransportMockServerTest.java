@@ -181,6 +181,32 @@ public class TransportMockServerTest {
         assertTrue(body.optBoolean("stream"));
     }
 
+    @Test public void responsesEncodesImageInputAsInputImagePart() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "vision-model", imagePrompt(), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        JSONArray content = body.getJSONArray("input").getJSONObject(0).getJSONArray("content");
+        assertEquals("input_text", content.getJSONObject(0).optString("type"));
+        assertEquals("describe", content.getJSONObject(0).optString("text"));
+        assertEquals("input_image", content.getJSONObject(1).optString("type"));
+        assertEquals("data:image/png;base64,QUJD", content.getJSONObject(1).optString("image_url"));
+    }
+
+    @Test public void responsesEmitsCompletedImageGenerationResult() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"img-1\",\"type\":\"image_generation_call\",\"output_format\":\"png\",\"result\":\"QUJD\"}}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"img-1\",\"type\":\"image_generation_call\",\"output_format\":\"png\",\"result\":\"QUJD\"}]}}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "image-model", prompt("user", "draw"), sink);
+        sink.awaitTerminal();
+        assertTrue(sink.completed);
+        assertEquals("image/png", sink.imageMime);
+        assertEquals("QUJD", sink.imageBase64);
+        assertEquals("generated.png", sink.imageFileName);
+    }
+
     @Test public void responsesFailedMapsToSingleTerminalError() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n" +
