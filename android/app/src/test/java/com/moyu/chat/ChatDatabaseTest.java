@@ -194,6 +194,21 @@ public class ChatDatabaseTest {
         assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
     }
 
+    @Test public void upgradeFromV8AddsWebDefaultsAndPreservesTimeline() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(8);
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
+        assertNotNull(session); assertNotNull(profile);
+        assertEquals("", profile.toolCapabilities);
+        assertEquals("", session.toolCapabilities);
+        assertEquals(ChatTurnOptions.WEB_AUTO, session.webMode);
+        assertEquals(ContextMode.AUTO, session.contextMode);
+        assertEquals(2, upgraded.timeline(session.id).length());
+        assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
+        assertEquals("legacy assistant", upgraded.timeline(session.id).getJSONObject(1).optString("text"));
+    }
+
     @Test public void localBranchesInheritFrozenContextMode() {
         ChatDatabase.Provider provider = provider("p-mode"); db.saveProvider(provider);
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); assertNotNull(profile);
