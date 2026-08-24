@@ -163,7 +163,8 @@ public class ChatDatabaseTest {
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
         second.id = "profile-b"; second.providerId = provider.id; second.modelId = "model-b"; second.displayName = "Model B";
         second.contextTokens = 128_000; second.inputTokens = 96_000; second.maxOutputTokens = 8_192;
-        second.reasoningLevels = "low,high,xhigh"; second.defaultReasoning = "high"; db.saveModelProfile(second);
+        second.reasoningLevels = "low,high,xhigh"; second.defaultReasoning = "high";
+        second.inputModalities = "text,image"; second.outputModalities = "text,image"; db.saveModelProfile(second);
         assertEquals(2, db.listModelProfiles(provider.id).size());
 
         ChatDatabase.Session session = db.createSession(second, null, null, null, "xhigh");
