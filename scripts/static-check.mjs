@@ -117,6 +117,9 @@ if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("post
 if (!coordinator.includes('editMessageBranch(') || !coordinator.includes('rollbackMessageBranch(')) fail('history edit/rollback must create durable local branches');
 if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.includes('reasoning-block')) fail('provider-emitted reasoning must have an explicit display toggle');
 if (!mainUi.includes("postIntent('context.mode.default.set'") || !render.includes('上下文 · 自动') || !render.includes('上下文 · 极简') || !render.includes('上下文 · Moyu 智能')) fail('context modes must be explicitly selectable when creating sessions');
+if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('联网 · 关闭') || !render.includes('联网 · 自动') || !render.includes('联网 · 开启')) fail('Web modes must be explicitly selectable for new chats/imports/settings');
+if (!mainUi.includes("postIntent('external.open'") || !render.includes("'open-source'")) fail('Web source links must cross the native external.open boundary');
+if (!render.includes('renderSafeMarkdown') || !render.includes('assistant-footer') || !render.includes("'copy-message'") || !render.includes("'jump-latest'")) fail('safe Markdown/assistant footer/copy/jump-latest UX missing');
 if (!render.includes('contextPreparing') || !render.includes('整理上下文')) fail('hidden preprocessing must be visible as a bounded UI state');
 if (!coordinator.includes('reasoningOut') || !coordinator.includes('outputTokensPerSecond') || !coordinator.includes('cachedInputTokens')) fail('reasoning/usage observability pipeline missing');
 if (!styles.includes('text-align:left') || !render.includes(' token/s')) fail('usage statistics must be left-aligned and use token units');
