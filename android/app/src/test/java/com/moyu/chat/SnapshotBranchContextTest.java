@@ -150,7 +150,7 @@ public class SnapshotBranchContextTest {
         assertEquals("branch answer", roles.getJSONObject(roles.length() - 2).optString("text"));
         assertEquals("next question", roles.getJSONObject(roles.length() - 1).optString("text"));
         assertFalse(prompt.truncated);
-        assertTrue(prompt.instructions.contains("immutable historical snapshot"));
+        assertTrue(prompt.instructions.contains("immutable Moyu Chat history branch"));
     }
 
     @Test public void branchContextBudgetTrimsInheritedHistoryButKeepsPendingInput() throws Exception {
