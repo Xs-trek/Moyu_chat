@@ -512,6 +512,19 @@ final class ChatCoordinator implements AutoCloseable {
         return "";
     }
 
+    private static JSONArray sourceArray(Map<String, JSONObject> sources) {
+        JSONArray out = new JSONArray();
+        if (sources == null) return out;
+        for (JSONObject source : sources.values()) if (source != null) out.put(source);
+        return out;
+    }
+
+    private static String providerWebBackend(String protocol) {
+        if (OpenAiCompatibleTransport.RESPONSES.equals(protocol)) return "OpenAI hosted Web";
+        if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) return "Anthropic hosted Web";
+        return "Provider hosted Web";
+    }
+
     private void emitView() {
         if (closed || !uiReady) return;
         try {
