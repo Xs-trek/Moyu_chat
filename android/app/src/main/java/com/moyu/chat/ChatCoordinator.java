@@ -141,7 +141,7 @@ final class ChatCoordinator implements AutoCloseable {
                     break;
                 }
                 case "branch.sources.refresh": refreshSources(); break;
-                case "branch.create.remote": createRemoteBranch(required(p, "sourceId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
+                case "branch.create.remote": createRemoteBranch(required(p, "sourceId"), p.has("throughSeq") ? p.optInt("throughSeq") : null, ContextMode.normalize(p.optString("contextMode", defaultContextMode))); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
                 case "handoff.create": createHandoff(required(p, "localSessionId")); break;
                 case "handoff.submit": submitHandoff(required(p, "handoffId")); break;
