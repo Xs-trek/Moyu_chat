@@ -205,14 +205,16 @@ final class ChatCoordinator implements AutoCloseable {
         JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
         db.appendTimeline(id, streamKey, live);
         StringBuilder textOut = new StringBuilder();
+        JSONArray outputMedia = new JSONArray();
         String usageKey = "usage:turn:" + UUID.randomUUID();
         JSONObject usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString()).put("context", prompt.diagnostics());
         boolean[] usagePersisted = new boolean[]{false};
         ChatTransport.Turn turn = transport.stream(provider, key, session.model, session.reasoningEffort, prompt, new ChatTransport.Sink() {
-            @Override public void onTextDelta(String delta) { worker.execute(() -> { try { textOut.append(delta); db.replaceTimelineBody(streamKey, new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true)); emitView(); } catch (Exception ignored) { } }); }
+            @Override public void onTextDelta(String delta) { worker.execute(() -> { try { textOut.append(delta); JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true); if (outputMedia.length() > 0) next.put("attachments", outputMedia); db.replaceTimelineBody(streamKey, next); emitView(); } catch (Exception ignored) { } }); }
+            @Override public void onImage(String mimeType, String base64, String fileName) { worker.execute(() -> { try { JSONObject image = mediaStore.saveBase64Image(mimeType, base64, fileName); outputMedia.put(image); JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("attachments", outputMedia); db.replaceTimelineBody(streamKey, next); emitView(); } catch (Exception error) { host.showMessage("image output ignored: " + safe(error)); } }); }
             @Override public void onUsage(Integer in, Integer out) { worker.execute(() -> { try { if (in != null) usageState.put("inputTokens", in); if (out != null) usageState.put("outputTokens", out); if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState); else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; } } catch (Exception ignored) { } }); }
-            @Override public void onCompleted() { worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), null)); }
-            @Override public void onError(String code, String summary, boolean retryable) { worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), new String[]{code, summary})); }
+            @Override public void onCompleted() { worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), outputMedia, null)); }
+            @Override public void onError(String code, String summary, boolean retryable) { worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), outputMedia, new String[]{code, summary})); }
         });
         activeTurns.put(id, turn); emitView();
     }
