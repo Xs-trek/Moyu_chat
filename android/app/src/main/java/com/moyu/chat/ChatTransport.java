@@ -2,6 +2,8 @@ package com.moyu.chat;
 
 interface ChatTransport {
     interface Sink {
+        /** Coarse transport progress only; never exposes chain-of-thought content. */
+        default void onStage(String stage) { }
         void onTextDelta(String delta);
         default void onImage(String mimeType, String base64, String fileName) { }
         void onUsage(Integer inputTokens, Integer outputTokens);
