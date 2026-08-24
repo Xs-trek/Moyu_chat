@@ -92,12 +92,25 @@ function conversation(view) {
   );
 }
 
-function timelineItem(item, runtimeRunning = false) {
-  if (item.kind === 'message') return h('article', { class: `bubble ${item.role}` },
-    h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? 'Moyu Chat' : '系统' }), h('small', { text: fmt(item.createdAt) })),
-    item.text ? h('pre', { class: 'message', text: item.text }) : null,
-    mediaGallery(item.attachments),
-    item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: 'streaming' }) : null);
+function streamStageLabel(stage) {
+  if (stage === 'connected') return '已连接 · 等待模型';
+  if (stage === 'reasoning') return '推理中';
+  if (stage === 'output') return '输出中';
+  return '等待响应';
+}
+
+function timelineItem(item, runtimeRunning = false, sessionId = '') {
+  if (item.kind === 'message') {
+    const finalized = !item.streaming && !runtimeRunning && Number(item.localSeq) > 0 && (item.role === 'user' || item.role === 'assistant');
+    return h('article', { class: `bubble ${item.role}` },
+      h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? 'Moyu Chat' : '系统' }), h('small', { text: fmt(item.createdAt) })),
+      item.text ? h('pre', { class: 'message', text: item.text }) : null,
+      mediaGallery(item.attachments),
+      item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: streamStageLabel(item.streamStage) }) : null,
+      finalized ? h('div', { class: 'message-actions' },
+        item.role === 'user' ? button('编辑', 'edit-message', { sessionId, localSeq: item.localSeq }, 'btn small') : null,
+        button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
+  }
   if (item.kind === 'usage') return h('article', { class: 'usage', text: `输入 ${item.inputTokens || 0} · 输出 ${item.outputTokens || 0}` });
   if (item.kind === 'error') return h('article', { class: 'error' }, h('strong', { text: item.summary }), h('code', { text: item.code }));
   return null;
