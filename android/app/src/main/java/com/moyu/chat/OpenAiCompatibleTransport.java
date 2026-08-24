@@ -137,10 +137,16 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         }
     }
 
-    private static void parseChat(JSONObject event, ChatTransport.Sink sink) {
+    /**
+     * Returns true when a Chat-Completions-compatible stream has emitted a semantic terminal chunk.
+     * This deliberately accepts more than [DONE]: compatible gateways may keep SSE open after a
+     * finish_reason or emit one final empty-choices usage/cost chunk.
+     */
+    static boolean parseChat(JSONObject event, ChatTransport.Sink sink) {
         JSONObject error = event.optJSONObject("error");
-        if (error != null) { sink.onError(error.optString("code", "provider_error"), error.optString("message", "Provider error"), false); return; }
+        if (error != null) { sink.onError(error.optString("code", "provider_error"), error.optString("message", "Provider error"), false); return true; }
         JSONArray choices = event.optJSONArray("choices");
+        String finishReason = "";
         if (choices != null && choices.length() > 0) {
             JSONObject first = choices.optJSONObject(0); JSONObject delta = first == null ? null : first.optJSONObject("delta");
             if (delta != null) {
@@ -148,9 +154,19 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 if (content instanceof String) { String text = (String) content; if (!text.isEmpty()) sink.onTextDelta(text); }
                 else if (content instanceof JSONArray) parseChatContentParts((JSONArray) content, sink);
             }
+            if (first != null && !first.isNull("finish_reason")) finishReason = first.optString("finish_reason", "").trim();
         }
         JSONObject usage = event.optJSONObject("usage");
         if (usage != null) sink.onUsage(usage.has("prompt_tokens") ? usage.optInt("prompt_tokens") : null, usage.has("completion_tokens") ? usage.optInt("completion_tokens") : null);
+
+        if (!finishReason.isEmpty()) {
+            if ("length".equals(finishReason)) sink.onError("response_incomplete", "Response stopped at max output tokens", false);
+            else if ("content_filter".equals(finishReason)) sink.onError("content_filter", "Provider stopped the response due to content filtering", false);
+            else if ("tool_calls".equals(finishReason) || "function_call".equals(finishReason)) sink.onError("unsupported_tool_call", "Provider requested a tool call, but Moyu Chat has no tool runtime", false);
+            else if ("network_error".equals(finishReason) || "insufficient_system_resource".equals(finishReason)) sink.onError(finishReason, "Provider terminated the stream: " + finishReason, true);
+            return true;
+        }
+        return choices != null && choices.length() == 0 && (usage != null || event.has("cost"));
     }
 
     private static void parseChatContentParts(JSONArray parts, ChatTransport.Sink sink) {
