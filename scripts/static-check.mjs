@@ -64,6 +64,10 @@ const bridge = read('src/bridge.js');
 if (!bridge.includes('MAX_MESSAGE_BYTES = 1024 * 1024') || !bridge.includes('revision <= getState().revision')) fail('WebView Host bridge size/revision guards missing');
 const renderGate = read('src/render-gate.js');
 if (!renderGate.includes('pointerActive') || !renderGate.includes('composing') || !renderGate.includes('document.activeElement')) fail('destructive render gate missing interaction guards');
+const render = read('src/render.js');
+const mainUi = read('src/main.js');
+if (!render.includes('export function patchConversation()') || !render.includes('streaming-state')) fail('conversation volatile state patch missing');
+if (!mainUi.includes('patchConversation(); renderGate.request();')) fail('Host view updates must patch volatile conversation state before deferred full render');
 
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 if (!manifest.includes('android:allowBackup="false"')) fail('Android backup must remain disabled for local chat data/secrets');
