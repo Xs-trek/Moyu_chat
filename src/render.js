@@ -88,9 +88,9 @@ function conversation(view) {
       mediaGallery(session.draftMedia, true, session.localSessionId),
       h('div', { class: 'composer-row' },
         session.canAttachImage ? button('＋ 图片', 'pick-attachment', { sessionId: session.localSessionId }, 'btn attachment-btn') : null,
-        h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或仅发送图片' : '输入消息') : '等待当前回合结束', 'aria-label': '消息' }),
+        h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或仅发送图片' : '输入消息') : session.contextPreparing ? '正在识别任务 / 整理上下文' : '等待当前回合结束', 'aria-label': '消息' }),
         session.canInterrupt ? button('中断', 'interrupt', { sessionId: session.localSessionId }, 'btn danger') : null,
-        h('button', { type: 'submit', class: 'btn primary send-btn', disabled: !session.canSend, text: session.state === 'running' ? '发送中' : '发送' })),
+        h('button', { type: 'submit', class: 'btn primary send-btn', disabled: !session.canSend, text: session.contextPreparing ? '整理上下文' : session.state === 'running' ? '发送中' : '发送' })), 
       h('small', { class: 'composer-hint muted', text: 'Enter 发送 · Shift+Enter 换行' }))
   );
 }
