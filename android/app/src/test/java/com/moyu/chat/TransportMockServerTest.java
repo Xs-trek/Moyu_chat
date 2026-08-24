@@ -265,6 +265,24 @@ public class TransportMockServerTest {
         assertFalse(sink.retryable);
     }
 
+    @Test public void responsesTerminalEventSignalsReaderExit() throws Exception {
+        RecordingSink sink = new RecordingSink();
+        assertTrue(OpenAiCompatibleTransport.parseResponses(
+                new JSONObject("{\"type\":\"response.completed\",\"response\":{}}"), sink, new java.util.HashSet<>()));
+        assertTrue(sink.completed);
+        assertEquals(1, sink.terminals.get());
+    }
+
+    @Test public void nonSseHttp200IsNotMisreportedAsEmptySuccess() throws Exception {
+        server.enqueue(new MockResponse().addHeader("Content-Type", "application/json")
+                .setBody("{\"choices\":[{\"message\":{\"content\":\"not streamed\"}}]}"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "test-key", "test-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertEquals("unexpected_response_format", sink.errorCode);
+        assertFalse(sink.completed);
+    }
+
     // ---------- Anthropic Messages ----------
 
     @Test public void anthropicAssemblesStreamAndCompletesOnMessageStop() throws Exception {
