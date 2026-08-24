@@ -294,6 +294,42 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         for (int i = 0; i < output.length(); i++) emitImageItem(output.optJSONObject(i), sink, emittedImages);
     }
 
+    private static void emitResponseWebSources(JSONObject response, ChatTransport.Sink sink) {
+        JSONArray output = response == null ? null : response.optJSONArray("output"); if (output == null) return;
+        for (int i = 0; i < output.length(); i++) {
+            JSONObject item = output.optJSONObject(i); if (item == null) continue;
+            if ("web_search_call".equals(item.optString("type"))) {
+                JSONObject action = item.optJSONObject("action"); JSONArray sources = action == null ? null : action.optJSONArray("sources");
+                emitSourceArray(sources, sink);
+            }
+            JSONArray content = item.optJSONArray("content");
+            if (content == null) continue;
+            for (int j = 0; j < content.length(); j++) {
+                JSONObject part = content.optJSONObject(j); if (part == null) continue;
+                JSONArray annotations = part.optJSONArray("annotations");
+                if (annotations == null) continue;
+                for (int k = 0; k < annotations.length(); k++) {
+                    JSONObject annotation = annotations.optJSONObject(k); if (annotation == null) continue;
+                    if (!"url_citation".equals(annotation.optString("type"))) continue;
+                    emitSource(annotation.optString("url", ""), annotation.optString("title", ""), sink);
+                }
+            }
+        }
+    }
+
+    private static void emitSourceArray(JSONArray sources, ChatTransport.Sink sink) {
+        if (sources == null) return;
+        for (int i = 0; i < sources.length(); i++) {
+            JSONObject source = sources.optJSONObject(i); if (source == null) continue;
+            emitSource(source.optString("url", ""), source.optString("title", ""), sink);
+        }
+    }
+
+    private static void emitSource(String url, String title, ChatTransport.Sink sink) {
+        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) return;
+        sink.onWebSource(url, title == null || title.trim().isEmpty() ? url : title.trim());
+    }
+
     private static void emitImageItem(JSONObject item, ChatTransport.Sink sink, Set<String> emittedImages) {
         if (item == null || !"image_generation_call".equals(item.optString("type"))) return;
         String result = item.optString("result", ""); if (result.isEmpty()) return;
