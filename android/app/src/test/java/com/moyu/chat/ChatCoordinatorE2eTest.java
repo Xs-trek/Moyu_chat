@@ -238,6 +238,22 @@ public class ChatCoordinatorE2eTest {
         assertEquals(0, app.database().draftMedia(sessionId).length());
     }
 
+    @Test public void deleteSessionRemovesLocalStateAndUnreferencedMedia() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        JSONObject image = app.mediaStore().saveBase64Image("image/gif", TINY_GIF, "delete-me.gif");
+        String mediaId = image.optString("mediaId");
+        app.database().addDraftMedia(sessionId, image);
+        assertTrue(app.mediaStore().exists(mediaId));
+
+        post("chat.session.delete", new JSONObject().put("localSessionId", sessionId));
+        await("session deleted", () -> app.database().getSession(sessionId) == null);
+        await("active route returns home", () -> {
+            JSONObject view = latestView(); return view != null && "home".equals(view.optString("route")) && view.optJSONArray("sessions").length() == 0;
+        });
+        assertFalse("unreferenced private media should be garbage-collected", app.mediaStore().exists(mediaId));
+    }
+
     // ---------- multi-turn + interrupt ----------
 
     @Test public void interruptKeepsPartialAnswerAndUnlocksSession() throws Exception {
