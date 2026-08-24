@@ -142,6 +142,8 @@ public class ChatDatabaseTest {
         ChatDatabase.Session session = upgraded.getSession("legacy-s");
         assertEquals(profile.id, session.modelProfileId); assertEquals(profile.contextTokens, session.contextTokens);
         assertEquals(profile.maxOutputTokens, session.maxOutputTokens); assertEquals(ReasoningPolicy.DEFAULT, session.reasoningEffort);
+        assertEquals("text", profile.inputModalities); assertEquals("text", profile.outputModalities);
+        assertEquals("text", session.inputModalities); assertEquals("text", session.outputModalities); assertEquals(0, upgraded.draftMedia(session.id).length());
     }
 
     @Test public void upgradeFromV4DoesNotMisbindSessionModelOverrideToProviderDefaultProfile() throws Exception {
