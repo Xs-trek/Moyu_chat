@@ -70,6 +70,11 @@ const mainUi = read('src/main.js');
 if (!render.includes('export function patchConversation()') || !render.includes('streaming-state')) fail('conversation volatile state patch missing');
 if (!mainUi.includes('patchConversation(); renderGate.request();')) fail('Host view updates must patch volatile conversation state before deferred full render');
 if (!mainUi.includes("postIntent('chat.session.delete'") || !render.includes("'delete-session'")) fail('session delete intent exists natively but is not exposed by the WebView UI');
+if (mainUi.includes('window.confirm(')) fail('WebView actions must not depend on browser JS dialogs; use app-owned confirmation UI');
+if (!render.includes('openConfirmDialog') || !styles.includes('modal-backdrop')) fail('app-owned confirmation surface missing');
+if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'")) fail('history edit/rollback UI intents missing');
+if (!coordinator.includes('editMessageBranch(') || !coordinator.includes('rollbackMessageBranch(')) fail('history edit/rollback must create durable local branches');
+if (!openAiTransport.includes('.fastFallback(true)')) fail('OpenAI-compatible transport must retain fast IPv6/IPv4 fallback');
 
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 if (!manifest.includes('android:allowBackup="false"')) fail('Android backup must remain disabled for local chat data/secrets');
