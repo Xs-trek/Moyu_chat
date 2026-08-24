@@ -40,8 +40,8 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** Production wires the ContentResolver bridge; JVM tests inject fakes for the optional Remote side. */
     ChatCoordinator(MoyuChatApplication app, Host host, ChatSecretStore secrets, RemoteDataBridge bridge) {
-        this.db = app.database(); this.secrets = secrets; this.host = host;
-        this.contexts = new ContextBuilder(db); this.snapshots = new SnapshotService(db);
+        this.db = app.database(); this.secrets = secrets; this.mediaStore = app.mediaStore(); this.host = host;
+        this.contexts = new ContextBuilder(db, mediaStore); this.snapshots = new SnapshotService(db);
         this.remoteBridge = bridge;
         // Recovery runs on the same single worker as every intent, so it is ordered before any send.
         worker.execute(() -> { db.recoverInterruptedSessions(); emitView(); });
