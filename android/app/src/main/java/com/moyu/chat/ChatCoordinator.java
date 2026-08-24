@@ -27,9 +27,11 @@ final class ChatCoordinator implements AutoCloseable {
     private final SnapshotService snapshots;
     private final TaskRouter taskRouter = new TaskRouter();
     private final ContextCheckpointService checkpointService = new ContextCheckpointService();
+    private final MoyuWebService webService = new MoyuWebService();
     private final RemoteDataBridge remoteBridge;
     private final Map<String, ChatTransport.Turn> activeTurns = new HashMap<>();
     private final java.util.Set<String> preparingSessions = new java.util.HashSet<>();
+    private final Map<String, String> webPreparingStages = new HashMap<>();
 
     private volatile boolean closed;
     private boolean uiReady;
