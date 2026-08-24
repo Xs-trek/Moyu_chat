@@ -322,6 +322,21 @@ final class ChatCoordinator implements AutoCloseable {
             @Override public void onReasoningDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { streamStage[0] = "reasoning"; reasoningOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception ignored) { } }); }
             @Override public void onTextDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage[0] = "output"; textOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception ignored) { } }); }
             @Override public void onImage(String mimeType, String base64, String fileName) { if (!allowImageOutput) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage[0] = "output"; JSONObject image = mediaStore.saveBase64Image(mimeType, base64, fileName); outputMedia.put(image); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception error) { host.showMessage("image output ignored: " + safe(error)); } }); }
+            @Override public void onToolActivity(String tool, String state) { worker.execute(() -> { try {
+                if (ChatTurnOptions.WEB_SEARCH.equals(tool) || ChatTurnOptions.WEB_FETCH.equals(tool)) {
+                    streamStage[0] = tool;
+                    if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = providerWebBackend(provider.protocol);
+                    db.replaceTimelineBody(streamKey, liveProjection()); emitView();
+                }
+            } catch (Exception ignored) { } }); }
+            @Override public void onWebSource(String url, String title) { worker.execute(() -> { try {
+                if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) return;
+                if (!webSources.containsKey(url) && webSources.size() < 16) webSources.put(url, new JSONObject()
+                        .put("url", url).put("title", title == null || title.trim().isEmpty() ? url : title.trim())
+                        .put("backend", providerWebBackend(provider.protocol)));
+                if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = providerWebBackend(provider.protocol);
+                db.replaceTimelineBody(streamKey, liveProjection()); emitView();
+            } catch (Exception ignored) { } }); }
             @Override public void onUsage(Integer in, Integer out) { onUsageDetails(in, out, null, null, null, null); }
             @Override public void onUsageDetails(Integer in, Integer out, Integer cached, Integer cacheWrite, Integer cacheBase, Integer reasoningTokens) { worker.execute(() -> { try {
                 if (in != null) usageState.put("inputTokens", Math.max(0, in));
