@@ -24,7 +24,7 @@ function fmt(value) { try { return new Intl.DateTimeFormat('zh-CN', { month: 'sh
 function mediaGallery(items, removable = false, sessionId = '') {
   const images = (items || []).filter((item) => item?.kind === 'image' && item.url);
   if (!images.length) return null;
-  return h('div', { class: 'media-grid' }, images.map((item) => h('figure', { class: 'media-item' },
+  return h('div', { class: 'media-grid', dataset: { mediaSignature: JSON.stringify(images) } }, images.map((item) => h('figure', { class: 'media-item' },
     h('img', { src: item.url, alt: item.fileName || '图片', loading: 'lazy' }),
     h('figcaption', {}, h('span', { text: item.fileName || `${item.width || '?'}×${item.height || '?'}` }), removable ? button('移除', 'remove-attachment', { sessionId, mediaId: item.mediaId }, 'btn small') : null)
   )));
