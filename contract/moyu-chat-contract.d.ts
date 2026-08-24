@@ -14,6 +14,7 @@ export type MoyuChatIntent =
   | UiIntent<'app.ready', { uiVersion: string }>
   | UiIntent<'view.reload', Record<string, never>>
   | UiIntent<'appearance.set', { theme: Theme }>
+  | UiIntent<'chat.reasoning.visibility.set', { show: boolean }>
   | UiIntent<'nav.open', { route: Route }>
   | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; title?: string }>
   | UiIntent<'chat.session.open', { localSessionId: string }>
@@ -99,8 +100,8 @@ export interface SessionView {
 }
 
 export type TimelineItem =
-  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; attachments?: MediaView[]; inherited?: boolean; streaming?: boolean; streamStage?: 'connecting' | 'connected' | 'reasoning' | 'output'; createdAt: string }
-  | { localSeq: number; kind: 'usage'; inputTokens?: number; outputTokens?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number }; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; reasoning?: string; attachments?: MediaView[]; inherited?: boolean; streaming?: boolean; streamStage?: 'connecting' | 'connected' | 'reasoning' | 'output'; createdAt: string }
+  | { localSeq: number; kind: 'usage'; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
 
 export interface SessionDetailView extends SessionView {
@@ -146,7 +147,7 @@ export interface AppViewModel {
   remoteBridge: RemoteBridgeView;
   remoteSources: RemoteSourceView[];
   handoffs: HandoffView[];
-  ui: { pendingRequestIds: string[]; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {
