@@ -25,6 +25,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final ChatTransportRegistry transports = new ChatTransportRegistry();
     private final ContextBuilder contexts;
     private final SnapshotService snapshots;
+    private final TaskRouter taskRouter = new TaskRouter();
+    private final ContextCheckpointService checkpointService = new ContextCheckpointService();
     private final RemoteDataBridge remoteBridge;
     private final Map<String, ChatTransport.Turn> activeTurns = new HashMap<>();
 
