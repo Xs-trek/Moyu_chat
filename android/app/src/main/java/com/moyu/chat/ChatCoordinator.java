@@ -218,17 +218,27 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void finishTurn(String id, String streamKey, JSONObject seed, String text, JSONArray outputMedia, String[] error) {
-        activeTurns.remove(id);
+        String finalState = error == null || "cancelled".equals(error[0]) ? "completed" : "failed";
         try {
+            JSONObject finished = null;
             if (!text.isEmpty() || (outputMedia != null && outputMedia.length() > 0)) {
-                JSONObject finished = new JSONObject(seed.toString()).put("text", text).put("streaming", false);
+                finished = new JSONObject(seed.toString()).put("text", text).put("streaming", false);
                 if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
-                db.replaceTimelineBody(streamKey, finished);
-            } else db.deleteTimelineItem(streamKey);
-            if (error != null && !"cancelled".equals(error[0])) db.appendTimeline(id, "error:" + UUID.randomUUID(), new JSONObject().put("kind", "error").put("code", error[0]).put("summary", error[1]).put("createdAt", Instant.now().toString()));
-            ChatDatabase.Session s = db.getSession(id); if (s != null) { s.state = error == null || "cancelled".equals(error[0]) ? "completed" : "failed"; s.updatedAt = Instant.now().toString(); db.saveSession(s); }
+            }
+            db.finalizeTurn(id, streamKey, finished,
+                    error == null ? null : error[0], error == null ? null : error[1], finalState);
+        } catch (Exception finalizeError) {
+            // Runtime authority must never remain locked because a projection write failed.
+            try { db.deleteTimelineItem(streamKey); } catch (Exception ignored) { }
+            try {
+                ChatDatabase.Session s = db.getSession(id);
+                if (s != null) { s.state = "failed"; s.updatedAt = Instant.now().toString(); db.saveSession(s); }
+            } catch (Exception ignored) { }
+            host.showMessage("turn finalization failed: " + safe(finalizeError));
+        } finally {
+            activeTurns.remove(id);
             emitView();
-        } catch (Exception ignored) { }
+        }
     }
 
     private void interrupt(String id) { ChatTransport.Turn turn = activeTurns.get(id); if (turn != null) turn.cancel(); }
