@@ -308,6 +308,13 @@ public class TransportMockServerTest {
         assertTrue(body.optBoolean("stream"));
     }
 
+    @Test public void anthropicMessageStopSignalsReaderExit() throws Exception {
+        RecordingSink sink = new RecordingSink();
+        assertTrue(AnthropicMessagesTransport.parse(new JSONObject("{\"type\":\"message_stop\"}"), sink));
+        assertTrue(sink.completed);
+        assertEquals(1, sink.terminals.get());
+    }
+
     @Test public void anthropicEncodesImageInputAsBase64SourceBlock() throws Exception {
         server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
         RecordingSink sink = new RecordingSink();
