@@ -37,10 +37,12 @@ Context v0.0.2 adds:
 
 - complete user-led turn selection instead of message-level truncation;
 - `incomplete` assistant semantics for interrupted/failed partial answers;
-- optional Smart Context (enabled by default): one bounded first-turn model classifier creates an allowlisted `TaskProfile` and selects only local reviewed prompt modules;
-- model-generated structured `ContextCheckpoint` only when older turns must be omitted;
+- explicit Session Context Modes: `auto`, `minimal`, and `smart`, frozen at creation time;
+- `minimal` performs no extra model preprocessing; `smart` enables the bounded Task Router plus model-generated Checkpoint; `auto` keeps ordinary local Chat Router-free, enables Checkpoint only under real context pressure, and resolves Remote-origin Snapshots to the full smart layer;
+- the Task Router creates only an allowlisted `TaskProfile` and selects local reviewed prompt modules;
+- model-generated structured `ContextCheckpoint` is created only when enabled by the mode and older turns must be omitted;
 - immutable Timeline/Snapshot remains the source of truth; TaskProfile/Checkpoint never rewrite old messages;
-- Smart Context can be disabled to avoid its extra hidden model calls;
+- model-card Chat creation and Remote import can explicitly choose a mode; local edit/rollback/branches inherit the source Session mode;
 - provider-native response IDs/reasoning blocks/Claude compaction are intentionally not authoritative state in this version.
 
 Transport scope remains protocol-centric: `openai-chat-completions`, `openai-responses`, and `anthropic-messages`. Provider definitions select `protocol + baseUrl + authMode` (`bearer`, `x-api-key`, or `api-key`); Session/Branch/Snapshot layers do not know which wire vendor is used. Transports append only protocol paths (`/chat/completions`, `/responses`, `/v1/messages`) and never hardcode vendor base URLs.
