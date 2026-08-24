@@ -135,23 +135,134 @@ function usageSummary(item) {
   return parts.length ? parts.join(' · ') : '暂无 token usage';
 }
 
+function timelineKey(item) {
+  const seq = Number(item?.localSeq);
+  if (Number.isInteger(seq) && seq > 0) return `${item.kind}:${item.inherited ? 'inherited' : 'local'}:${seq}`;
+  return `${item?.kind || 'item'}:${item?.role || ''}:${item?.createdAt || ''}`;
+}
+
+/** Usage is durable as its own row, but projected into the preceding assistant footer. */
+function timelineProjection(items = []) {
+  const out = [];
+  for (const raw of items || []) {
+    if (!raw) continue;
+    if (raw.kind === 'usage') {
+      for (let i = out.length - 1; i >= 0; i -= 1) {
+        if (out[i]?.kind === 'message' && out[i]?.role === 'assistant') { out[i] = { ...out[i], __usage: raw }; break; }
+      }
+      continue;
+    }
+    out.push({ ...raw });
+  }
+  return out;
+}
+
+function messageBody(item) {
+  if (!item.text) return null;
+  if (item.role === 'assistant' && !item.streaming) {
+    const body = h('div', { class: 'message markdown-body', dataset: { messageBody: 'markdown' } });
+    body.append(renderSafeMarkdown(item.text));
+    return body;
+  }
+  return h('pre', { class: 'message', dataset: { messageBody: 'plain' }, text: item.text });
+}
+
+function sourceList(sources = []) {
+  const safeSources = (sources || []).filter((source) => source?.url?.startsWith('https://')).slice(0, 12);
+  if (!safeSources.length) return null;
+  return h('div', { class: 'message-sources' }, h('strong', { text: '来源' }), safeSources.map((source, index) =>
+    button(`${index + 1}. ${source.title || source.url}`, 'open-source', { url: source.url }, 'source-link')));
+}
+
+function assistantFooter(item, finalized, sessionId) {
+  if (item.role !== 'assistant') return null;
+  const usage = item.__usage;
+  const sourceNode = sourceList(item.sources);
+  const backend = String(item.webBackend || '').trim();
+  const canAct = finalized && Number(item.localSeq) > 0;
+  if (!sourceNode && !backend && !usage && !canAct) return null;
+  const signature = JSON.stringify({ sources: item.sources || [], backend, usage: usage || null, canAct, localSeq: item.localSeq });
+  return h('footer', { class: 'assistant-footer', dataset: { footerSignature: signature } },
+    sourceNode,
+    (backend || usage) ? h('div', { class: 'assistant-meta muted' },
+      backend ? h('span', { text: `联网 · ${backend}` }) : null,
+      usage ? h('span', { text: usageSummary(usage) }) : null) : null,
+    canAct ? h('div', { class: 'message-actions' },
+      button('复制', 'copy-message', { sessionId, localSeq: item.localSeq }, 'btn small'),
+      button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
+}
+
 function timelineItem(item, runtimeRunning = false, sessionId = '', showReasoning = false) {
   if (item.kind === 'message') {
     const finalized = !item.streaming && !runtimeRunning && Number(item.localSeq) > 0 && (item.role === 'user' || item.role === 'assistant');
     const reasoning = item.role === 'assistant' ? String(item.reasoning || '') : '';
-    return h('article', { class: `bubble ${item.role}` },
+    return h('article', { class: `bubble ${item.role}`, dataset: { itemKey: timelineKey(item), streaming: item.streaming ? '1' : '0', reasoningVisible: showReasoning ? '1' : '0' } },
       h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? 'Moyu Chat' : '系统' }), item.inherited ? badge('历史', 'quiet') : null, h('small', { text: fmt(item.createdAt) })),
       reasoning && showReasoning ? h('details', { class: 'reasoning-block', open: Boolean(item.streaming && runtimeRunning) }, h('summary', { text: '模型推理' }), h('pre', { class: 'reasoning-text', text: reasoning })) : null,
-      item.text ? h('pre', { class: 'message', text: item.text }) : null,
+      messageBody(item),
       mediaGallery(item.attachments),
       item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: streamStageLabel(item.streamStage) }) : null,
-      finalized ? h('div', { class: 'message-actions' },
-        item.role === 'user' ? button('编辑', 'edit-message', { sessionId, localSeq: item.localSeq }, 'btn small') : null,
+      item.role === 'assistant' ? assistantFooter(item, finalized, sessionId) : null,
+      finalized && item.role === 'user' ? h('div', { class: 'message-actions' },
+        button('编辑', 'edit-message', { sessionId, localSeq: item.localSeq }, 'btn small'),
         button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
   }
-  if (item.kind === 'usage') return h('article', { class: 'usage', text: usageSummary(item) });
-  if (item.kind === 'error') return h('article', { class: 'error' }, h('strong', { text: item.summary }), h('code', { text: item.code }));
+  if (item.kind === 'error') return h('article', { class: 'error', dataset: { itemKey: timelineKey(item) } }, h('strong', { text: item.summary }), h('code', { text: item.code }));
   return null;
+}
+
+function patchMessageNode(node, item, runtimeRunning, sessionId, showReasoning) {
+  const desired = timelineItem(item, runtimeRunning, sessionId, showReasoning);
+  if (!desired) return null;
+  if (node.dataset.streaming !== desired.dataset.streaming || node.dataset.reasoningVisible !== desired.dataset.reasoningVisible) {
+    node.replaceWith(desired); return desired;
+  }
+  node.className = desired.className;
+  const body = node.querySelector('.message');
+  const desiredBody = desired.querySelector('.message');
+  if (!body && desiredBody) node.querySelector('.bubble-head')?.after(desiredBody);
+  else if (body && !desiredBody) body.remove();
+  else if (body && desiredBody) {
+    const sameMode = body.dataset.messageBody === desiredBody.dataset.messageBody;
+    if (!sameMode) body.replaceWith(desiredBody);
+    else if (body.dataset.messageBody === 'plain' && body.textContent !== desiredBody.textContent) body.textContent = desiredBody.textContent;
+  }
+  const reasoning = node.querySelector('.reasoning-text');
+  const desiredReasoning = desired.querySelector('.reasoning-text');
+  if (reasoning && desiredReasoning && reasoning.textContent !== desiredReasoning.textContent) reasoning.textContent = desiredReasoning.textContent;
+  else if (!reasoning && desiredReasoning) node.querySelector('.bubble-head')?.after(desired.querySelector('.reasoning-block'));
+  else if (reasoning && !desiredReasoning) reasoning.closest('.reasoning-block')?.remove();
+  const streamState = node.querySelector('.streaming-state');
+  const desiredStreamState = desired.querySelector('.streaming-state');
+  if (streamState && desiredStreamState) streamState.textContent = desiredStreamState.textContent;
+  else if (!streamState && desiredStreamState) node.append(desiredStreamState);
+  else if (streamState && !desiredStreamState) streamState.remove();
+  const footer = node.querySelector('.assistant-footer');
+  const desiredFooter = desired.querySelector('.assistant-footer');
+  if (footer && desiredFooter) {
+    if (footer.dataset.footerSignature !== desiredFooter.dataset.footerSignature) footer.replaceWith(desiredFooter);
+  } else if (!footer && desiredFooter) node.append(desiredFooter);
+  else if (footer && !desiredFooter) footer.remove();
+  return node;
+}
+
+function reconcileTimeline(timeline, items, runtimeRunning, sessionId, showReasoning) {
+  const desiredItems = timelineProjection(items);
+  const existing = new Map([...timeline.children].map((node) => [node.dataset.itemKey, node]));
+  const used = new Set();
+  let reference = timeline.firstElementChild;
+  for (const item of desiredItems) {
+    const key = timelineKey(item);
+    let node = existing.get(key);
+    if (node && item.kind === 'message') node = patchMessageNode(node, item, runtimeRunning, sessionId, showReasoning);
+    else if (!node) node = timelineItem(item, runtimeRunning, sessionId, showReasoning);
+    if (!node) continue;
+    node.dataset.itemKey = key;
+    used.add(key);
+    if (node !== reference) timeline.insertBefore(node, reference);
+    reference = node.nextElementSibling;
+  }
+  for (const [key, node] of existing) if (!used.has(key)) node.remove();
 }
 
 function reasoningControl(model) {
