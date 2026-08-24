@@ -298,7 +298,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         JSONObject details = usage.optJSONObject("input_tokens_details");
         Integer cached = details != null && details.has("cached_tokens") ? details.optInt("cached_tokens") : null;
         Integer cacheWrite = details != null && details.has("cache_write_tokens") ? details.optInt("cache_write_tokens") : null;
-        sink.onUsageDetails(input, output, cached, cacheWrite, input);
+        JSONObject outputDetails = usage.optJSONObject("output_tokens_details");
+        Integer reasoningTokens = outputDetails != null && outputDetails.has("reasoning_tokens") ? outputDetails.optInt("reasoning_tokens") : null;
+        sink.onUsageDetails(input, output, cached, cacheWrite, input, reasoningTokens);
     }
 
     private static String httpErrorSummary(Response response) {
