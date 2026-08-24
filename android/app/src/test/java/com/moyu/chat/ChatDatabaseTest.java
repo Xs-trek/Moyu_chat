@@ -301,6 +301,9 @@ public class ChatDatabaseTest {
             raw.execSQL("ALTER TABLE sessions ADD COLUMN context_checkpoint TEXT NOT NULL DEFAULT ''");
             raw.execSQL("ALTER TABLE sessions ADD COLUMN checkpoint_covered_items INTEGER NOT NULL DEFAULT 0");
         }
+        if (version >= 8) {
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'auto'");
+        }
         raw.execSQL("INSERT INTO snapshot_items VALUES('legacy-snap',0,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}')");
         raw.execSQL("PRAGMA user_version = " + version);
         raw.close();
