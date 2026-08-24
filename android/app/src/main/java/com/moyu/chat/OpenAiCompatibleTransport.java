@@ -281,6 +281,25 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         if (usage != null) sink.onUsage(usage.has("input_tokens") ? usage.optInt("input_tokens") : null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null);
     }
 
+    private static String httpErrorSummary(Response response) {
+        String prefix = "Provider HTTP " + response.code();
+        try {
+            if (response.body() == null) return prefix;
+            String raw = response.body().string();
+            if (raw == null || raw.trim().isEmpty()) return prefix;
+            String detail = raw.trim();
+            try {
+                JSONObject body = new JSONObject(detail);
+                JSONObject error = body.optJSONObject("error");
+                if (error != null) detail = error.optString("message", detail);
+                else detail = body.optString("message", detail);
+            } catch (Exception ignored) { }
+            detail = detail.replace('\n', ' ').replace('\r', ' ').trim();
+            if (detail.length() > 512) detail = detail.substring(0, 512);
+            return detail.isEmpty() ? prefix : prefix + ": " + detail;
+        } catch (Exception ignored) { return prefix; }
+    }
+
     private static String safe(Exception error) { String message = error.getMessage(); return message == null || message.isEmpty() ? error.getClass().getSimpleName() : message; }
     @Override public void close() { executor.shutdownNow(); }
 }
