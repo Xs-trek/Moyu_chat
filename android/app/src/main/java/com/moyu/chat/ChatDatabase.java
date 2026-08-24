@@ -212,6 +212,27 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized void deleteSession(String id) { getWritableDatabase().delete("sessions", "local_id=?", new String[]{id}); }
     public synchronized void setDraft(String id, String draft) { ContentValues v = new ContentValues(); v.put("draft", draft == null ? "" : draft); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
 
+    public synchronized JSONArray draftMedia(String id) {
+        Session s = getSession(id); if (s == null || s.draftMedia == null || s.draftMedia.trim().isEmpty()) return new JSONArray();
+        try { return new JSONArray(s.draftMedia); } catch (Exception ignored) { return new JSONArray(); }
+    }
+
+    public synchronized void addDraftMedia(String id, JSONObject descriptor) {
+        if (descriptor == null || descriptor.optString("mediaId", "").trim().isEmpty()) throw new IllegalArgumentException("image descriptor required");
+        JSONArray items = draftMedia(id);
+        if (items.length() >= ChatMediaStore.MAX_DRAFT_IMAGES) throw new IllegalArgumentException("at most " + ChatMediaStore.MAX_DRAFT_IMAGES + " images per message");
+        items.put(new JSONObject(descriptor.toString()));
+        ContentValues v = new ContentValues(); v.put("draft_media", items.toString()); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
+    }
+
+    public synchronized void removeDraftMedia(String id, String mediaId) {
+        JSONArray source = draftMedia(id), out = new JSONArray();
+        for (int i = 0; i < source.length(); i++) { JSONObject item = source.optJSONObject(i); if (item != null && !mediaId.equals(item.optString("mediaId"))) out.put(item); }
+        ContentValues v = new ContentValues(); v.put("draft_media", out.toString()); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
+    }
+
+    public synchronized void clearDraftMedia(String id) { ContentValues v = new ContentValues(); v.put("draft_media", "[]"); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
+
     public synchronized int appendTimeline(String sessionId, String itemKey, JSONObject body) {
         SQLiteDatabase db = getWritableDatabase();
         int seq;
