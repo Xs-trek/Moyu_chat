@@ -85,6 +85,12 @@ if (!openAiTransport.includes('.fastFallback(true)')) fail('OpenAI-compatible tr
 const registry = read('android/app/src/main/java/com/moyu/chat/ChatTransportRegistry.java');
 for (const protocol of ['CHAT_COMPLETIONS', 'RESPONSES', 'AnthropicMessagesTransport.PROTOCOL']) if (!registry.includes(protocol)) fail(`transport registry missing ${protocol}`);
 
+const webService = read('android/app/src/main/java/com/moyu/chat/MoyuWebService.java');
+if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_search_exa')) fail('Moyu Exa fallback backend missing');
+if (!webService.includes('Moyu Fetch only allows HTTPS URLs') || !webService.includes('publicDns') || !webService.includes('validateHttpsUri')) fail('Moyu Fetch HTTPS/SSRF boundary missing');
+if (!webService.includes('untrusted reference material') || !webService.includes('not instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
+if (!coordinator.includes('input + preparedWeb.promptSuffix') || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('ephemeral Web context/source projection missing');
+
 const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
 if (!mainActivity.includes('setVerticalScrollBarEnabled(false)') || !mainActivity.includes('setHorizontalScrollBarEnabled(false)')) fail('WebView chrome scrollbars must remain disabled');
 if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
