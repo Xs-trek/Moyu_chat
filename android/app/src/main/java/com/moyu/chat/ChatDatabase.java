@@ -238,6 +238,36 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized void clearDraftMedia(String id) { ContentValues v = new ContentValues(); v.put("draft_media", "[]"); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
 
+    /** Atomically commits the user's turn and one unique live assistant projection before network streaming starts. */
+    public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            int seq;
+            try (Cursor c = db.rawQuery("SELECT COALESCE(MAX(local_seq),0)+1 FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+                if (!c.moveToFirst()) throw new IllegalStateException("cannot allocate user timeline sequence");
+                seq = c.getInt(0);
+            }
+            userBody.put("localSeq", seq);
+            ContentValues user = new ContentValues(); user.put("item_key", userKey); user.put("session_id", sessionId); user.put("local_seq", seq);
+            user.put("body", userBody.toString()); user.put("created_at", userBody.optString("createdAt", Instant.now().toString()));
+            db.insertWithOnConflict("timeline", null, user, SQLiteDatabase.CONFLICT_ABORT);
+            updatePreviewFromBody(db, sessionId, userBody);
+
+            liveBody.put("localSeq", seq + 1);
+            ContentValues live = new ContentValues(); live.put("item_key", streamKey); live.put("session_id", sessionId); live.put("local_seq", seq + 1);
+            live.put("body", liveBody.toString()); live.put("created_at", liveBody.optString("createdAt", Instant.now().toString()));
+            db.insertWithOnConflict("timeline", null, live, SQLiteDatabase.CONFLICT_ABORT);
+
+            ContentValues state = new ContentValues(); state.put("state", "running"); state.put("updated_at", Instant.now().toString());
+            state.put("draft", ""); state.put("draft_media", "[]");
+            if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalStateException("session missing while starting turn");
+            db.setTransactionSuccessful();
+        } catch (org.json.JSONException error) {
+            throw new IllegalStateException(error);
+        } finally { db.endTransaction(); }
+    }
+
     public synchronized int appendTimeline(String sessionId, String itemKey, JSONObject body) {
         SQLiteDatabase db = getWritableDatabase();
         int seq;
