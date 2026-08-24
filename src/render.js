@@ -82,7 +82,7 @@ function conversation(view) {
       button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn small'),
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small'),
       button('回传', 'handoff', { sessionId: session.localSessionId }, 'btn small'),
-      !session.canInterrupt ? button('删除', 'delete-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn small danger') : null),
+      !session.canInterrupt && !session.contextPreparing ? button('删除', 'delete-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn small danger') : null),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
       h('div', { class: 'timeline' }, session.messages.map((item) => timelineItem(item, session.state === 'running', session.localSessionId, Boolean(view.ui?.showReasoning))))),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
