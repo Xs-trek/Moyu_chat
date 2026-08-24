@@ -103,7 +103,7 @@ function timelineItem(item, runtimeRunning = false, sessionId = '') {
   if (item.kind === 'message') {
     const finalized = !item.streaming && !runtimeRunning && Number(item.localSeq) > 0 && (item.role === 'user' || item.role === 'assistant');
     return h('article', { class: `bubble ${item.role}` },
-      h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? 'Moyu Chat' : '系统' }), h('small', { text: fmt(item.createdAt) })),
+      h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? 'Moyu Chat' : '系统' }), item.inherited ? badge('历史', 'quiet') : null, h('small', { text: fmt(item.createdAt) })),
       item.text ? h('pre', { class: 'message', text: item.text }) : null,
       mediaGallery(item.attachments),
       item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: streamStageLabel(item.streamStage) }) : null,
