@@ -8,6 +8,10 @@ interface ChatTransport {
         default void onReasoningDelta(String delta) { }
         void onTextDelta(String delta);
         default void onImage(String mimeType, String base64, String fileName) { }
+        /** Hosted provider tool lifecycle; currently web_search / web_fetch. */
+        default void onToolActivity(String tool, String state) { }
+        /** A provider-attributed public web source. Raw fetched/search content is never persisted here. */
+        default void onWebSource(String url, String title) { }
         void onUsage(Integer inputTokens, Integer outputTokens);
         /**
          * Provider-neutral cache usage details. cacheHitBaseTokens is the logical denominator for
