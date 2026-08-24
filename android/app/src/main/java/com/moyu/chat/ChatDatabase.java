@@ -452,6 +452,26 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         p.reasoningLevels = ""; p.defaultReasoning = ReasoningPolicy.DEFAULT; p.inputModalities = "text"; p.outputModalities = "text"; return p;
     }
 
+    static String normalizeModalities(String raw) {
+        String value = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
+        if (value.isEmpty()) return "text";
+        boolean text = false, image = false;
+        for (String part : value.split(",")) {
+            String item = part.trim(); if (item.isEmpty()) continue;
+            if ("text".equals(item)) text = true;
+            else if ("image".equals(item)) image = true;
+            else throw new IllegalArgumentException("modalities only support text,image in this build");
+        }
+        if (!text && !image) return "text";
+        return text && image ? "text,image" : image ? "image" : "text";
+    }
+
+    static boolean supportsModality(String modalities, String target) {
+        String normalized = normalizeModalities(modalities);
+        for (String part : normalized.split(",")) if (target.equals(part.trim())) return true;
+        return false;
+    }
+
     private static ContentValues handoffValues(Handoff h) {
         ContentValues v = new ContentValues(); v.put("handoff_id", h.id); v.put("branch_session_id", h.branchSessionId); v.put("state", h.state);
         v.put("summary", h.summary); v.put("payload", h.payload); v.put("created_at", h.createdAt); return v;
