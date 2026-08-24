@@ -221,23 +221,29 @@ final class ChatCoordinator implements AutoCloseable {
         // Preflight the exact text+image prompt before mutating durable chat history. Session owns resolved capabilities.
         CanonicalPrompt prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
         if (smartContextEnabled) {
-            TaskProfile profile = TaskProfile.fromStored(session.taskProfile);
-            if (profile == null) {
-                TaskProfile routed = taskRouter.route(transport, provider, key, session.model, prompt);
-                profile = routed != null ? routed : new TaskProfile("general", "answer", "standard", "direct", "checkpoint_recent", new JSONArray(), 0d);
-                session.taskProfile = profile.toJson().toString();
-                db.saveSession(session);
-                prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
-            }
-            if (!"recent".equals(profile.contextPolicy) && prompt.truncated && prompt.omittedItemCount > session.checkpointCoveredItems) {
-                ContextCheckpointService.Update update = checkpointService.update(transport, provider, key, session.model, prompt,
-                        ContextCheckpoint.fromStored(session.contextCheckpoint), session.checkpointCoveredItems);
-                if (update != null) {
-                    session.contextCheckpoint = update.checkpoint.toJson().toString();
-                    session.checkpointCoveredItems = update.coveredItems;
+            boolean preparing = TaskProfile.fromStored(session.taskProfile) == null || prompt.truncated;
+            if (preparing) { preparingSessions.add(id); emitView(); }
+            try {
+                TaskProfile profile = TaskProfile.fromStored(session.taskProfile);
+                if (profile == null) {
+                    TaskProfile routed = taskRouter.route(transport, provider, key, session.model, prompt);
+                    profile = routed != null ? routed : new TaskProfile("general", "answer", "standard", "direct", "checkpoint_recent", new JSONArray(), 0d);
+                    session.taskProfile = profile.toJson().toString();
                     db.saveSession(session);
                     prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
                 }
+                if (!"recent".equals(profile.contextPolicy) && prompt.truncated && prompt.omittedItemCount > session.checkpointCoveredItems) {
+                    ContextCheckpointService.Update update = checkpointService.update(transport, provider, key, session.model, prompt,
+                            ContextCheckpoint.fromStored(session.contextCheckpoint), session.checkpointCoveredItems);
+                    if (update != null) {
+                        session.contextCheckpoint = update.checkpoint.toJson().toString();
+                        session.checkpointCoveredItems = update.coveredItems;
+                        db.saveSession(session);
+                        prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
+                    }
+                }
+            } finally {
+                if (preparing) { preparingSessions.remove(id); emitView(); }
             }
         }
         provider.maxOutputTokens = session.maxOutputTokens; // request-local provider copy; transport only needs the wire output cap.
