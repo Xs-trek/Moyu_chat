@@ -101,6 +101,12 @@ export interface TaskProfileView {
   confidence: number;
 }
 
+export interface WebSourceView {
+  url: string;
+  title: string;
+  backend?: string;
+}
+
 export interface SessionView {
   localSessionId: string;
   title: string;
