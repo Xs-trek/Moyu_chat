@@ -18,9 +18,11 @@ export type MoyuChatIntent =
   | UiIntent<'appearance.set', { theme: Theme }>
   | UiIntent<'chat.reasoning.visibility.set', { show: boolean }>
   | UiIntent<'context.mode.default.set', { mode: ContextMode }>
+  | UiIntent<'web.mode.default.set', { mode: WebMode }>
+  | UiIntent<'external.open', { url: string }>
   | UiIntent<'context.intelligence.set', { enabled: boolean }>
   | UiIntent<'nav.open', { route: Route }>
-  | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; contextMode?: ContextMode; title?: string }>
+  | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; contextMode?: ContextMode; webMode?: WebMode; title?: string }>
   | UiIntent<'chat.session.open', { localSessionId: string }>
   | UiIntent<'chat.session.send', { localSessionId: string; text: string }>
   | UiIntent<'chat.session.saveDraft', { localSessionId: string; text: string }>
