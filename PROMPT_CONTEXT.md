@@ -9,10 +9,13 @@ Durable Timeline / immutable Snapshot
                  |
         provider-neutral projection
                  |
+            ContextMode
+       auto|minimal|smart
+                 |
         +---------------------+
         |                     |
    TaskProfile          ContextCheckpoint
- (stable epoch)        (only on truncation)
+ (when enabled)        (only on truncation)
         |                     |
         +----------+----------+
                    |
