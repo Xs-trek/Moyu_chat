@@ -308,6 +308,28 @@ public class ChatCoordinatorE2eTest {
         });
     }
 
+    @Test public void reasoningOnlyCompletionBecomesExplicitEmptyOutputFailure() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"hidden thinking\"},\"finish_reason\":null}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n");
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "reason"));
+        await("reasoning-only turn fails explicitly", () -> "failed".equals(activeSession(latestView()).optString("state")));
+        JSONArray timeline = activeSession(latestView()).optJSONArray("messages");
+        boolean sawEmptyOutput = false;
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row != null && "error".equals(row.optString("kind")) && "empty_assistant_output".equals(row.optString("code"))) sawEmptyOutput = true;
+            assertFalse("hidden reasoning must not become visible transcript", row != null && row.optString("text", "").contains("hidden thinking"));
+        }
+        assertTrue("empty visible completion must be explicit", sawEmptyOutput);
+        assertTrue(activeSession(latestView()).optBoolean("canSend"));
+    }
+
     // ---------- provider error mapping ----------
 
     @Test public void providerHttpErrorMarksTurnFailedAndRecordsErrorRow() throws Exception {
