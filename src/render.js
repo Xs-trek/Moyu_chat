@@ -232,6 +232,14 @@ function patchMessageNode(node, item, runtimeRunning, sessionId, showReasoning) 
   if (reasoning && desiredReasoning && reasoning.textContent !== desiredReasoning.textContent) reasoning.textContent = desiredReasoning.textContent;
   else if (!reasoning && desiredReasoning) node.querySelector('.bubble-head')?.after(desired.querySelector('.reasoning-block'));
   else if (reasoning && !desiredReasoning) reasoning.closest('.reasoning-block')?.remove();
+  const media = node.querySelector('.media-grid');
+  const desiredMedia = desired.querySelector('.media-grid');
+  if (media && desiredMedia) {
+    if (media.dataset.mediaSignature !== desiredMedia.dataset.mediaSignature) media.replaceWith(desiredMedia);
+  } else if (!media && desiredMedia) {
+    const bodyAnchor = node.querySelector('.message') || node.querySelector('.reasoning-block') || node.querySelector('.bubble-head');
+    bodyAnchor?.after(desiredMedia);
+  } else if (media && !desiredMedia) media.remove();
   const streamState = node.querySelector('.streaming-state');
   const desiredStreamState = desired.querySelector('.streaming-state');
   if (streamState && desiredStreamState) streamState.textContent = desiredStreamState.textContent;
