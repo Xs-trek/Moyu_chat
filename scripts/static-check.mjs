@@ -69,6 +69,7 @@ const render = read('src/render.js');
 const mainUi = read('src/main.js');
 if (!render.includes('export function patchConversation()') || !render.includes('streaming-state')) fail('conversation volatile state patch missing');
 if (!mainUi.includes('patchConversation(); renderGate.request();')) fail('Host view updates must patch volatile conversation state before deferred full render');
+if (!mainUi.includes("postIntent('chat.session.delete'") || !render.includes("'delete-session'")) fail('session delete intent exists natively but is not exposed by the WebView UI');
 
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 if (!manifest.includes('android:allowBackup="false"')) fail('Android backup must remain disabled for local chat data/secrets');
