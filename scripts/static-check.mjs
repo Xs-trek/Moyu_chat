@@ -94,6 +94,8 @@ if (!coordinator.includes('input + preparedWeb.promptSuffix') || !coordinator.in
 const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
 if (!mainActivity.includes('setVerticalScrollBarEnabled(false)') || !mainActivity.includes('setHorizontalScrollBarEnabled(false)')) fail('WebView chrome scrollbars must remain disabled');
 if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
+if (!mainActivity.includes('openExternalUrl(String url)') || !mainActivity.includes('Intent.ACTION_VIEW') || !mainActivity.includes('"https".equalsIgnoreCase(uri.getScheme())')) fail('external.open must leave the WebView through an HTTPS-only Android VIEW intent');
+if (!mainActivity.includes('Provider-native Web capabilities') || !mainActivity.includes('p.toolCapabilities = toolCapabilities')) fail('model editor must expose explicit provider-native Web capabilities');
 
 const styles = read('src/styles.css');
 for (const marker of ['overflow-x:hidden', 'conversation-active', '100dvh', 'timeline-scroll']) if (!styles.includes(marker)) fail(`native-feeling viewport/scroll constraint missing: ${marker}`);
