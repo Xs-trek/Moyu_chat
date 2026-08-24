@@ -13,7 +13,7 @@ import org.json.JSONObject;
 import org.junit.Test;
 
 public class MoyuWebServiceTest {
-    @Test public void parsesJsonRpcAndSseToolText() {
+    @Test public void parsesJsonRpcAndSseToolText() throws Exception {
         String payload = new JSONObject().put("jsonrpc", "2.0").put("id", 1)
                 .put("result", new JSONObject().put("content", new org.json.JSONArray()
                         .put(new JSONObject().put("type", "text").put("text", "alpha"))
