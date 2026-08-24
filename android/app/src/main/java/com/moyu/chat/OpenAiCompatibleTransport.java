@@ -67,7 +67,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                     if ("[DONE]".equals(data)) { sink.onCompleted(); return; }
                     JSONObject event;
                     try { event = new JSONObject(data); } catch (Exception ignored) { continue; }
-                    if (CHAT_COMPLETIONS.equals(protocol)) parseChat(event, sink); else parseResponses(event, sink, emittedImages);
+                    if (CHAT_COMPLETIONS.equals(protocol)) {
+                        if (parseChat(event, sink)) { sink.onCompleted(); return; }
+                    } else parseResponses(event, sink, emittedImages);
                 }
             }
             sink.onCompleted();
