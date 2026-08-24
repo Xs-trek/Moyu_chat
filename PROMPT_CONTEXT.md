@@ -45,7 +45,7 @@ Moyu does not clone ChatGPT, Codex, Claude Code, OpenCode, or any provider-priva
 
 ## TaskProfile: model-assisted control, not model-authored authority
 
-When Smart Context is enabled (default), the first user turn of a context epoch may make one bounded hidden call to the selected provider/model. The router sees only a small recent conversation excerpt and must return a strict allowlisted JSON classification:
+When the resolved Session Context Mode enables routing, the first user turn of a context epoch may make one bounded hidden call to the selected provider/model. The router sees only a small recent conversation excerpt and must return a strict allowlisted JSON classification:
 
 ```text
 domain
