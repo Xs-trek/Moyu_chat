@@ -109,6 +109,8 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.open": openSession(required(p, "localSessionId")); break;
                 case "chat.session.send": send(required(p, "localSessionId"), p.optString("text", "")); break;
                 case "chat.session.saveDraft": db.setDraft(required(p, "localSessionId"), p.optString("text", "")); break;
+                case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;
+                case "chat.attachment.remove": db.removeDraftMedia(required(p, "localSessionId"), required(p, "mediaId")); break;
                 case "chat.session.interrupt": interrupt(required(p, "localSessionId")); break;
                 case "chat.session.delete": deleteSession(required(p, "localSessionId")); break;
                 // Absent providerId means "configure a new provider"; never bind null into the DB layer.
