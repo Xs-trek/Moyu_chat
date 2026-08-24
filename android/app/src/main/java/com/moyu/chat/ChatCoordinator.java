@@ -184,18 +184,21 @@ final class ChatCoordinator implements AutoCloseable {
     private void send(String id, String text) throws Exception {
         // trim is an emptiness check only; the stored/prompted/sent text stays byte-for-byte original.
         String input = text == null ? "" : text;
-        if (input.trim().isEmpty()) return;
         ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("session not found");
+        JSONArray pendingMedia = db.draftMedia(id);
+        if (input.trim().isEmpty() && pendingMedia.length() == 0) return;
+        if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this session model does not support image input");
         if (activeTurns.containsKey(id)) throw new IllegalStateException("session busy");
         ChatDatabase.Provider provider = db.getProvider(session.providerId); String key = secrets.get(session.providerId);
         if (provider == null || key == null) throw new IllegalStateException("provider credential missing");
         ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
 
-        // Preflight the exact prompt before mutating durable chat history. Session owns the resolved model limits.
-        CanonicalPrompt prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input);
+        // Preflight the exact text+image prompt before mutating durable chat history. Session owns resolved capabilities.
+        CanonicalPrompt prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
         provider.maxOutputTokens = session.maxOutputTokens; // request-local provider copy; transport only needs the wire output cap.
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
-        db.appendTimeline(id, "user:" + UUID.randomUUID(), user); db.setDraft(id, "");
+        if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
+        db.appendTimeline(id, "user:" + UUID.randomUUID(), user); db.setDraft(id, ""); db.clearDraftMedia(id);
         session = db.getSession(id);
         session.state = "running"; session.updatedAt = Instant.now().toString(); db.saveSession(session);
         String streamKey = "assistant:live:" + id;
