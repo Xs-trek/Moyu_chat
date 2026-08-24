@@ -45,6 +45,10 @@ Context v0.0.2 adds:
 - model-card Chat creation and Remote import can explicitly choose a mode; local edit/rollback/branches inherit the source Session mode;
 - provider-native response IDs/reasoning blocks/Claude compaction are intentionally not authoritative state in this version.
 
+Web v0.0.2 is a Chat capability rather than a model label. Each Session freezes `webMode = off | auto | on` and a snapshot of provider-native Web capabilities. OpenAI Responses may use hosted `web_search`; Anthropic Messages may use hosted `web_search` / `web_fetch`. When a deployment has no matching native capability, Moyu can build bounded ephemeral Web context through Exa Search and SSRF-bounded HTTPS Fetch. Raw search/fetch payloads are never durable timeline rows; finalized assistants persist only visible answer text, source metadata, and the effective Web backend. Hidden Router/Checkpoint calls always use the no-Web transport path.
+
+The conversation UI now keeps keyed DOM identity while streaming instead of rebuilding the full timeline. Final assistant messages use a local safe Markdown reader, fold usage/cache/speed and Web source metadata into the assistant footer, expose copy/source actions, and provide a jump-to-latest affordance without relaxing the WebView network boundary.
+
 Transport scope remains protocol-centric: `openai-chat-completions`, `openai-responses`, and `anthropic-messages`. Provider definitions select `protocol + baseUrl + authMode` (`bearer`, `x-api-key`, or `api-key`); Session/Branch/Snapshot layers do not know which wire vendor is used. Transports append only protocol paths (`/chat/completions`, `/responses`, `/v1/messages`) and never hardcode vendor base URLs.
 
-See `PROMPT_CONTEXT.md` and `V0.0.2_DESIGN.md` for the context invariants and v0.0.2 scope.
+SQLite schema v9 persists `tool_capabilities` and `web_mode` while retaining v8 context-mode state. See `PROMPT_CONTEXT.md` and `V0.0.2_DESIGN.md` for the context/Web invariants and v0.0.2 scope.
