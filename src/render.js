@@ -78,6 +78,8 @@ function conversation(view) {
       imageInput ? badge('图片输入', 'good') : null,
       session.origin ? badge(`来自 ${session.origin.sourceTitle}`, 'branch') : null,
       badge(`上下文 · ${session.contextMode || 'auto'}${session.contextMode === 'auto' && session.effectiveContextMode ? ` → ${session.effectiveContextMode}` : ''}`, 'quiet'),
+      badge(`联网 · ${session.webMode || 'auto'} · ${session.effectiveWebBackend || 'Moyu Web'}`, session.webPreparingStage ? 'warn' : 'quiet'),
+      session.webPreparingStage ? badge(session.webPreparingStage === 'web_fetch' ? '网页抓取中' : '网页搜索中', 'warn') : null,
       session.taskProfile ? badge(`${session.taskProfile.domain} · ${session.taskProfile.taskType}`, 'quiet') : null,
       session.hasContextCheckpoint ? badge('Checkpoint', 'branch') : null,
       button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn small'),
