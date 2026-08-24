@@ -170,8 +170,9 @@ public class ChatDatabaseTest {
         ChatDatabase.Session session = db.createSession(second, null, null, null, "xhigh");
         assertEquals("model-b", session.model); assertEquals(128_000, session.contextTokens); assertEquals(96_000, session.inputTokens);
         assertEquals(8_192, session.maxOutputTokens); assertEquals("xhigh", session.reasoningEffort);
+        assertEquals("text,image", session.inputModalities); assertEquals("text,image", session.outputModalities);
 
-        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; db.saveModelProfile(second);
+        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; second.inputModalities = "text"; db.saveModelProfile(second);
         ChatDatabase.Session reloaded = db.getSession(session.id);
         assertEquals("session keeps resolved model limits after profile edits", 128_000, reloaded.contextTokens);
         assertEquals(96_000, reloaded.inputTokens); assertEquals("xhigh", reloaded.reasoningEffort);
