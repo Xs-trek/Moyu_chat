@@ -155,7 +155,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.id = UUID.randomUUID().toString(); s.providerId = source.providerId; s.modelProfileId = source.modelProfileId; s.model = source.model;
         s.contextTokens = source.contextTokens; s.inputTokens = source.inputTokens; s.maxOutputTokens = source.maxOutputTokens;
         s.reasoningEffort = source.reasoningEffort == null ? ReasoningPolicy.DEFAULT : source.reasoningEffort;
-        s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.draft = "";
+        s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.draft = ""; s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId; saveSession(s); return s;
     }
 
