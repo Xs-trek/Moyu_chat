@@ -180,7 +180,7 @@ export interface AppViewModel {
   remoteBridge: RemoteBridgeView;
   remoteSources: RemoteSourceView[];
   handoffs: HandoffView[];
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; defaultContextMode: ContextMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {
