@@ -3,7 +3,7 @@ function textNode(value) { return document.createTextNode(String(value ?? '')); 
 function inlineFragment(text) {
   const out = document.createDocumentFragment();
   const source = String(text ?? '');
-  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)/g;
+  const pattern = /(\[[^\]\n]+\]\(https:\/\/[^\s)]+\)|`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)/g;
   let cursor = 0;
   for (const match of source.matchAll(pattern)) {
     if (match.index > cursor) out.append(textNode(source.slice(cursor, match.index)));
