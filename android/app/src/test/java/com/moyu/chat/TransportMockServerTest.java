@@ -208,6 +208,36 @@ public class TransportMockServerTest {
 
     // ---------- OpenAI Responses ----------
 
+    @Test public void responsesHostedWebSearchIsExplicitAndExtractsSources() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"response.web_search_call.in_progress\"}\n\n" +
+                "data: {\"type\":\"response.web_search_call.completed\"}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"web_search_call\",\"action\":{\"sources\":[{\"url\":\"https://example.com/a\",\"title\":\"Example A\"}]}},{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\",\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://example.com/b\",\"title\":\"Example B\"}]}]}]}}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        ChatTurnOptions options = new ChatTurnOptions("web_search", "auto");
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "test-model", ReasoningPolicy.DEFAULT, prompt("user", "latest"), options, sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        assertEquals("web_search", body.getJSONArray("tools").getJSONObject(0).optString("type"));
+        assertEquals("auto", body.optString("tool_choice"));
+        assertEquals("web_search_call.action.sources", body.getJSONArray("include").optString(0));
+        assertEquals("web_search:running|web_search:completed", sink.toolActivity.toString());
+        assertTrue(sink.webSources.toString().contains("https://example.com/a#Example A"));
+        assertTrue(sink.webSources.toString().contains("https://example.com/b#Example B"));
+    }
+
+    @Test public void chatCompletionsNeverInjectsHostedWebTools() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "test-key", "test-model", ReasoningPolicy.DEFAULT,
+                prompt("user", "latest"), new ChatTurnOptions("web_search", "on"), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        assertFalse(body.has("tools"));
+        assertFalse(body.has("tool_choice"));
+        assertFalse(body.has("include"));
+    }
+
     @Test public void responsesAssemblesDeltasAndCompletesWithUsage() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n" +
