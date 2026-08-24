@@ -48,7 +48,7 @@ final class ContextBudgetManager {
         for (int i = chronological.length() - 1; i >= 0; i--) {
             JSONObject item = chronological.optJSONObject(i);
             if (item == null) continue;
-            int cost = estimate(item.optString("text", "")) + MESSAGE_OVERHEAD_TOKENS;
+            int cost = estimate(item.optString("text", "")) + estimateMedia(item.optJSONArray("attachments")) + MESSAGE_OVERHEAD_TOKENS;
             if (used + cost > budget) {
                 if (keptReverse.isEmpty()) {
                     throw new IllegalArgumentException("current input exceeds the configured context budget");
