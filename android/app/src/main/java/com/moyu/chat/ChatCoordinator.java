@@ -198,12 +198,9 @@ final class ChatCoordinator implements AutoCloseable {
         provider.maxOutputTokens = session.maxOutputTokens; // request-local provider copy; transport only needs the wire output cap.
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
-        db.appendTimeline(id, "user:" + UUID.randomUUID(), user); db.setDraft(id, ""); db.clearDraftMedia(id);
-        session = db.getSession(id);
-        session.state = "running"; session.updatedAt = Instant.now().toString(); db.saveSession(session);
-        String streamKey = "assistant:live:" + id;
+        String streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();
         JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
-        db.appendTimeline(id, streamKey, live);
+        db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
         StringBuilder textOut = new StringBuilder();
         JSONArray outputMedia = new JSONArray();
         final boolean allowImageOutput = ChatDatabase.supportsModality(session.outputModalities, "image");
