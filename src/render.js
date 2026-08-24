@@ -46,7 +46,7 @@ function home(view) {
     view.sessions.length ? h('section', { class: 'stack' }, view.sessions.map((session) => h('article', { class: 'card session-card' },
       h('div', { class: 'row' }, h('strong', { class: 'truncate-safe', text: session.title }), badge(session.state)),
       h('p', { class: 'muted truncate-safe', text: session.preview || '暂无内容' }),
-      h('div', { class: 'row session-meta' }, h('small', { class: 'grow truncate-safe', text: `${session.providerName} · ${session.model} · ${fmt(session.updatedAt)}` }), session.origin ? badge(`分支 · ${session.origin.sourceTitle}`, 'branch') : null, button('打开', 'open-session', { sessionId: session.localSessionId }, 'btn small'))))) : h('section', { class: 'empty', text: '还没有本地 Chat，会话可在没有 Remote 的情况下创建。' })
+      h('div', { class: 'row session-meta' }, h('small', { class: 'grow truncate-safe', text: `${session.providerName} · ${session.model} · ${fmt(session.updatedAt)}` }), session.origin ? badge(`分支 · ${session.origin.sourceTitle}`, 'branch') : null, session.state !== 'running' ? button('删除', 'delete-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn small danger') : null, button('打开', 'open-session', { sessionId: session.localSessionId }, 'btn small'))))) : h('section', { class: 'empty', text: '还没有本地 Chat，会话可在没有 Remote 的情况下创建。' })
   );
 }
 
