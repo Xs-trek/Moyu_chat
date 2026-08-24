@@ -81,6 +81,12 @@ document.addEventListener('click', (event) => {
   else if (action === 'submit-handoff') postIntent('handoff.submit', { handoffId: target.dataset.handoffId });
 });
 
+document.addEventListener('change', (event) => {
+  if (event.target?.dataset?.defaultContextMode === '1') {
+    postIntent('context.mode.default.set', { mode: event.target.value });
+  }
+});
+
 let draftTimer = 0;
 
 document.addEventListener('submit', (event) => {
