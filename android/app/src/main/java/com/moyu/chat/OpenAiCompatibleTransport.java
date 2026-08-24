@@ -290,7 +290,13 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
 
     private static void emitResponseUsage(JSONObject response, ChatTransport.Sink sink) {
         JSONObject usage = response == null ? null : response.optJSONObject("usage");
-        if (usage != null) sink.onUsage(usage.has("input_tokens") ? usage.optInt("input_tokens") : null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null);
+        if (usage == null) return;
+        Integer input = usage.has("input_tokens") ? usage.optInt("input_tokens") : null;
+        Integer output = usage.has("output_tokens") ? usage.optInt("output_tokens") : null;
+        JSONObject details = usage.optJSONObject("input_tokens_details");
+        Integer cached = details != null && details.has("cached_tokens") ? details.optInt("cached_tokens") : null;
+        Integer cacheWrite = details != null && details.has("cache_write_tokens") ? details.optInt("cache_write_tokens") : null;
+        sink.onUsageDetails(input, output, cached, cacheWrite, input);
     }
 
     private static String httpErrorSummary(Response response) {
