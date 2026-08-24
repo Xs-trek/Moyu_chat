@@ -75,12 +75,12 @@ function conversation(view) {
   );
 }
 
-function timelineItem(item) {
+function timelineItem(item, runtimeRunning = false) {
   if (item.kind === 'message') return h('article', { class: `bubble ${item.role}` },
     h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? 'Moyu Chat' : '系统' }), h('small', { text: fmt(item.createdAt) })),
     item.text ? h('pre', { class: 'message', text: item.text }) : null,
     mediaGallery(item.attachments),
-    item.streaming ? badge('streaming', 'good') : null);
+    item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: 'streaming' }) : null);
   if (item.kind === 'usage') return h('article', { class: 'usage', text: `输入 ${item.inputTokens || 0} · 输出 ${item.outputTokens || 0}` });
   if (item.kind === 'error') return h('article', { class: 'error' }, h('strong', { text: item.summary }), h('code', { text: item.code }));
   return null;
