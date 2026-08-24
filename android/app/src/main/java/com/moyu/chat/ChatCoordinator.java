@@ -49,6 +49,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.route = validRoute(db.setting("route", "home"));
         this.activeSessionId = empty(db.setting("activeSessionId", ""));
         this.theme = validTheme(db.setting("theme", "system"));
+        this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
     }
 
     void postIntent(String raw) { if (raw == null || raw.length() > 1024 * 1024) return; worker.execute(() -> handle(raw)); }
