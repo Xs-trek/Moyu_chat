@@ -267,6 +267,48 @@ public class ChatCoordinatorE2eTest {
         assertFalse("unreferenced private media should be garbage-collected", app.mediaStore().exists(mediaId));
     }
 
+    @Test public void editAndRollbackCreateReversibleBranchesWithoutMutatingSource() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sourceId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sourceId).put("text", "original prompt"));
+        await("source turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+        JSONArray sourceTimeline = app.database().timeline(sourceId);
+        int userSeq = -1, assistantSeq = -1;
+        for (int i = 0; i < sourceTimeline.length(); i++) {
+            JSONObject item = sourceTimeline.optJSONObject(i);
+            if (item == null || !"message".equals(item.optString("kind"))) continue;
+            if ("user".equals(item.optString("role"))) userSeq = item.optInt("localSeq", -1);
+            if ("assistant".equals(item.optString("role")) && !item.optBoolean("streaming", false)) assistantSeq = item.optInt("localSeq", -1);
+        }
+        assertTrue(userSeq > 0); assertTrue(assistantSeq > userSeq);
+
+        post("chat.message.edit", new JSONObject().put("localSessionId", sourceId).put("localSeq", userSeq));
+        await("edit branch activated", () -> {
+            JSONObject s = activeSession(latestView()); return s != null && !sourceId.equals(s.optString("localSessionId")) && s.optString("title").startsWith("编辑 ·");
+        });
+        String editBranchId = activeSession(latestView()).optString("localSessionId");
+        assertEquals("original prompt", app.database().getSession(editBranchId).draft);
+        ChatDatabase.Session editBranch = app.database().getSession(editBranchId);
+        assertNotNull(editBranch.originSnapshotId);
+        assertEquals("edit branch snapshot stops before selected user message", 0, app.database().snapshotItems(editBranch.originSnapshotId).length());
+        assertEquals("source transcript must remain intact", sourceTimeline.toString(), app.database().timeline(sourceId).toString());
+
+        post("chat.session.open", new JSONObject().put("localSessionId", sourceId));
+        await("source reopened", () -> sourceId.equals(latestView().optString("activeLocalSessionId")));
+        post("chat.message.rollback", new JSONObject().put("localSessionId", sourceId).put("localSeq", assistantSeq));
+        await("rollback branch activated", () -> {
+            JSONObject s = activeSession(latestView()); return s != null && !sourceId.equals(s.optString("localSessionId")) && s.optString("title").startsWith("回滚 ·");
+        });
+        ChatDatabase.Session rollback = app.database().getSession(activeSession(latestView()).optString("localSessionId"));
+        assertNotNull(rollback.originSnapshotId);
+        JSONArray rollbackItems = app.database().snapshotItems(rollback.originSnapshotId);
+        assertEquals(2, rollbackItems.length());
+        assertEquals("original prompt", rollbackItems.getJSONObject(0).optString("text"));
+        assertEquals("mock answer", rollbackItems.getJSONObject(1).optString("text"));
+        assertEquals("", rollback.draft);
+        assertEquals("source transcript remains reversible after rollback", sourceTimeline.toString(), app.database().timeline(sourceId).toString());
+    }
+
     // ---------- multi-turn + interrupt ----------
 
     @Test public void interruptKeepsPartialAnswerAndUnlocksSession() throws Exception {
