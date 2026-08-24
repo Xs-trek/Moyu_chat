@@ -157,6 +157,11 @@ function reasoningControl(model) {
   return h('select', { class: 'reasoning-select', dataset: { reasoningSelect: '1' } }, values.map((level) => h('option', { value: level, selected: level === (model.defaultReasoning || 'default'), text: level })));
 }
 
+function contextModeControl(value = 'auto', dataset = { contextModeSelect: '1' }) {
+  const labels = { auto: '上下文 · 自动', minimal: '上下文 · 极简', smart: '上下文 · Moyu 智能' };
+  return h('select', { class: 'reasoning-select context-mode-select', dataset }, ['auto','minimal','smart'].map((mode) => h('option', { value: mode, selected: mode === value, text: labels[mode] })));
+}
+
 function providers(view) {
   return h('main', { class: 'page' },
     h('div', { class: 'section-head' }, h('div', { class: 'grow' }, h('h1', { text: 'Provider / Models' }), h('p', { class: 'muted', text: 'Endpoint/Auth 属于 Provider；上下文、输入输出模态与推理能力属于该 endpoint 下的 Model Profile。' })), button('＋ Provider', 'configure-provider', {}, 'btn primary')),
