@@ -6,7 +6,7 @@ import { getState, setNotice, setView, subscribe } from './state.js';
 const renderGate = createRenderGate(render);
 subscribe((_state, change) => {
   if (change?.scope === 'toast') renderNotice();
-  else { patchConversation(); renderGate.request(); }
+  else if (!patchConversation()) renderGate.request();
 });
 bindHost((view, revision) => setView(view, revision));
 window.addEventListener('moyu:notice', (event) => setNotice(event.detail));
@@ -63,12 +63,13 @@ document.addEventListener('click', (event) => {
     const provider = view?.providers?.find((item) => item.configured) || view?.providers?.find((item) => item.models?.length);
     const model = provider?.models?.[0];
     if (!provider || !model) return setNotice({ level: 'warning', text: '请先配置 Provider 和 Model' });
-    postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId, contextMode: view?.ui?.defaultContextMode || 'auto' });
+    postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId, contextMode: view?.ui?.defaultContextMode || 'auto', webMode: view?.ui?.defaultWebMode || 'auto' });
   } else if (action === 'new-chat-model') {
     const modelCard = target.closest('.model-card');
     const effort = modelCard?.querySelector('select[data-reasoning-select]')?.value || 'default';
     const contextMode = modelCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'auto';
-    postIntent('chat.session.create', { providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId, reasoningEffort: effort, contextMode });
+    const webMode = modelCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
+    postIntent('chat.session.create', { providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId, reasoningEffort: effort, contextMode, webMode });
   } else if (action === 'configure-provider') postIntent('provider.configure.open', target.dataset.providerId ? { providerId: target.dataset.providerId } : {});
   else if (action === 'configure-model') postIntent('model.configure.open', { providerId: target.dataset.providerId, ...(target.dataset.modelProfileId ? { modelProfileId: target.dataset.modelProfileId } : {}) });
   else if (action === 'pick-attachment') postIntent('chat.attachment.pick', { localSessionId: target.dataset.sessionId });
@@ -77,17 +78,32 @@ document.addEventListener('click', (event) => {
   else if (action === 'branch-remote') {
     const sourceCard = target.closest('.remote-source-card');
     const contextMode = sourceCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'auto';
-    postIntent('branch.create.remote', { sourceId: target.dataset.sourceId, contextMode });
+    const webMode = sourceCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
+    postIntent('branch.create.remote', { sourceId: target.dataset.sourceId, contextMode, webMode });
   }
   else if (action === 'branch-local') postIntent('branch.create.local', { localSessionId: target.dataset.sessionId });
   else if (action === 'interrupt') postIntent('chat.session.interrupt', { localSessionId: target.dataset.sessionId });
   else if (action === 'handoff') postIntent('handoff.create', { localSessionId: target.dataset.sessionId });
   else if (action === 'submit-handoff') postIntent('handoff.submit', { handoffId: target.dataset.handoffId });
+  else if (action === 'open-source' && target.dataset.url) postIntent('external.open', { url: target.dataset.url });
+  else if (action === 'jump-latest') {
+    const node = document.querySelector('.timeline-scroll');
+    if (node) node.scrollTop = node.scrollHeight;
+  }
+  else if (action === 'copy-message') {
+    const seq = Number(target.dataset.localSeq);
+    const item = window.__moyuChatView?.activeSession?.messages?.find((entry) => Number(entry.localSeq) === seq && entry.kind === 'message');
+    const text = String(item?.text || '');
+    if (!text) return;
+    navigator.clipboard?.writeText(text).then(() => setNotice({ level: 'info', text: '已复制回答' })).catch(() => setNotice({ level: 'warning', text: '复制失败' }));
+  }
 });
 
 document.addEventListener('change', (event) => {
   if (event.target?.dataset?.defaultContextMode === '1') {
     postIntent('context.mode.default.set', { mode: event.target.value });
+  } else if (event.target?.dataset?.defaultWebMode === '1') {
+    postIntent('web.mode.default.set', { mode: event.target.value });
   }
 });
 
