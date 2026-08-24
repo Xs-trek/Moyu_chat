@@ -3,6 +3,7 @@ package com.moyu.chat;
 interface ChatTransport {
     interface Sink {
         void onTextDelta(String delta);
+        void onImage(String mimeType, String base64, String fileName);
         void onUsage(Integer inputTokens, Integer outputTokens);
         void onCompleted();
         void onError(String code, String summary, boolean retryable);
