@@ -198,9 +198,11 @@ function settings(view) {
   const nextTheme = view.appearance.theme === 'dark' ? 'system' : view.appearance.theme === 'system' ? 'light' : 'dark';
   const reasoningVisible = Boolean(view.ui?.showReasoning);
   const defaultContextMode = view.ui?.defaultContextMode || 'auto';
+  const defaultWebMode = view.ui?.defaultWebMode || 'auto';
   return h('main', { class: 'page' }, h('h1', { text: '设置' }),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('strong', { text: '主题' }), h('span', { class: 'grow' }), button(`${view.appearance.theme} → ${nextTheme}`, 'theme', { theme: nextTheme }, 'btn small'))),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '新会话默认上下文模式' }), h('p', { class: 'muted', text: '自动：普通 Chat 不做首轮 Router，仅超窗时按需 Checkpoint；Remote 历史自动启用完整智能层。极简：零额外模型预处理。Moyu 智能：Task Router + Checkpoint。模式在创建后冻结并由本地规则解析。' })), contextModeControl(defaultContextMode, { defaultContextMode: '1' }))),
+    h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '新会话默认联网模式' }), h('p', { class: 'muted', text: '关闭：本轮不使用 hosted Web 或 Moyu fallback；自动：按模型 native capability 与本地 freshness/URL 规则决定；开启：允许 Moyu fallback 强制搜索，但 Provider hosted tool 仍保持 provider-side auto。' })), webModeControl(defaultWebMode, { defaultWebMode: '1' }))),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '显示模型推理' }), h('p', { class: 'muted', text: '仅展示 provider 明确返回的 reasoning/thinking 内容；不会进入下一轮 provider-neutral 上下文。' })), button(reasoningVisible ? '已显示' : '已隐藏', 'toggle-reasoning', { show: reasoningVisible ? 'false' : 'true' }, 'btn small'))),
     h('section', { class: 'card' }, h('strong', { text: '数据边界' }), h('p', { class: 'muted', text: 'Chat 使用自己的数据库。RemoteDataBridge 只提供 Snapshot/Handoff，不共享 SQLite 文件。TaskProfile 与 Checkpoint 只是可重建的上下文控制状态。' })));
 }
