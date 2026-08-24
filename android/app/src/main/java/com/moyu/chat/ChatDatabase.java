@@ -141,6 +141,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.state = "idle";
         s.updatedAt = Instant.now().toString();
         s.draft = "";
+        s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId;
         s.parentSessionId = parentSessionId;
         saveSession(s);
