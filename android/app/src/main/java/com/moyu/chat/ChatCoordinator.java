@@ -215,9 +215,10 @@ final class ChatCoordinator implements AutoCloseable {
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
         String streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();
-        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("streamStage", "connecting").put("createdAt", Instant.now().toString());
         db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
         StringBuilder textOut = new StringBuilder();
+        String[] streamStage = new String[]{"connecting"};
         JSONArray outputMedia = new JSONArray();
         final boolean allowImageOutput = ChatDatabase.supportsModality(session.outputModalities, "image");
         String usageKey = "usage:turn:" + UUID.randomUUID();
