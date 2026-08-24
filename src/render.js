@@ -185,10 +185,12 @@ function handoffs(view) {
 function settings(view) {
   const nextTheme = view.appearance.theme === 'dark' ? 'system' : view.appearance.theme === 'system' ? 'light' : 'dark';
   const reasoningVisible = Boolean(view.ui?.showReasoning);
+  const smartContext = view.ui?.smartContextEnabled !== false;
   return h('main', { class: 'page' }, h('h1', { text: '设置' }),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('strong', { text: '主题' }), h('span', { class: 'grow' }), button(`${view.appearance.theme} → ${nextTheme}`, 'theme', { theme: nextTheme }, 'btn small'))),
-    h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '显示模型推理' }), h('p', { class: 'muted', text: '仅展示 provider 明确返回的 reasoning/thinking 内容；不会进入下一轮上下文。' })), button(reasoningVisible ? '已显示' : '已隐藏', 'toggle-reasoning', { show: reasoningVisible ? 'false' : 'true' }, 'btn small'))),
-    h('section', { class: 'card' }, h('strong', { text: '数据边界' }), h('p', { class: 'muted', text: 'Chat 使用自己的数据库。RemoteDataBridge 只提供 Snapshot/Handoff，不共享 SQLite 文件。' })));
+    h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '智能上下文' }), h('p', { class: 'muted', text: '首轮用一次受限模型分类选择本地专家模块；长会话发生裁剪时生成结构化 Checkpoint。预处理失败会自动退回普通 Chat，不会让模型自由改写系统提示词。' })), button(smartContext ? '已开启' : '已关闭', 'toggle-smart-context', { enabled: smartContext ? 'false' : 'true' }, 'btn small'))),
+    h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '显示模型推理' }), h('p', { class: 'muted', text: '仅展示 provider 明确返回的 reasoning/thinking 内容；不会进入下一轮 provider-neutral 上下文。' })), button(reasoningVisible ? '已显示' : '已隐藏', 'toggle-reasoning', { show: reasoningVisible ? 'false' : 'true' }, 'btn small'))),
+    h('section', { class: 'card' }, h('strong', { text: '数据边界' }), h('p', { class: 'muted', text: 'Chat 使用自己的数据库。RemoteDataBridge 只提供 Snapshot/Handoff，不共享 SQLite 文件。TaskProfile 与 Checkpoint 只是可重建的上下文控制状态。' })));
 }
 
 function selectionInside(node) {
