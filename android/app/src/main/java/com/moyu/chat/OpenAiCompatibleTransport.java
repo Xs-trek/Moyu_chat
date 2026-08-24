@@ -27,6 +27,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
     private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.MINUTES.toNanos(5);
     private final OkHttpClient http = new OkHttpClient.Builder()
+            .fastFallback(true)
             .retryOnConnectionFailure(false)
             .connectTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
