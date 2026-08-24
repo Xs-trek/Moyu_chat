@@ -22,7 +22,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public static final class Session {
         public String id, title, providerId, modelProfileId, model, reasoningEffort, inputModalities, outputModalities, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
         /** v0.0.2 session-scoped context policy plus provider-neutral derived control state. */
-        public String contextMode, taskProfile, contextCheckpoint;
+        public String contextMode, taskProfile, contextCheckpoint, toolCapabilities, webMode;
         public int checkpointCoveredItems;
         public int contextTokens, inputTokens, maxOutputTokens;
     }
