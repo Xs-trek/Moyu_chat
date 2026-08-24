@@ -474,7 +474,7 @@ final class ChatCoordinator implements AutoCloseable {
         throw new IllegalArgumentException("message not found");
     }
 
-    private void createRemoteBranch(String sourceId, Integer throughSeq, String contextMode) throws Exception {
+    private void createRemoteBranch(String sourceId, Integer throughSeq, String contextMode, String webMode) throws Exception {
         if (!remoteBridge.status().available) throw new IllegalStateException("RemoteDataBridge unavailable");
         ChatDatabase.Provider provider = preferredProvider(); if (provider == null) throw new IllegalStateException("configure a Chat provider before importing a Remote branch");
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); if (profile == null) throw new IllegalStateException("configure a model before importing a Remote branch");
