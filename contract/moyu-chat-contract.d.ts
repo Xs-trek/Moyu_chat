@@ -16,9 +16,10 @@ export type MoyuChatIntent =
   | UiIntent<'view.reload', Record<string, never>>
   | UiIntent<'appearance.set', { theme: Theme }>
   | UiIntent<'chat.reasoning.visibility.set', { show: boolean }>
+  | UiIntent<'context.mode.default.set', { mode: ContextMode }>
   | UiIntent<'context.intelligence.set', { enabled: boolean }>
   | UiIntent<'nav.open', { route: Route }>
-  | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; title?: string }>
+  | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; contextMode?: ContextMode; title?: string }>
   | UiIntent<'chat.session.open', { localSessionId: string }>
   | UiIntent<'chat.session.send', { localSessionId: string; text: string }>
   | UiIntent<'chat.session.saveDraft', { localSessionId: string; text: string }>
