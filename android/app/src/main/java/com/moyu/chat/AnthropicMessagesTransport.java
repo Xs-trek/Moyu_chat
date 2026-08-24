@@ -22,12 +22,12 @@ import okhttp3.Response;
 final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     static final String PROTOCOL = "anthropic-messages";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-    private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.MINUTES.toNanos(5);
+    private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.MINUTES.toNanos(11);
     private final OkHttpClient http = new OkHttpClient.Builder()
             .retryOnConnectionFailure(false)
             .connectTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(11, TimeUnit.MINUTES)
             .callTimeout(30, TimeUnit.MINUTES)
             .build();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
