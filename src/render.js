@@ -76,6 +76,8 @@ function conversation(view) {
       h('div', { class: 'conversation-title grow' }, h('strong', { class: 'truncate-safe', text: session.title }), h('small', { class: 'muted truncate-safe', text: `${session.providerName} · ${session.model} · reasoning ${session.reasoningEffort || 'default'}` })),
       imageInput ? badge('图片输入', 'good') : null,
       session.origin ? badge(`来自 ${session.origin.sourceTitle}`, 'branch') : null,
+      session.taskProfile ? badge(`${session.taskProfile.domain} · ${session.taskProfile.taskType}`, 'quiet') : null,
+      session.hasContextCheckpoint ? badge('Checkpoint', 'branch') : null,
       button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn small'),
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small'),
       button('回传', 'handoff', { sessionId: session.localSessionId }, 'btn small'),
