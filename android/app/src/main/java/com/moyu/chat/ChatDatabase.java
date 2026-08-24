@@ -155,6 +155,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId;
         s.parentSessionId = parentSessionId;
+        s.taskProfile = "";
+        s.contextCheckpoint = "";
+        s.checkpointCoveredItems = 0;
         saveSession(s);
         return s;
     }
