@@ -393,6 +393,20 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception error) { host.showMessage("view update failed: " + safe(error)); }
     }
 
+    private JSONArray displayTimeline(ChatDatabase.Session s) throws Exception {
+        JSONArray out = new JSONArray();
+        if (s.originSnapshotId != null) {
+            JSONArray inherited = db.snapshotItems(s.originSnapshotId);
+            for (int i = 0; i < inherited.length(); i++) {
+                JSONObject item = inherited.optJSONObject(i); if (item == null) continue;
+                out.put(new JSONObject(item.toString()).put("inherited", true));
+            }
+        }
+        JSONArray local = db.timeline(s.id);
+        for (int i = 0; i < local.length(); i++) { JSONObject item = local.optJSONObject(i); if (item != null) out.put(item); }
+        return out;
+    }
+
     private JSONObject sessionJson(ChatDatabase.Session s, boolean detail) throws Exception {
         ChatDatabase.Provider p = db.getProvider(s.providerId);
         boolean active = activeTurns.containsKey(s.id);
