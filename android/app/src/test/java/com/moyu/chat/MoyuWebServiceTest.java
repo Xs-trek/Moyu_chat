@@ -90,7 +90,7 @@ public class MoyuWebServiceTest {
         }
     }
 
-    private static String exaResponse(String text) {
+    private static String exaResponse(String text) throws Exception {
         return new JSONObject().put("jsonrpc", "2.0").put("id", 1)
                 .put("result", new JSONObject().put("content", new org.json.JSONArray()
                         .put(new JSONObject().put("type", "text").put("text", text))))
