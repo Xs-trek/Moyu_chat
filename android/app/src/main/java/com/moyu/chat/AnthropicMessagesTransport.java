@@ -120,26 +120,27 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         }
     }
 
-    private static void parse(JSONObject event, ChatTransport.Sink sink) {
+    static boolean parse(JSONObject event, ChatTransport.Sink sink) {
         String type = event.optString("type");
         if ("content_block_delta".equals(type)) {
             JSONObject delta = event.optJSONObject("delta");
             if (delta != null && "text_delta".equals(delta.optString("type"))) { String text = delta.optString("text", ""); if (!text.isEmpty()) sink.onTextDelta(text); }
-            return;
+            return false;
         }
         if ("message_start".equals(type)) {
             JSONObject message = event.optJSONObject("message"); JSONObject usage = message == null ? null : message.optJSONObject("usage");
             if (usage != null) sink.onUsage(usage.has("input_tokens") ? usage.optInt("input_tokens") : null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null);
-            return;
+            return false;
         }
         if ("message_delta".equals(type)) {
-            JSONObject usage = event.optJSONObject("usage"); if (usage != null) sink.onUsage(null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null); return;
+            JSONObject usage = event.optJSONObject("usage"); if (usage != null) sink.onUsage(null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null); return false;
         }
-        if ("message_stop".equals(type)) { sink.onCompleted(); return; }
+        if ("message_stop".equals(type)) { sink.onCompleted(); return true; }
         if ("error".equals(type)) {
             JSONObject error = event.optJSONObject("error"); String code = error == null ? "provider_error" : error.optString("type", "provider_error");
-            sink.onError(code, error == null ? "Provider error" : error.optString("message", "Provider error"), "overloaded_error".equals(code));
+            sink.onError(code, error == null ? "Provider error" : error.optString("message", "Provider error"), "overloaded_error".equals(code)); return true;
         }
+        return false;
     }
 
     private static String safe(Exception error) { String message = error.getMessage(); return message == null || message.isEmpty() ? error.getClass().getSimpleName() : message; }
