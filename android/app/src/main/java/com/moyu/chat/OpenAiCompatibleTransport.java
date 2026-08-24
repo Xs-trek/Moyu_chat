@@ -74,12 +74,20 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                         continue;
                     }
                     String data = line.substring(5).trim();
-                    if (data.isEmpty()) continue;
+                    if (data.isEmpty()) {
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        continue;
+                    }
                     sawData = true;
-                    lastSemantic = now;
                     if ("[DONE]".equals(data)) { sink.onCompleted(); return; }
                     JSONObject event;
-                    try { event = new JSONObject(data); } catch (Exception ignored) { continue; }
+                    try { event = new JSONObject(data); }
+                    catch (Exception ignored) {
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        continue;
+                    }
+                    if (isSemanticEvent(protocol, event)) lastSemantic = now;
+                    else if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
                     if (CHAT_COMPLETIONS.equals(protocol)) {
                         if (parseChat(event, sink)) { sink.onCompleted(); return; }
                     } else if (parseResponses(event, sink, emittedImages)) return;
