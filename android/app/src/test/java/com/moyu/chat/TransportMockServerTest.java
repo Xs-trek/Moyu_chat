@@ -336,6 +336,32 @@ public class TransportMockServerTest {
 
     // ---------- Anthropic Messages ----------
 
+    @Test public void anthropicHostedWebToolsAreBoundedAndExtractSources() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"server_tool_use\",\"name\":\"web_search\"}}\n\n" +
+                "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"web_search_tool_result\",\"content\":[{\"url\":\"https://example.com/search\",\"title\":\"Search source\"}]}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"citations_delta\",\"citation\":{\"url\":\"https://example.com/cite\",\"title\":\"Citation\"}}}\n\n" +
+                "data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", ReasoningPolicy.DEFAULT,
+                prompt("user", "latest"), new ChatTurnOptions("web_search,web_fetch", "auto"), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        JSONArray tools = body.getJSONArray("tools");
+        assertEquals(2, tools.length());
+        JSONObject search = tools.getJSONObject(0), fetch = tools.getJSONObject(1);
+        assertEquals("web_search_20260318", search.optString("type"));
+        assertEquals(4, search.optInt("max_uses"));
+        assertEquals("direct", search.getJSONArray("allowed_callers").optString(0));
+        assertEquals("web_fetch_20260318", fetch.optString("type"));
+        assertEquals(3, fetch.optInt("max_uses"));
+        assertEquals(20000, fetch.optInt("max_content_tokens"));
+        assertTrue(fetch.getJSONObject("citations").optBoolean("enabled"));
+        assertEquals("web_search:running|web_search:completed", sink.toolActivity.toString());
+        assertTrue(sink.webSources.toString().contains("https://example.com/search#Search source"));
+        assertTrue(sink.webSources.toString().contains("https://example.com/cite#Citation"));
+    }
+
     @Test public void anthropicAssemblesStreamAndCompletesOnMessageStop() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":31,\"output_tokens\":1}}}\n\n" +
