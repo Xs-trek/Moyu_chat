@@ -146,7 +146,8 @@ export function patchConversation() {
     timeline.querySelectorAll('.streaming-state').forEach((node) => node.remove());
   }
 
-  const composer = document.querySelector(`form[data-form="composer"][data-session-id="${CSS.escape(session.localSessionId)}"]`);
+  const candidateComposer = document.querySelector('form[data-form="composer"]');
+  const composer = candidateComposer?.dataset.sessionId === session.localSessionId ? candidateComposer : null;
   const send = composer?.querySelector('.send-btn');
   if (send) { send.disabled = !session.canSend; send.textContent = running ? '发送中' : '发送'; }
   const input = composer?.querySelector('textarea[name="message"]');
