@@ -177,8 +177,8 @@ function providers(view) {
       h('section', { class: 'stack model-stack' }, (provider.models || []).map((model) => h('div', { class: 'model-card' },
         h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: model.displayName || model.modelId }), badge(model.defaultReasoning || 'default')),
         h('code', { class: 'model-id', text: model.modelId }),
-        h('small', { class: 'model-meta muted', text: `context ${model.contextTokens} · input ${model.inputTokens || 'auto'} · output ${model.maxOutputTokens} · in[${model.inputModalities || 'text'}] · out[${model.outputModalities || 'text'}]${model.reasoningLevels ? ` · reasoning ${model.reasoningLevels}` : ''}` }),
-        h('div', { class: 'row' }, reasoningControl(model), contextModeControl(view.ui?.defaultContextMode || 'auto'), h('span', { class: 'grow' }), button('Chat', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn primary small'), button('编辑', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small'))
+        h('small', { class: 'model-meta muted', text: `context ${model.contextTokens} · input ${model.inputTokens || 'auto'} · output ${model.maxOutputTokens} · in[${model.inputModalities || 'text'}] · out[${model.outputModalities || 'text'}]${model.reasoningLevels ? ` · reasoning ${model.reasoningLevels}` : ''}${model.toolCapabilities ? ` · native web[${model.toolCapabilities}]` : ''}` }),
+        h('div', { class: 'row' }, reasoningControl(model), contextModeControl(view.ui?.defaultContextMode || 'auto'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('Chat', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn primary small'), button('编辑', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small'))
       )))
     ))) : h('section', { class: 'empty', text: '暂无 Provider。先添加一个 API endpoint。' }));
 }
