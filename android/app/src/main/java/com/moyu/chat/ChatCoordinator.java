@@ -1,5 +1,8 @@
 package com.moyu.chat;
 
+import android.content.ContentResolver;
+import android.net.Uri;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
