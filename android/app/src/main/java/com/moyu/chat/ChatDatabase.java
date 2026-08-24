@@ -119,6 +119,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (oldVersion < 8) {
             db.execSQL("ALTER TABLE sessions ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'auto'");
         }
+        if (oldVersion < 9) {
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN web_mode TEXT NOT NULL DEFAULT 'auto'");
+            db.execSQL("UPDATE sessions SET tool_capabilities=COALESCE((SELECT tool_capabilities FROM model_profiles WHERE profile_id=sessions.model_profile_id),'')");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
