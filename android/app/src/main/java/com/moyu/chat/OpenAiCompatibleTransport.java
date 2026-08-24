@@ -100,7 +100,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             else sink.onError("empty_stream", "Provider returned HTTP 200 with no stream data", true);
         } catch (IOException error) {
             if (call.isCanceled()) sink.onError("cancelled", "已中断", false);
-            else if (error instanceof java.net.SocketTimeoutException) sink.onError("stream_timeout", "Provider stream timed out while waiting for data", true);
+            else if (error instanceof java.net.SocketTimeoutException) sink.onError("stream_timeout", "Provider sent no response bytes for 11 minutes", true);
             else sink.onError("network_error", safe(error), true);
         }
     }
