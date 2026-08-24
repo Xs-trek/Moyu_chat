@@ -348,7 +348,7 @@ final class ChatCoordinator implements AutoCloseable {
                 if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState); else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; }
             } catch (Exception ignored) { } }); }
             @Override public void onCompleted() { worker.execute(() -> { settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]); finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], null); }); }
-            @Override public void onError(String code, String summary, boolean retryable) { worker.execute(() -> { settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]); finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, new String[]{code, summary}); }); }
+            @Override public void onError(String code, String summary, boolean retryable) { worker.execute(() -> { settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]); finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], new String[]{code, summary}); }); }
         };
         ChatTransport.Turn turn;
         try {
