@@ -279,15 +279,33 @@ public class ChatCoordinatorE2eTest {
         assertFalse("partial answer is finalized, not left dangling as streaming", last.optBoolean("streaming", true));
         assertTrue("partial text is preserved", last.optString("text").length() > 0);
 
-        // A follow-up turn must be allowed and complete normally.
+        // Drain and prove the first request really reached the provider before testing a second turn.
+        RecordedRequest firstRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull(firstRequest);
+
+        // A follow-up turn must create a NEW live row/request and a second finalized assistant message.
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
                 return sse("data: {\"choices\":[{\"delta\":{\"content\":\"next\"}}]}\n\ndata: [DONE]\n\n");
             }
         });
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "follow up"));
-        await("second turn completes", () -> "completed".equals(activeSession(latestView()).optString("state"))
-                && activeSession(latestView()).optBoolean("canSend"));
+        RecordedRequest secondRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull("second turn must actually reach the provider", secondRequest);
+        assertTrue(secondRequest.getBody().readUtf8().contains("follow up"));
+        await("second turn completes with a second assistant row", () -> {
+            JSONObject s = activeSession(latestView());
+            if (s == null || !"completed".equals(s.optString("state")) || !s.optBoolean("canSend")) return false;
+            JSONArray messages = s.optJSONArray("messages"); if (messages == null) return false;
+            int assistants = 0; boolean sawNext = false;
+            for (int i = 0; i < messages.length(); i++) {
+                JSONObject row = messages.optJSONObject(i);
+                if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role")) && !row.optBoolean("streaming", false)) {
+                    assistants++; if (row.optString("text", "").contains("next")) sawNext = true;
+                }
+            }
+            return assistants >= 2 && sawNext;
+        });
     }
 
     // ---------- provider error mapping ----------
