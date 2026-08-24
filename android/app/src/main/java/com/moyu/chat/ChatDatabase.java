@@ -41,7 +41,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** Model capabilities are scoped to one concrete provider deployment, not a global model name. */
     public static final class ModelProfile {
         public String id, providerId, modelId, displayName, reasoningLevels, defaultReasoning;
-        public String inputModalities = "text", outputModalities = "text";
+        public String inputModalities = "text", outputModalities = "text", toolCapabilities = "";
         public int contextTokens, inputTokens, maxOutputTokens;
     }
 
