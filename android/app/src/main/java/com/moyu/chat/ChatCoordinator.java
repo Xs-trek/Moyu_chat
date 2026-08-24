@@ -525,6 +525,16 @@ final class ChatCoordinator implements AutoCloseable {
         return "Provider hosted Web";
     }
 
+    private static String effectiveWebBackend(ChatDatabase.Session session, ChatDatabase.Provider provider) {
+        if (session == null || ChatTurnOptions.WEB_OFF.equals(ChatTurnOptions.normalizeWebMode(session.webMode))) return "off";
+        ChatTurnOptions nativeOptions = ChatTurnOptions.forSession(session, provider == null ? "" : provider.protocol);
+        boolean nativeSearch = nativeOptions.supports(ChatTurnOptions.WEB_SEARCH);
+        boolean nativeFetch = nativeOptions.supports(ChatTurnOptions.WEB_FETCH);
+        if (nativeSearch && nativeFetch) return providerWebBackend(provider == null ? "" : provider.protocol);
+        if (nativeSearch || nativeFetch) return providerWebBackend(provider == null ? "" : provider.protocol) + " + Moyu fallback";
+        return "Moyu Web · Exa + Fetch";
+    }
+
     private void emitView() {
         if (closed || !uiReady) return;
         try {
