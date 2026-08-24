@@ -195,6 +195,12 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         parent.addView(input, new LinearLayout.LayoutParams(-1, -2)); return input;
     }
 
+    @Override @SuppressWarnings("deprecation") public void onBackPressed() {
+        ChatCoordinator c = coordinator;
+        if (c == null) { super.onBackPressed(); return; }
+        c.handleSystemBack(() -> runOnUiThread(this::finish));
+    }
+
     @Override protected void onDestroy() {
         ChatCoordinator c = coordinator; coordinator = null; if (c != null) c.close();
         if (webView != null) { webView.removeJavascriptInterface("MoyuHost"); webView.destroy(); webView = null; }
