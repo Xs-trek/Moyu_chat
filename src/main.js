@@ -22,6 +22,15 @@ systemTheme?.addEventListener?.('change', () => {
   if (getState().view?.appearance?.theme === 'system') renderGate.request();
 });
 
+document.addEventListener('scroll', (event) => {
+  const node = event.target;
+  if (!(node instanceof Element) || !node.classList.contains('timeline-scroll')) return;
+  const jump = node.querySelector('.jump-latest');
+  if (!jump) return;
+  const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
+  jump.classList.toggle('is-hidden', nearBottom);
+}, true);
+
 document.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled) return;
