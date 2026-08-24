@@ -51,10 +51,16 @@ function home(view) {
 function conversation(view) {
   const session = view.activeSession;
   if (!session) return home(view);
+  const imageInput = String(session.inputModalities || '').split(',').includes('image');
   return h('main', { class: 'conversation' },
-    h('header', { class: 'conversation-head' }, button('←', 'nav', { route: 'home' }, 'btn small'), h('div', { class: 'grow' }, h('strong', { text: session.title }), h('small', { text: `${session.providerName} · ${session.model} · reasoning ${session.reasoningEffort || 'default'}` })), session.origin ? badge(`来自 ${session.origin.sourceTitle}`, 'branch') : null, button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small'), button('回传', 'handoff', { sessionId: session.localSessionId }, 'btn small')),
+    h('header', { class: 'conversation-head' }, button('←', 'nav', { route: 'home' }, h('div', { class: 'grow' }, h('strong', { text: session.title }), h('small', { text: `${session.providerName} · ${session.model} · reasoning ${session.reasoningEffort || 'default'}` })), imageInput ? badge('图片输入', 'good') : null, session.origin ? badge(`来自 ${session.origin.sourceTitle}`, 'branch') : null, button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small'), button('回传', 'handoff', { sessionId: session.localSessionId }, 'btn small')),
     h('section', { class: 'timeline' }, session.messages.map((item) => timelineItem(item))),
-    h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } }, h('textarea', { name: 'message', rows: '2', value: session.composerDraft || '', placeholder: session.canSend ? '输入消息' : '请先配置 Provider 或等待当前回合结束' }), session.canInterrupt ? button('中断', 'interrupt', { sessionId: session.localSessionId }, 'btn danger') : null, h('button', { type: 'submit', class: 'btn primary', disabled: !session.canSend, text: session.state === 'running' ? '运行中' : '发送' }))
+    h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
+      mediaGallery(session.draftMedia, true, session.localSessionId),
+      session.canAttachImage ? button('＋ 图片', 'pick-attachment', { sessionId: session.localSessionId }, 'btn') : null,
+      h('textarea', { name: 'message', rows: '2', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或仅发送图片' : '输入消息') : '请先配置 Provider 或等待当前回合结束' }),
+      session.canInterrupt ? button('中断', 'interrupt', { sessionId: session.localSessionId }, 'btn danger') : null,
+      h('button', { type: 'submit', class: 'btn primary', disabled: !session.canSend, text: session.state === 'running' ? '运行中' : '发送' }))
   );
 }
 
