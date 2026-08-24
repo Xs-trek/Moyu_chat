@@ -2,11 +2,21 @@ package com.moyu.chat;
 
 interface ChatTransport {
     interface Sink {
-        /** Coarse transport progress only; never exposes chain-of-thought content. */
+        /** Coarse transport progress such as connected/reasoning/output. */
         default void onStage(String stage) { }
+        /** Provider-emitted reasoning/thinking text, kept separate from visible answer text. */
+        default void onReasoningDelta(String delta) { }
         void onTextDelta(String delta);
         default void onImage(String mimeType, String base64, String fileName) { }
         void onUsage(Integer inputTokens, Integer outputTokens);
+        /**
+         * Provider-neutral cache usage details. cacheHitBaseTokens is the logical denominator for
+         * cache-hit percentage when the provider exposes enough information; null means unknown.
+         */
+        default void onUsageDetails(Integer inputTokens, Integer outputTokens, Integer cachedInputTokens,
+                                    Integer cacheWriteInputTokens, Integer cacheHitBaseTokens) {
+            onUsage(inputTokens, outputTokens);
+        }
         void onCompleted();
         void onError(String code, String summary, boolean retryable);
     }
