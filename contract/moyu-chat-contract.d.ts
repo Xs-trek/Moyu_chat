@@ -105,6 +105,8 @@ export interface SessionView {
   modelProfileId?: string;
   model: string;
   reasoningEffort: string;
+  contextMode: ContextMode;
+  effectiveContextMode: 'minimal' | 'smart' | 'auto-minimal' | 'auto-smart';
   inputModalities: string;
   outputModalities: string;
   state: SessionState;
