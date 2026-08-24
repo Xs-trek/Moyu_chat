@@ -253,6 +253,13 @@ public class ChatDatabaseTest {
             raw.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'default'");
             raw.execSQL("UPDATE sessions SET model_profile_id=provider_id || ':default' WHERE model=(SELECT model FROM providers WHERE providers.provider_id=sessions.provider_id)");
         }
+        if (version >= 6) {
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN input_modalities TEXT NOT NULL DEFAULT 'text'");
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN input_modalities TEXT NOT NULL DEFAULT 'text'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN draft_media TEXT NOT NULL DEFAULT '[]'");
+        }
         raw.execSQL("INSERT INTO snapshot_items VALUES('legacy-snap',0,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}')");
         raw.execSQL("PRAGMA user_version = " + version);
         raw.close();
