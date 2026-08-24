@@ -63,7 +63,7 @@ function conversation(view) {
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small'),
       button('回传', 'handoff', { sessionId: session.localSessionId }, 'btn small')),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
-      h('div', { class: 'timeline' }, session.messages.map((item) => timelineItem(item)))),
+      h('div', { class: 'timeline' }, session.messages.map((item) => timelineItem(item, session.state === 'running')))),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
       mediaGallery(session.draftMedia, true, session.localSessionId),
       h('div', { class: 'composer-row' },
