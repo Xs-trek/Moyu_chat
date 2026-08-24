@@ -60,8 +60,10 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         Set<String> emittedImages = new HashSet<>();
         boolean sawData = false;
         boolean sawUnexpectedPayload = false;
+        boolean responseStarted = false;
         long lastSemantic = System.nanoTime();
         try (Response response = call.execute()) {
+            responseStarted = true;
             if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return; }
             if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream(), StandardCharsets.UTF_8))) {
