@@ -437,7 +437,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         v.put("profile_id", p.id); v.put("provider_id", p.providerId); v.put("model_id", modelId);
         v.put("display_name", p.displayName == null || p.displayName.trim().isEmpty() ? modelId : p.displayName.trim());
         v.put("context_tokens", context); v.put("input_tokens", input); v.put("max_output_tokens", output);
-        v.put("reasoning_levels", levels); v.put("default_reasoning", defaultReasoning); v.put("updated_at", Instant.now().toString());
+        v.put("reasoning_levels", levels); v.put("default_reasoning", defaultReasoning);
+        v.put("input_modalities", normalizeModalities(p.inputModalities)); v.put("output_modalities", normalizeModalities(p.outputModalities));
+        v.put("updated_at", Instant.now().toString());
         return v;
     }
 
