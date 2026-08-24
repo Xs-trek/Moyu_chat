@@ -167,6 +167,14 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         return body;
     }
 
+    private static void applyHostedTools(JSONObject body, String protocol, ChatTurnOptions options) throws Exception {
+        if (!OpenAiCompatibleTransport.RESPONSES.equals(protocol) || options == null || !options.webEnabled()) return;
+        if (!options.supports(ChatTurnOptions.WEB_SEARCH)) return;
+        body.put("tools", new JSONArray().put(new JSONObject().put("type", "web_search")));
+        body.put("tool_choice", "auto");
+        body.put("include", new JSONArray().put("web_search_call.action.sources"));
+    }
+
     private static void appendChatImages(JSONArray content, JSONArray attachments) throws Exception {
         for (int i = 0; i < attachments.length(); i++) {
             JSONObject image = attachments.optJSONObject(i); if (image == null || !"image".equals(image.optString("kind"))) continue;
