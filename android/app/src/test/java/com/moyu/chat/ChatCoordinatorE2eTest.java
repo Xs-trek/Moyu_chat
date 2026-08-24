@@ -216,6 +216,28 @@ public class ChatCoordinatorE2eTest {
         return false;
     }
 
+    @Test public void imageOnlyTurnPersistsPrivateReferenceAndSendsMultimodalBody() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        assertNotNull(profile); profile.inputModalities = "text,image"; app.database().saveModelProfile(profile);
+        String sessionId = createSession();
+        JSONObject image = app.mediaStore().saveBase64Image("image/gif", TINY_GIF, "tiny.gif");
+        app.database().addDraftMedia(sessionId, image);
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", ""));
+        await("image-only turn completes", () -> {
+            JSONObject s = activeSession(latestView()); return s != null && "completed".equals(s.optString("state"));
+        });
+        RecordedRequest request = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(request);
+        JSONObject body = new JSONObject(request.getBody().readUtf8());
+        JSONArray content = body.getJSONArray("messages").getJSONObject(1).getJSONArray("content");
+        assertEquals("image_url", content.getJSONObject(0).optString("type"));
+        assertTrue(content.getJSONObject(0).getJSONObject("image_url").optString("url").startsWith("data:image/gif;base64,"));
+        JSONArray timeline = app.database().timeline(sessionId);
+        JSONObject user = timeline.getJSONObject(0); assertEquals(1, user.getJSONArray("attachments").length());
+        assertFalse("base64 image bytes must not be stored in SQLite", scanDatabaseFor(TINY_GIF));
+        assertEquals(0, app.database().draftMedia(sessionId).length());
+    }
+
     // ---------- multi-turn + interrupt ----------
 
     @Test public void interruptKeepsPartialAnswerAndUnlocksSession() throws Exception {
