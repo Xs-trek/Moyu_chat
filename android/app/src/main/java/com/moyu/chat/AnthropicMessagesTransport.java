@@ -157,6 +157,20 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
 
     static boolean parse(JSONObject event, ChatTransport.Sink sink) {
         String type = event.optString("type");
+        if ("content_block_start".equals(type)) {
+            JSONObject block = event.optJSONObject("content_block");
+            if (block != null) {
+                String blockType = block.optString("type", "");
+                String name = block.optString("name", "");
+                if ("server_tool_use".equals(blockType) && ("web_search".equals(name) || "web_fetch".equals(name))) {
+                    sink.onStage(name); sink.onToolActivity(name, "running");
+                } else if ("web_search_tool_result".equals(blockType) || "web_fetch_tool_result".equals(blockType)) {
+                    collectWebSources(block, sink);
+                    sink.onToolActivity(blockType.startsWith("web_search") ? ChatTurnOptions.WEB_SEARCH : ChatTurnOptions.WEB_FETCH, "completed");
+                }
+            }
+            return false;
+        }
         if ("content_block_delta".equals(type)) {
             JSONObject delta = event.optJSONObject("delta");
             if (delta != null && "thinking_delta".equals(delta.optString("type"))) {
