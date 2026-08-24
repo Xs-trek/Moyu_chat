@@ -111,6 +111,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE sessions ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
             db.execSQL("ALTER TABLE sessions ADD COLUMN draft_media TEXT NOT NULL DEFAULT '[]'");
         }
+        if (oldVersion < 7) {
+            db.execSQL("ALTER TABLE sessions ADD COLUMN task_profile TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN context_checkpoint TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN checkpoint_covered_items INTEGER NOT NULL DEFAULT 0");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
