@@ -263,6 +263,42 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (db.update("timeline", v, "item_key=?", new String[]{itemKey}) == 1 && sessionId != null) updatePreviewFromBody(db, sessionId, body);
     }
 
+    /** Atomically settles the durable live projection and session state for one provider turn. */
+    public synchronized void finalizeTurn(String sessionId, String streamKey, JSONObject finalBody,
+                                          String errorCode, String errorSummary, String finalState) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            if (finalBody == null) {
+                db.delete("timeline", "session_id=? AND item_key=?", new String[]{sessionId, streamKey});
+            } else {
+                ContentValues row = new ContentValues(); row.put("body", finalBody.toString());
+                if (db.update("timeline", row, "session_id=? AND item_key=?", new String[]{sessionId, streamKey}) != 1) {
+                    throw new IllegalStateException("live assistant row missing during turn finalization");
+                }
+                updatePreviewFromBody(db, sessionId, finalBody);
+            }
+            if (errorCode != null && !"cancelled".equals(errorCode)) {
+                int seq;
+                try (Cursor c = db.rawQuery("SELECT COALESCE(MAX(local_seq),0)+1 FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+                    if (!c.moveToFirst()) throw new IllegalStateException("cannot allocate error timeline sequence");
+                    seq = c.getInt(0);
+                }
+                JSONObject error = new JSONObject().put("kind", "error").put("code", errorCode)
+                        .put("summary", errorSummary == null ? "Provider error" : errorSummary)
+                        .put("createdAt", Instant.now().toString()).put("localSeq", seq);
+                ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
+                row.put("local_seq", seq); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
+                db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
+            }
+            ContentValues state = new ContentValues(); state.put("state", finalState); state.put("updated_at", Instant.now().toString());
+            if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalStateException("session missing during turn finalization");
+            db.setTransactionSuccessful();
+        } catch (org.json.JSONException error) {
+            throw new IllegalStateException(error);
+        } finally { db.endTransaction(); }
+    }
+
     public synchronized void deleteTimelineItem(String itemKey) { getWritableDatabase().delete("timeline", "item_key=?", new String[]{itemKey}); }
     public synchronized JSONArray timeline(String sessionId) { return timelineThrough(sessionId, null); }
 
