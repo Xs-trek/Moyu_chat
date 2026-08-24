@@ -254,6 +254,7 @@ final class ChatCoordinator implements AutoCloseable {
             JSONObject finished = null;
             if (hasVisibleOutput) {
                 finished = new JSONObject(seed.toString()).put("text", text).put("streaming", false);
+                finished.remove("streamStage");
                 if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
             }
             db.finalizeTurn(id, streamKey, finished,
