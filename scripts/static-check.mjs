@@ -97,7 +97,9 @@ if (!renderGate.includes('pointerActive') || !renderGate.includes('composing') |
 const render = read('src/render.js');
 const mainUi = read('src/main.js');
 if (!render.includes('export function patchConversation()') || !render.includes('streaming-state')) fail('conversation volatile state patch missing');
-if (!mainUi.includes('patchConversation(); renderGate.request();')) fail('Host view updates must patch volatile conversation state before deferred full render');
+if (!mainUi.includes("else if (!patchConversation()) renderGate.request();")) fail('Host view updates must patch volatile conversation state before deferred full render');
+if (render.includes('timeline.replaceChildren(...session.messages')) fail('streaming conversation updates must not rebuild the whole timeline');
+if (!render.includes('reconcileTimeline(') || !render.includes('data-item-key') && !render.includes('itemKey: timelineKey')) fail('keyed conversation DOM reconciliation missing');
 if (!mainUi.includes("postIntent('chat.session.delete'") || !render.includes("'delete-session'")) fail('session delete intent exists natively but is not exposed by the WebView UI');
 if (mainUi.includes('window.confirm(')) fail('WebView actions must not depend on browser JS dialogs; use app-owned confirmation UI');
 if (!render.includes('openConfirmDialog') || !styles.includes('modal-backdrop')) fail('app-owned confirmation surface missing');
