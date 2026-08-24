@@ -582,6 +582,9 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("reasoningEffort", s.reasoningEffort == null ? ReasoningPolicy.DEFAULT : s.reasoningEffort)
                 .put("contextMode", ContextMode.normalize(s.contextMode)).put("effectiveContextMode", ContextMode.resolve(s, originSnap).effectiveLabel)
                 .put("inputModalities", ChatDatabase.normalizeModalities(s.inputModalities)).put("outputModalities", ChatDatabase.normalizeModalities(s.outputModalities))
+                .put("nativeWebCapabilities", ChatTurnOptions.normalizeCapabilities(s.toolCapabilities))
+                .put("webMode", ChatTurnOptions.normalizeWebMode(s.webMode))
+                .put("effectiveWebBackend", effectiveWebBackend(s, p))
                 .put("state", visibleState).put("updatedAt", s.updatedAt);
         if (s.preview != null) o.put("preview", s.preview);
         TaskProfile taskProfile = TaskProfile.fromStored(s.taskProfile);
