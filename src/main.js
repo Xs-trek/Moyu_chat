@@ -28,6 +28,7 @@ document.addEventListener('click', (event) => {
   const action = target.dataset.action;
   if (action === 'nav') postIntent('nav.open', { route: target.dataset.route });
   else if (action === 'theme') postIntent('appearance.set', { theme: target.dataset.theme });
+  else if (action === 'toggle-reasoning') postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' });
   else if (action === 'open-session') postIntent('chat.session.open', { localSessionId: target.dataset.sessionId });
   else if (action === 'delete-session') {
     const sessionId = target.dataset.sessionId;
