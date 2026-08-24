@@ -182,6 +182,18 @@ public class ChatDatabaseTest {
         assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
     }
 
+    @Test public void upgradeFromV7AddsContextModeWithoutChangingTranscript() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(7);
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        assertNotNull(session);
+        assertEquals(ContextMode.AUTO, session.contextMode);
+        assertEquals("", session.taskProfile);
+        assertEquals("", session.contextCheckpoint);
+        assertEquals(2, upgraded.timeline(session.id).length());
+        assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
+    }
+
     @Test public void oneProviderCanOwnMultipleModelsAndSessionSnapshotsCapabilities() {
         ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; db.saveProvider(provider);
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
