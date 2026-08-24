@@ -35,7 +35,7 @@ export type MoyuChatIntent =
   | UiIntent<'provider.configure.open', { providerId?: string }>
   | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
   | UiIntent<'branch.sources.refresh', Record<string, never>>
-  | UiIntent<'branch.create.remote', { sourceId: string; throughSeq?: number; contextMode?: ContextMode }>
+  | UiIntent<'branch.create.remote', { sourceId: string; throughSeq?: number; contextMode?: ContextMode; webMode?: WebMode }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
   | UiIntent<'handoff.create', { localSessionId: string }>
   | UiIntent<'handoff.submit', { handoffId: string }>;
