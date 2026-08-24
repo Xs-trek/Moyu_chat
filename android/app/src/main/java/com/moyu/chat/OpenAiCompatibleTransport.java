@@ -58,25 +58,39 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
 
     private void run(Call call, String protocol, ChatTransport.Sink sink) {
         Set<String> emittedImages = new HashSet<>();
+        boolean sawData = false;
+        boolean sawUnexpectedPayload = false;
+        long lastSemantic = System.nanoTime();
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return; }
             if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = reader.readLine()) != null;) {
-                    if (!line.startsWith("data:")) continue;
+                    long now = System.nanoTime();
+                    if (!line.startsWith("data:")) {
+                        String trimmed = line.trim();
+                        if (!trimmed.isEmpty() && !trimmed.startsWith(":") && !trimmed.startsWith("event:")) sawUnexpectedPayload = true;
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        continue;
+                    }
                     String data = line.substring(5).trim();
                     if (data.isEmpty()) continue;
+                    sawData = true;
+                    lastSemantic = now;
                     if ("[DONE]".equals(data)) { sink.onCompleted(); return; }
                     JSONObject event;
                     try { event = new JSONObject(data); } catch (Exception ignored) { continue; }
                     if (CHAT_COMPLETIONS.equals(protocol)) {
                         if (parseChat(event, sink)) { sink.onCompleted(); return; }
-                    } else parseResponses(event, sink, emittedImages);
+                    } else if (parseResponses(event, sink, emittedImages)) return;
                 }
             }
-            sink.onCompleted();
+            if (sawData) sink.onCompleted();
+            else if (sawUnexpectedPayload) sink.onError("unexpected_response_format", "Provider returned HTTP 200 but not an SSE data stream", false);
+            else sink.onError("empty_stream", "Provider returned HTTP 200 with no stream data", true);
         } catch (IOException error) {
             if (call.isCanceled()) sink.onError("cancelled", "已中断", false);
+            else if (error instanceof java.net.SocketTimeoutException) sink.onError("stream_timeout", "Provider stream timed out while waiting for data", true);
             else sink.onError("network_error", safe(error), true);
         }
     }
