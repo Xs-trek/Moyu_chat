@@ -201,7 +201,14 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             if (first != null && !first.isNull("finish_reason")) finishReason = first.optString("finish_reason", "").trim();
         }
         JSONObject usage = event.optJSONObject("usage");
-        if (usage != null) sink.onUsage(usage.has("prompt_tokens") ? usage.optInt("prompt_tokens") : null, usage.has("completion_tokens") ? usage.optInt("completion_tokens") : null);
+        if (usage != null) {
+            Integer input = usage.has("prompt_tokens") ? usage.optInt("prompt_tokens") : null;
+            Integer output = usage.has("completion_tokens") ? usage.optInt("completion_tokens") : null;
+            JSONObject details = usage.optJSONObject("prompt_tokens_details");
+            Integer cached = details != null && details.has("cached_tokens") ? details.optInt("cached_tokens") : null;
+            Integer cacheWrite = details != null && details.has("cache_write_tokens") ? details.optInt("cache_write_tokens") : null;
+            sink.onUsageDetails(input, output, cached, cacheWrite, input);
+        }
 
         if (!finishReason.isEmpty()) {
             if ("length".equals(finishReason)) sink.onError("response_incomplete", "Response stopped at max output tokens", false);
