@@ -207,6 +207,7 @@ export function patchConversation() {
   if (!session || view.route !== 'conversation' || !scroll || scroll.dataset.sessionId !== session.localSessionId) return false;
   window.__moyuChatView = view;
   const running = session.state === 'running';
+  const contextPreparing = Boolean(session.contextPreparing);
   const timeline = scroll.querySelector('.timeline');
   const anchor = captureTimelineAnchor();
   if (timeline && !selectionInside(timeline)) {
