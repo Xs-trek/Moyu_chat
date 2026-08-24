@@ -66,6 +66,19 @@ final class ContextBudgetManager {
         return new Result(out, truncated || out.length() < chronological.length(), used);
     }
 
+    /** Image tokenization is provider-specific; reserve a conservative dimension-based budget per image. */
+    private int estimateMedia(JSONArray attachments) {
+        if (attachments == null) return 0;
+        int total = 0;
+        for (int i = 0; i < attachments.length(); i++) {
+            JSONObject item = attachments.optJSONObject(i); if (item == null || !"image".equals(item.optString("kind"))) continue;
+            long width = Math.max(1, item.optLong("width", 1024)); long height = Math.max(1, item.optLong("height", 1024));
+            long tiles = Math.max(1, ((width + 511) / 512) * ((height + 511) / 512));
+            total += (int) Math.min(8_192, 768 + tiles * 384);
+        }
+        return total;
+    }
+
     /** Deliberately conservative across Latin/CJK without shipping a model-specific tokenizer. */
     int estimate(String text) {
         if (text == null || text.isEmpty()) return 0;
