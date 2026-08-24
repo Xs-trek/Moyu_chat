@@ -264,6 +264,21 @@ public class TransportMockServerTest {
         assertTrue(body.optBoolean("stream"));
     }
 
+    @Test public void anthropicEncodesImageInputAsBase64SourceBlock() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "vision-model", imagePrompt(), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        JSONArray content = body.getJSONArray("messages").getJSONObject(0).getJSONArray("content");
+        assertEquals("text", content.getJSONObject(0).optString("type"));
+        JSONObject image = content.getJSONObject(1);
+        assertEquals("image", image.optString("type"));
+        assertEquals("base64", image.getJSONObject("source").optString("type"));
+        assertEquals("image/png", image.getJSONObject("source").optString("media_type"));
+        assertEquals("QUJD", image.getJSONObject("source").optString("data"));
+    }
+
     @Test public void anthropicErrorEventMapsToError() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"overloaded\"}}\n\n"));
