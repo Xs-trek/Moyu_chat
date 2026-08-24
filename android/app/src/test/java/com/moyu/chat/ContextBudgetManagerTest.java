@@ -93,6 +93,28 @@ public class ContextBudgetManagerTest {
     }
 
     @Test
+    public void truncationNeverStartsWithOrphanAssistantAndKeepsWholeTurns() throws Exception {
+        ContextBudgetManager manager = new ContextBudgetManager();
+        JSONArray all = new JSONArray().put(message("assistant", "orphan old assistant"));
+        for (int i = 0; i < 30; i++) {
+            all.put(message("user", "user " + i + " padding padding padding padding padding"));
+            all.put(message("assistant", "assistant " + i + " padding padding padding padding padding"));
+        }
+        all.put(message("user", "CURRENT"));
+        ContextBudgetManager.Result result = manager.select(INSTRUCTIONS, all, 1_400, 256);
+        assertTrue(result.truncated);
+        assertTrue(result.omittedMessageCount > 0);
+        assertEquals("user", result.messages.getJSONObject(0).optString("role"));
+        assertEquals("CURRENT", result.messages.getJSONObject(result.messages.length() - 1).optString("text"));
+        for (int i = 0; i < result.messages.length() - 1; i++) {
+            JSONObject item = result.messages.getJSONObject(i);
+            if ("assistant".equals(item.optString("role"))) {
+                assertTrue("assistant must belong to a retained user-led turn", i > 0);
+            }
+        }
+    }
+
+    @Test
     public void estimatorIsConservativeForCjkAndLatin() {
         ContextBudgetManager manager = new ContextBudgetManager();
         // 10 CJK chars = 30 UTF-8 bytes -> at least 10 tokens (bytes/3), never below code points.
