@@ -158,6 +158,18 @@ public class ChatDatabaseTest {
         assertEquals(ContextBudgetManager.DEFAULT_OUTPUT_TOKENS, session.maxOutputTokens);
     }
 
+    @Test public void upgradeFromV5AddsMultimodalDefaultsWithoutChangingExistingSemantics() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(5);
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        assertNotNull(profile); assertNotNull(session);
+        assertEquals("text", profile.inputModalities); assertEquals("text", profile.outputModalities);
+        assertEquals("text", session.inputModalities); assertEquals("text", session.outputModalities);
+        assertEquals(0, upgraded.draftMedia(session.id).length());
+        assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
+    }
+
     @Test public void oneProviderCanOwnMultipleModelsAndSessionSnapshotsCapabilities() {
         ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; db.saveProvider(provider);
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
