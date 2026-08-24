@@ -29,6 +29,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final ContextCheckpointService checkpointService = new ContextCheckpointService();
     private final RemoteDataBridge remoteBridge;
     private final Map<String, ChatTransport.Turn> activeTurns = new HashMap<>();
+    private final java.util.Set<String> preparingSessions = new java.util.HashSet<>();
 
     private volatile boolean closed;
     private boolean uiReady;
