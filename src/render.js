@@ -206,7 +206,7 @@ export function patchConversation() {
   const timeline = scroll.querySelector('.timeline');
   const anchor = captureTimelineAnchor();
   if (timeline && !selectionInside(timeline)) {
-    timeline.replaceChildren(...session.messages.map((item) => timelineItem(item, running, session.localSessionId)).filter(Boolean));
+    timeline.replaceChildren(...session.messages.map((item) => timelineItem(item, running, session.localSessionId, Boolean(view.ui?.showReasoning))).filter(Boolean));
   } else if (!running && timeline) {
     timeline.querySelectorAll('.streaming-state').forEach((node) => node.remove());
   }
