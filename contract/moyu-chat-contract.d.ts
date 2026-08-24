@@ -64,6 +64,7 @@ export interface ModelProfileView {
   defaultReasoning: string;
   inputModalities: string;
   outputModalities: string;
+  toolCapabilities: string;
 }
 
 export interface ProviderView {
