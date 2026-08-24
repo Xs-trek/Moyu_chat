@@ -89,6 +89,23 @@ public class TransportMockServerTest {
 
     // ---------- OpenAI Chat Completions ----------
 
+    @Test public void openCodeGoVisionUsesDocumentedEndpointBearerAndBareModelId() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
+        ChatDatabase.Provider p = provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        p.baseUrl = server.url("/zen/go/v1").toString();
+        p.authMode = ProviderAuth.BEARER;
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(p, "sk-go-test", "deepseek-v4-flash-vision-exp", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        RecordedRequest request = server.takeRequest(10, TimeUnit.SECONDS);
+        assertNotNull(request);
+        assertEquals("/zen/go/v1/chat/completions", request.getPath());
+        assertEquals("Bearer sk-go-test", request.getHeader("Authorization"));
+        JSONObject body = new JSONObject(request.getBody().readUtf8());
+        assertEquals("deepseek-v4-flash-vision-exp", body.optString("model"));
+        assertTrue(body.optBoolean("stream"));
+    }
+
     @Test public void chatCompletionsAssemblesDeltasAndCompletesOnDone() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n" +
