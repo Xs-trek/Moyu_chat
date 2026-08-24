@@ -499,6 +499,7 @@ final class ChatCoordinator implements AutoCloseable {
 
     private JSONObject sessionJson(ChatDatabase.Session s, boolean detail) throws Exception {
         ChatDatabase.Provider p = db.getProvider(s.providerId);
+        ChatDatabase.Snapshot originSnap = s.originSnapshotId == null ? null : db.getSnapshot(s.originSnapshotId);
         boolean preparing = preparingSessions.contains(s.id);
         boolean active = activeTurns.containsKey(s.id) || preparing;
         String visibleState = active ? "running" : ("running".equals(s.state) ? "failed" : s.state);
