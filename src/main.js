@@ -1,6 +1,6 @@
 import { bindHost, postIntent } from './bridge.js';
 import { createRenderGate } from './render-gate.js';
-import { render, renderNotice } from './render.js';
+import { patchConversation, render, renderNotice } from './render.js';
 import { getState, setNotice, setView, subscribe } from './state.js';
 
 const renderGate = createRenderGate(render);
