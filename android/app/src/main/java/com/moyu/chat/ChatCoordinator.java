@@ -226,15 +226,20 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void finishTurn(String id, String streamKey, JSONObject seed, String text, JSONArray outputMedia, String[] error) {
-        String finalState = error == null || "cancelled".equals(error[0]) ? "completed" : "failed";
+        boolean hasVisibleOutput = !text.isEmpty() || (outputMedia != null && outputMedia.length() > 0);
+        String[] terminalError = error;
+        if (terminalError == null && !hasVisibleOutput) {
+            terminalError = new String[]{"empty_assistant_output", "Provider completed without visible text or image output"};
+        }
+        String finalState = terminalError == null || "cancelled".equals(terminalError[0]) ? "completed" : "failed";
         try {
             JSONObject finished = null;
-            if (!text.isEmpty() || (outputMedia != null && outputMedia.length() > 0)) {
+            if (hasVisibleOutput) {
                 finished = new JSONObject(seed.toString()).put("text", text).put("streaming", false);
                 if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
             }
             db.finalizeTurn(id, streamKey, finished,
-                    error == null ? null : error[0], error == null ? null : error[1], finalState);
+                    terminalError == null ? null : terminalError[0], terminalError == null ? null : terminalError[1], finalState);
         } catch (Exception finalizeError) {
             // Runtime authority must never remain locked because a projection write failed.
             try { db.deleteTimelineItem(streamKey); } catch (Exception ignored) { }
