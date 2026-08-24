@@ -63,10 +63,12 @@ document.addEventListener('click', (event) => {
     const provider = view?.providers?.find((item) => item.configured) || view?.providers?.find((item) => item.models?.length);
     const model = provider?.models?.[0];
     if (!provider || !model) return setNotice({ level: 'warning', text: '请先配置 Provider 和 Model' });
-    postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId });
+    postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId, contextMode: view?.ui?.defaultContextMode || 'auto' });
   } else if (action === 'new-chat-model') {
-    const effort = target.closest('.card')?.querySelector('select[data-reasoning-select]')?.value || 'default';
-    postIntent('chat.session.create', { providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId, reasoningEffort: effort });
+    const modelCard = target.closest('.model-card');
+    const effort = modelCard?.querySelector('select[data-reasoning-select]')?.value || 'default';
+    const contextMode = modelCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'auto';
+    postIntent('chat.session.create', { providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId, reasoningEffort: effort, contextMode });
   } else if (action === 'configure-provider') postIntent('provider.configure.open', target.dataset.providerId ? { providerId: target.dataset.providerId } : {});
   else if (action === 'configure-model') postIntent('model.configure.open', { providerId: target.dataset.providerId, ...(target.dataset.modelProfileId ? { modelProfileId: target.dataset.modelProfileId } : {}) });
   else if (action === 'pick-attachment') postIntent('chat.attachment.pick', { localSessionId: target.dataset.sessionId });
