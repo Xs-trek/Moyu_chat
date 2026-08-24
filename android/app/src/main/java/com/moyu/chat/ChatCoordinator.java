@@ -219,10 +219,14 @@ final class ChatCoordinator implements AutoCloseable {
         activeTurns.put(id, turn); emitView();
     }
 
-    private void finishTurn(String id, String streamKey, JSONObject seed, String text, String[] error) {
+    private void finishTurn(String id, String streamKey, JSONObject seed, String text, JSONArray outputMedia, String[] error) {
         activeTurns.remove(id);
         try {
-            if (!text.isEmpty()) db.replaceTimelineBody(streamKey, new JSONObject(seed.toString()).put("text", text).put("streaming", false)); else db.deleteTimelineItem(streamKey);
+            if (!text.isEmpty() || (outputMedia != null && outputMedia.length() > 0)) {
+                JSONObject finished = new JSONObject(seed.toString()).put("text", text).put("streaming", false);
+                if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
+                db.replaceTimelineBody(streamKey, finished);
+            } else db.deleteTimelineItem(streamKey);
             if (error != null && !"cancelled".equals(error[0])) db.appendTimeline(id, "error:" + UUID.randomUUID(), new JSONObject().put("kind", "error").put("code", error[0]).put("summary", error[1]).put("createdAt", Instant.now().toString()));
             ChatDatabase.Session s = db.getSession(id); if (s != null) { s.state = error == null || "cancelled".equals(error[0]) ? "completed" : "failed"; s.updatedAt = Instant.now().toString(); db.saveSession(s); }
             emitView();
