@@ -33,8 +33,28 @@ document.addEventListener('click', (event) => {
     const sessionId = target.dataset.sessionId;
     if (!sessionId) return;
     const title = target.dataset.sessionTitle || '此会话';
-    if (window.confirm(`删除“${title}”？\n\n本地会话记录将被删除，此操作不可恢复。`)) {
-      postIntent('chat.session.delete', { localSessionId: sessionId });
+    openConfirmDialog({
+      title: '删除本地会话',
+      message: `删除“${title}”？原会话记录与未被其它分支引用的本地媒体将被删除，此操作不可恢复。`,
+      confirmText: '删除', danger: true,
+      onConfirm: () => postIntent('chat.session.delete', { localSessionId: sessionId }),
+    });
+  }
+  else if (action === 'edit-message') {
+    const localSeq = Number(target.dataset.localSeq);
+    if (target.dataset.sessionId && Number.isInteger(localSeq) && localSeq > 0) {
+      postIntent('chat.message.edit', { localSessionId: target.dataset.sessionId, localSeq });
+    }
+  }
+  else if (action === 'rollback-message') {
+    const localSeq = Number(target.dataset.localSeq);
+    if (target.dataset.sessionId && Number.isInteger(localSeq) && localSeq > 0) {
+      openConfirmDialog({
+        title: '从这里继续',
+        message: '将以这条消息为截止点创建一个新的本地分支。原会话不会被修改或删除。',
+        confirmText: '创建回滚分支',
+        onConfirm: () => postIntent('chat.message.rollback', { localSessionId: target.dataset.sessionId, localSeq }),
+      });
     }
   }
   else if (action === 'new-chat') {
