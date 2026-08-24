@@ -26,6 +26,8 @@ document.addEventListener('click', (event) => {
   }
   else if (action === 'configure-provider') postIntent('provider.configure.open', target.dataset.providerId ? { providerId: target.dataset.providerId } : {});
   else if (action === 'configure-model') postIntent('model.configure.open', { providerId: target.dataset.providerId, ...(target.dataset.modelProfileId ? { modelProfileId: target.dataset.modelProfileId } : {}) });
+  else if (action === 'pick-attachment') postIntent('chat.attachment.pick', { localSessionId: target.dataset.sessionId });
+  else if (action === 'remove-attachment') postIntent('chat.attachment.remove', { localSessionId: target.dataset.sessionId, mediaId: target.dataset.mediaId });
   else if (action === 'refresh-sources') postIntent('branch.sources.refresh', {});
   else if (action === 'branch-remote') postIntent('branch.create.remote', { sourceId: target.dataset.sourceId });
   else if (action === 'branch-local') postIntent('branch.create.local', { localSessionId: target.dataset.sessionId });
