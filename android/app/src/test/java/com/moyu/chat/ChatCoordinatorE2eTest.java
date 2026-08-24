@@ -34,6 +34,7 @@ import java.util.function.BooleanSupplier;
 @Config(sdk = 34)
 public class ChatCoordinatorE2eTest {
     private static final String SECRET = "sk-SECRET-value-8f3a21";
+    private static final String TINY_GIF = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
     private MockWebServer server;
     private RecordingHost host;
