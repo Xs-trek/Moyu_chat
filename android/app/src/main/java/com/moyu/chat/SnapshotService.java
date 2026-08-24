@@ -96,8 +96,24 @@ final class SnapshotService {
 
     private static boolean visible(JSONObject item) {
         if (item == null || !"message".equals(item.optString("kind")) || item.optBoolean("streaming", false)) return false;
-        String role = item.optString("role", "");
-        return ("user".equals(role) || "assistant".equals(role)) && !item.optString("text", "").trim().isEmpty();
+        String role = item.optString("role", ""); if (!("user".equals(role) || "assistant".equals(role))) return false;
+        return !item.optString("text", "").trim().isEmpty() || normalizeAttachments(item.optJSONArray("attachments")).length() > 0;
+    }
+
+    private static JSONArray normalizeAttachments(JSONArray source) {
+        JSONArray out = new JSONArray(); if (source == null) return out;
+        for (int i = 0; i < source.length() && out.length() < ChatMediaStore.MAX_DRAFT_IMAGES; i++) {
+            JSONObject item = source.optJSONObject(i); if (item == null || !"image".equals(item.optString("kind"))) continue;
+            String mediaId = item.optString("mediaId", "").trim(); String mime = item.optString("mimeType", "").trim();
+            if (!mediaId.matches("[A-Za-z0-9_-]{1,128}") || !mime.startsWith("image/")) continue;
+            try {
+                out.put(new JSONObject().put("kind", "image").put("mediaId", mediaId).put("mimeType", mime)
+                        .put("fileName", bounded(item.optString("fileName", "image"), "file name"))
+                        .put("sizeBytes", Math.max(0, item.optLong("sizeBytes", 0))).put("width", Math.max(0, item.optInt("width", 0)))
+                        .put("height", Math.max(0, item.optInt("height", 0))).put("url", "/media/" + mediaId));
+            } catch (Exception ignored) { }
+        }
+        return out;
     }
 
     private static void append(JSONArray target, JSONArray source) {
