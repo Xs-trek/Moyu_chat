@@ -13,6 +13,8 @@ final class TerminalSink implements ChatTransport.Sink {
     @Override public void onReasoningDelta(String delta) { if (!terminal.get()) delegate.onReasoningDelta(delta); }
     @Override public void onTextDelta(String delta) { if (!terminal.get()) delegate.onTextDelta(delta); }
     @Override public void onImage(String mimeType, String base64, String fileName) { if (!terminal.get()) delegate.onImage(mimeType, base64, fileName); }
+    @Override public void onToolActivity(String tool, String state) { if (!terminal.get()) delegate.onToolActivity(tool, state); }
+    @Override public void onWebSource(String url, String title) { if (!terminal.get()) delegate.onWebSource(url, title); }
     @Override public void onUsage(Integer inputTokens, Integer outputTokens) { if (!terminal.get()) delegate.onUsage(inputTokens, outputTokens); }
     @Override public void onUsageDetails(Integer inputTokens, Integer outputTokens, Integer cachedInputTokens,
                                          Integer cacheWriteInputTokens, Integer cacheHitBaseTokens, Integer reasoningTokens) {
