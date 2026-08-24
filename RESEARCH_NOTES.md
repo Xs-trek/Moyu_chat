@@ -22,7 +22,7 @@ LobeChat exposes branching conversations while also supporting multiple provider
 
 ### Capabilities should be data, not UI assumptions
 
-Continue and Cherry Studio model/provider systems both expose capability/registry metadata. Moyu Chat keeps only the small subset needed initially (`streaming`, `imageInput` later, protocol id), avoiding a full marketplace/plugin model.
+Continue and Cherry Studio model/provider systems both expose capability/registry metadata. Moyu Chat keeps a small deployment-scoped `ModelProfile` subset: context/input/output limits, reasoning levels, and `text,image` input/output modalities. The Provider still owns endpoint/protocol/auth/wire semantics. This is enough for multimodal Chat without adopting a marketplace/plugin capability matrix.
 
 ## Patterns intentionally not adopted
 
