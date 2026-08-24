@@ -118,7 +118,7 @@ if (!html.includes("default-src 'none'")) fail('WebView CSP must be deny-by-defa
 
 const contract = read('contract/moyu-chat-contract.d.ts');
 if (contract.includes("'provider.delete'")) fail('provider.delete is not a supported v0.0.2 intent');
-if (!contract.includes("'context.intelligence.set'")) fail('v0.0.2 contract missing Smart Context intent');
+if (!contract.includes("'context.mode.default.set'") || !contract.includes("export type ContextMode = 'auto' | 'minimal' | 'smart'")) fail('v0.0.2 contract missing explicit context modes');
 
 const packageJson = JSON.parse(read('package.json'));
 const gradle = read('android/app/build.gradle');
