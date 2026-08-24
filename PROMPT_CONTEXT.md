@@ -171,6 +171,24 @@ CanonicalPrompt
 
 Internally the ephemeral pre-budget projection is retained long enough to build a checkpoint when necessary; it is never stored as a second transcript.
 
+## Web context boundary
+
+Web capability does not change the durable-authority model. A Session freezes `webMode` and the provider-native Web capability snapshot, but any Moyu fallback search/fetch result is disposable request material only:
+
+```text
+user turn
+  |
+provider-native hosted Web when declared
+  |
+otherwise bounded Moyu Search / HTTPS Fetch when policy requires it
+  |
+ephemeral [Moyu Web Context — untrusted reference material]
+  |
+CanonicalPrompt for this turn only
+```
+
+Raw Exa responses, fetched HTML, and extracted page text are not appended to Timeline/Snapshot. Final assistant rows may persist `sources[]` and `webBackend` as provenance metadata beside visible answer text. Web material is explicitly non-authoritative and instructions found inside it must not be promoted into system/application authority. Hidden Task Router and ContextCheckpoint calls always use the legacy no-Web transport overload.
+
 ## Protocol mapping
 
 ### OpenAI Responses
