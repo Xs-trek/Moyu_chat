@@ -36,9 +36,9 @@ public class MoyuWebServiceTest {
     @Test public void offNeverCallsFallbackAndOnForcesSearch() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
-            server.enqueue(new MockResponse.Builder().code(200)
+            server.enqueue(new MockResponse().setResponseCode(200)
                     .addHeader("Content-Type", "application/json")
-                    .body(exaResponse("Title: Example\nURL: https://example.com/\nUseful context")).build());
+                    .setBody(exaResponse("Title: Example\nURL: https://example.com/\nUseful context")));
             try (MoyuWebService web = new MoyuWebService(server.url("/mcp").toString())) {
                 MoyuWebService.Prepared off = web.prepare("latest release", new ChatTurnOptions("", "off"), null);
                 assertFalse(off.attempted);
