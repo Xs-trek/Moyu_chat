@@ -86,7 +86,7 @@ public class SmartContextV002Test {
     }
 
     private String createSession() throws Exception {
-        post("chat.session.create", new JSONObject().put("providerId", "p"));
+        post("chat.session.create", new JSONObject().put("providerId", "p").put("contextMode", ContextMode.SMART));
         await("session", () -> latestView() != null && !latestView().optString("activeLocalSessionId", "").isEmpty());
         return latestView().optString("activeLocalSessionId");
     }
