@@ -266,8 +266,30 @@ final class ChatCoordinator implements AutoCloseable {
         activeTurns.put(id, turn); emitView();
     }
 
-    private void finishTurn(String id, String streamKey, JSONObject seed, String text, JSONArray outputMedia, String[] error) {
+    private void settleUsage(String id, String usageKey, JSONObject usageState, boolean[] usagePersisted,
+                             long requestStartedNanos, long firstOutputNanos) {
+        try {
+            long finished = System.nanoTime();
+            usageState.put("requestDurationMs", Math.max(0L, (finished - requestStartedNanos) / 1_000_000L));
+            if (firstOutputNanos > 0L) {
+                long outputDurationMs = Math.max(1L, (finished - firstOutputNanos) / 1_000_000L);
+                usageState.put("firstOutputLatencyMs", Math.max(0L, (firstOutputNanos - requestStartedNanos) / 1_000_000L));
+                usageState.put("outputDurationMs", outputDurationMs);
+                if (usageState.has("outputTokens")) {
+                    int totalOutput = Math.max(0, usageState.optInt("outputTokens", 0));
+                    int reasoning = Math.max(0, usageState.optInt("reasoningTokens", 0));
+                    int visibleOutput = Math.max(0, totalOutput - reasoning);
+                    if (visibleOutput > 0) usageState.put("outputTokensPerSecond", visibleOutput * 1000.0d / outputDurationMs);
+                }
+            }
+            if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState);
+            else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; }
+        } catch (Exception ignored) { }
+    }
+
+    private void finishTurn(String id, String streamKey, JSONObject seed, String text, String reasoning, JSONArray outputMedia, String[] error) {
         boolean hasVisibleOutput = !text.isEmpty() || (outputMedia != null && outputMedia.length() > 0);
+        boolean hasProjection = hasVisibleOutput || (reasoning != null && !reasoning.isEmpty());
         String[] terminalError = error;
         if (terminalError == null && !hasVisibleOutput) {
             terminalError = new String[]{"empty_assistant_output", "Provider completed without visible text or image output"};
@@ -275,9 +297,10 @@ final class ChatCoordinator implements AutoCloseable {
         String finalState = terminalError == null || "cancelled".equals(terminalError[0]) ? "completed" : "failed";
         try {
             JSONObject finished = null;
-            if (hasVisibleOutput) {
+            if (hasProjection) {
                 finished = new JSONObject(seed.toString()).put("text", text).put("streaming", false);
                 finished.remove("streamStage");
+                if (reasoning != null && !reasoning.isEmpty()) finished.put("reasoning", reasoning);
                 if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
             }
             db.finalizeTurn(id, streamKey, finished,
