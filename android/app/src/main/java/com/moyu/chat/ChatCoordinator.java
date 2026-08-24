@@ -265,6 +265,26 @@ final class ChatCoordinator implements AutoCloseable {
         } finally {
             if (preparing) { preparingSessions.remove(id); emitView(); }
         }
+
+        // Web is a separate capability plane. Hidden Router/Checkpoint calls above never receive it.
+        ChatTurnOptions webOptions = ChatTurnOptions.forSession(session, provider.protocol);
+        MoyuWebService.Prepared preparedWeb = MoyuWebService.Prepared.none();
+        if (webOptions.webEnabled()) {
+            try {
+                preparedWeb = webService.prepare(input, webOptions, stage -> {
+                    webPreparingStages.put(id, stage == null ? "web_search" : stage);
+                    emitView();
+                });
+            } finally {
+                if (webPreparingStages.remove(id) != null) emitView();
+            }
+            if (preparedWeb.hasContext()) {
+                // Rebuild only the disposable main prompt so Web material is budgeted but never persisted as user text.
+                prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens,
+                        input + preparedWeb.promptSuffix, pendingMedia);
+            }
+        }
+        final MoyuWebService.Prepared webPrepared = preparedWeb;
         provider.maxOutputTokens = session.maxOutputTokens; // request-local provider copy; transport only needs the wire output cap.
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
