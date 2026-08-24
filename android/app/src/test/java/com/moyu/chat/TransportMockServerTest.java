@@ -159,6 +159,32 @@ public class TransportMockServerTest {
         assertEquals("x", sink.text.toString());
     }
 
+    @Test public void chatFinishReasonIsSemanticTerminalWithoutDoneMarker() throws Exception {
+        RecordingSink sink = new RecordingSink();
+        JSONObject event = new JSONObject("{\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}");
+        assertTrue(OpenAiCompatibleTransport.parseChat(event, sink));
+        assertEquals("done", sink.text.toString());
+        assertEquals(3, sink.inputTokens);
+        assertEquals(1, sink.outputTokens);
+        assertNull(sink.errorCode);
+    }
+
+    @Test public void chatTrailingCostChunkIsSemanticTerminal() throws Exception {
+        RecordingSink sink = new RecordingSink();
+        assertTrue(OpenAiCompatibleTransport.parseChat(new JSONObject("{\"choices\":[],\"cost\":\"0\"}"), sink));
+        assertFalse(OpenAiCompatibleTransport.parseChat(new JSONObject("{\"choices\":[]}"), sink));
+    }
+
+    @Test public void chatFailureFinishReasonsMapToErrors() throws Exception {
+        RecordingSink network = new RecordingSink();
+        assertTrue(OpenAiCompatibleTransport.parseChat(new JSONObject("{\"choices\":[{\"delta\":{},\"finish_reason\":\"network_error\"}]}"), network));
+        assertEquals("network_error", network.errorCode); assertTrue(network.retryable);
+
+        RecordingSink tool = new RecordingSink();
+        assertTrue(OpenAiCompatibleTransport.parseChat(new JSONObject("{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"), tool));
+        assertEquals("unsupported_tool_call", tool.errorCode); assertFalse(tool.retryable);
+    }
+
     // ---------- OpenAI Responses ----------
 
     @Test public void responsesAssemblesDeltasAndCompletesWithUsage() throws Exception {
