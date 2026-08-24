@@ -4,7 +4,10 @@ import { patchConversation, render, renderNotice } from './render.js';
 import { getState, setNotice, setView, subscribe } from './state.js';
 
 const renderGate = createRenderGate(render);
-subscribe((_state, change) => change?.scope === 'toast' ? renderNotice() : renderGate.request());
+subscribe((_state, change) => {
+  if (change?.scope === 'toast') renderNotice();
+  else { patchConversation(); renderGate.request(); }
+});
 bindHost((view, revision) => setView(view, revision));
 window.addEventListener('moyu:notice', (event) => setNotice(event.detail));
 
