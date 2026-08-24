@@ -227,6 +227,20 @@ public class ChatDatabaseTest {
             raw.execSQL("ALTER TABLE providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
             raw.execSQL("UPDATE providers SET auth_mode='x-api-key' WHERE protocol='anthropic-messages'");
         }
+        if (version >= 5) {
+            raw.execSQL("ALTER TABLE providers ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
+            raw.execSQL("ALTER TABLE providers ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
+            raw.execSQL("UPDATE providers SET reasoning_wire='openai-responses' WHERE protocol='openai-responses'");
+            raw.execSQL("UPDATE providers SET reasoning_wire='anthropic-effort' WHERE protocol='anthropic-messages'");
+            raw.execSQL("CREATE TABLE model_profiles(profile_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,model_id TEXT NOT NULL,display_name TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL DEFAULT 4096,reasoning_levels TEXT NOT NULL DEFAULT '',default_reasoning TEXT NOT NULL DEFAULT 'default',updated_at TEXT NOT NULL,FOREIGN KEY(provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,UNIQUE(provider_id,model_id))");
+            raw.execSQL("INSERT INTO model_profiles(profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,updated_at) SELECT provider_id || ':default',provider_id,model,model,context_tokens,input_tokens,max_output_tokens,'','default',updated_at FROM providers WHERE model<>''");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN model_profile_id TEXT");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 32000");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 4096");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'default'");
+            raw.execSQL("UPDATE sessions SET model_profile_id=provider_id || ':default' WHERE model=(SELECT model FROM providers WHERE providers.provider_id=sessions.provider_id)");
+        }
         raw.execSQL("INSERT INTO snapshot_items VALUES('legacy-snap',0,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}')");
         raw.execSQL("PRAGMA user_version = " + version);
         raw.close();
