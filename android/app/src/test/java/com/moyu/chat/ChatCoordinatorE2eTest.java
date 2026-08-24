@@ -406,6 +406,44 @@ public class ChatCoordinatorE2eTest {
         });
     }
 
+    @Test public void providerReasoningIsOptionalDisplayMetadataAndNeverReentersPrompt() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"private thought\"},\"finish_reason\":null}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{\"content\":\"visible answer\"},\"finish_reason\":null}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4,\"prompt_tokens_details\":{\"cached_tokens\":4},\"completion_tokens_details\":{\"reasoning_tokens\":1}}}\n\n");
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
+        RecordedRequest first = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(first);
+        await("reasoning turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+
+        JSONArray timeline = app.database().timeline(sessionId);
+        JSONObject assistant = null, usage = null;
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row == null) continue;
+            if ("message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) assistant = row;
+            if ("usage".equals(row.optString("kind"))) usage = row;
+        }
+        assertNotNull(assistant); assertEquals("visible answer", assistant.optString("text")); assertEquals("private thought", assistant.optString("reasoning"));
+        assertNotNull(usage); assertEquals(10, usage.optInt("inputTokens")); assertEquals(4, usage.optInt("cachedInputTokens"));
+        assertEquals(10, usage.optInt("cacheHitBaseTokens")); assertEquals(1, usage.optInt("reasoningTokens"));
+        assertTrue(usage.has("requestDurationMs")); assertTrue(usage.has("outputTokensPerSecond"));
+        assertFalse("reasoning display defaults off", latestView().optJSONObject("ui").optBoolean("showReasoning"));
+        post("chat.reasoning.visibility.set", new JSONObject().put("show", true));
+        await("reasoning visibility toggled", () -> latestView().optJSONObject("ui").optBoolean("showReasoning"));
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second"));
+        RecordedRequest second = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(second);
+        String secondBody = second.getBody().readUtf8();
+        assertFalse("provider reasoning must never re-enter canonical prompt", secondBody.contains("private thought"));
+        assertTrue(secondBody.contains("visible answer"));
+        await("second reasoning turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+    }
+
     @Test public void reasoningOnlyCompletionBecomesExplicitEmptyOutputFailure() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
