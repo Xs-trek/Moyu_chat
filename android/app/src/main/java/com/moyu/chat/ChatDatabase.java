@@ -185,28 +185,29 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return out;
     }
 
-    /** Process death cannot resume provider streams; remove stale streaming projections and mark those turns failed. */
+    /** Cold-start recovery: no provider turn can survive process death, so every durable streaming row is stale. */
     public synchronized void recoverInterruptedSessions() {
         SQLiteDatabase db = getWritableDatabase();
-        ArrayList<String> running = new ArrayList<>();
+        java.util.LinkedHashSet<String> affected = new java.util.LinkedHashSet<>();
         try (Cursor c = db.rawQuery("SELECT local_id FROM sessions WHERE state='running'", null)) {
-            while (c.moveToNext()) running.add(c.getString(0));
+            while (c.moveToNext()) affected.add(c.getString(0));
         }
-        if (running.isEmpty()) return;
+        ArrayList<String> staleKeys = new ArrayList<>();
+        try (Cursor c = db.rawQuery("SELECT item_key,session_id,body FROM timeline", null)) {
+            while (c.moveToNext()) {
+                try {
+                    JSONObject body = new JSONObject(c.getString(2));
+                    if (body.optBoolean("streaming", false)) { staleKeys.add(c.getString(0)); affected.add(c.getString(1)); }
+                } catch (Exception ignored) { }
+            }
+        }
+        if (affected.isEmpty() && staleKeys.isEmpty()) return;
         db.beginTransaction();
         try {
-            for (String sessionId : running) {
-                ArrayList<String> streamingKeys = new ArrayList<>();
-                try (Cursor c = db.rawQuery("SELECT item_key,body FROM timeline WHERE session_id=?", new String[]{sessionId})) {
-                    while (c.moveToNext()) {
-                        try {
-                            JSONObject body = new JSONObject(c.getString(1));
-                            if (body.optBoolean("streaming", false)) streamingKeys.add(c.getString(0));
-                        } catch (Exception ignored) { }
-                    }
-                }
-                for (String key : streamingKeys) db.delete("timeline", "session_id=? AND item_key=?", new String[]{sessionId, key});
-                ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", Instant.now().toString());
+            for (String key : staleKeys) db.delete("timeline", "item_key=?", new String[]{key});
+            String now = Instant.now().toString();
+            for (String sessionId : affected) {
+                ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", now);
                 db.update("sessions", state, "local_id=?", new String[]{sessionId});
             }
             db.setTransactionSuccessful();
