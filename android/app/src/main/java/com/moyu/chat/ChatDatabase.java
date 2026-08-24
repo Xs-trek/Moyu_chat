@@ -171,7 +171,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.inputModalities = normalizeModalities(source.inputModalities); s.outputModalities = normalizeModalities(source.outputModalities);
         s.reasoningEffort = source.reasoningEffort == null ? ReasoningPolicy.DEFAULT : source.reasoningEffort;
         s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.draft = ""; s.draftMedia = "[]";
-        s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId; saveSession(s); return s;
+        s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId;
+        s.taskProfile = source.taskProfile == null ? "" : source.taskProfile;
+        s.contextCheckpoint = ""; s.checkpointCoveredItems = 0;
+        saveSession(s); return s;
     }
 
     public synchronized void saveSession(Session s) {
