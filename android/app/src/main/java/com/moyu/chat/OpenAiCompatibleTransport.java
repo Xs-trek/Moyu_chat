@@ -191,7 +191,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             JSONObject first = choices.optJSONObject(0); JSONObject delta = first == null ? null : first.optJSONObject("delta");
             if (delta != null) {
                 String reasoning = delta.optString("reasoning_content", "");
-                if (!reasoning.isEmpty()) sink.onStage("reasoning");
+                if (!reasoning.isEmpty()) { sink.onStage("reasoning"); sink.onReasoningDelta(reasoning); }
                 Object content = delta.opt("content");
                 if (content instanceof String) {
                     String text = (String) content;
