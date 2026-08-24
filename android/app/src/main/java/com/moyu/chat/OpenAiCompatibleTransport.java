@@ -25,12 +25,14 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     static final String CHAT_COMPLETIONS = "openai-chat-completions";
     static final String RESPONSES = "openai-responses";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-    private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.MINUTES.toNanos(5);
+    // DeepSeek documents that inference may remain queued for up to 10 minutes before the server closes it.
+    // Compatible gateways may suppress upstream keep-alive comments, so a 120-second socket timeout is too aggressive.
+    private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.MINUTES.toNanos(11);
     private final OkHttpClient http = new OkHttpClient.Builder()
             .retryOnConnectionFailure(false)
             .connectTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(11, TimeUnit.MINUTES)
             .callTimeout(30, TimeUnit.MINUTES)
             .build();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
