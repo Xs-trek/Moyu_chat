@@ -31,6 +31,18 @@ If Moyu Remote is absent, disabled, has no database, or the PC is offline, Local
 
 ## Current implementation scope
 
-v0.0.1 RC status: the project compiles (debug + release/R8) and is covered by JVM unit tests (Robolectric + mock SSE endpoints), emulator instrumented tests for both bridge-absent and bridge-present cases, and an env-gated real-endpoint smoke suite (`RealEndpointSmokeTest`, executed only when `SMOKE_REAL=1` with credentials; skipped runs are not counted as verified).
+v0.0.2 upgrades the context layer while preserving the v0.0.1 provider-neutral transcript boundary. The app compiles in debug + release/R8 and is covered by Robolectric/MockWebServer tests; the credential-gated real-endpoint smoke suite remains opt-in and must not be reported as verified when skipped.
 
-Transport scope is deliberately small but protocol-centric: `openai-chat-completions`, `openai-responses`, and `anthropic-messages` are the three built-in transports. Provider definitions select `protocol + baseUrl + authMode` (`bearer`, `x-api-key`, or `api-key`); Session/Branch/Snapshot layers do not know which wire format or vendor is used. Transports append only the protocol paths (`/chat/completions`, `/responses`, `/v1/messages`) and never hardcode vendor base URLs. New providers default to Chat Completions + Bearer auth for broad third-party compatibility.
+Context v0.0.2 adds:
+
+- complete user-led turn selection instead of message-level truncation;
+- `incomplete` assistant semantics for interrupted/failed partial answers;
+- optional Smart Context (enabled by default): one bounded first-turn model classifier creates an allowlisted `TaskProfile` and selects only local reviewed prompt modules;
+- model-generated structured `ContextCheckpoint` only when older turns must be omitted;
+- immutable Timeline/Snapshot remains the source of truth; TaskProfile/Checkpoint never rewrite old messages;
+- Smart Context can be disabled to avoid its extra hidden model calls;
+- provider-native response IDs/reasoning blocks/Claude compaction are intentionally not authoritative state in this version.
+
+Transport scope remains protocol-centric: `openai-chat-completions`, `openai-responses`, and `anthropic-messages`. Provider definitions select `protocol + baseUrl + authMode` (`bearer`, `x-api-key`, or `api-key`); Session/Branch/Snapshot layers do not know which wire vendor is used. Transports append only protocol paths (`/chat/completions`, `/responses`, `/v1/messages`) and never hardcode vendor base URLs.
+
+See `PROMPT_CONTEXT.md` and `V0.0.2_DESIGN.md` for the context invariants and v0.0.2 scope.

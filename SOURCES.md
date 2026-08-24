@@ -1,22 +1,21 @@
 # Design references
 
-Primary references checked for the v0.0.1 context/prompt design (August 2026):
+Primary references checked for the v0.0.2 context/prompt design (August 2026):
 
-- OpenAI, **Unrolling the Codex agent loop** — structured prompt inputs, stateless replay, prefix-stable prompt caching and Responses transport.
-  https://openai.com/index/unrolling-the-codex-agent-loop/
-- OpenAI Codex repository, built-in **context checkpoint compaction prompt**.
-  https://github.com/openai/codex/blob/main/codex-rs/prompts/templates/compact/prompt.md
-- OpenAI Codex repository, compaction/replacement-history implementation and rollout reconstruction.
-  https://github.com/openai/codex/blob/main/codex-rs/core/src/compact_remote.rs
-  https://github.com/openai/codex/blob/main/codex-rs/core/src/session/rollout_reconstruction.rs
-- OpenAI API, **Responses / compact / latest-model guidance** — instructions, response continuation, compaction and reasoning-context behavior.
-  https://developers.openai.com/api/reference/
+- OpenAI API, **latest model guidance / Responses** — lean instruction design, response continuation, modern reasoning context and cache-aware behavior.
   https://developers.openai.com/api/docs/guides/latest-model
-- Anthropic, **Context windows** — context composition and context-rot guidance.
-  https://platform.claude.com/docs/en/build-with-claude/context-windows
-- Anthropic, **Compaction** — server-side compaction blocks and stateless round-tripping.
+  https://developers.openai.com/api/reference/
+- OpenAI, **Unrolling the Codex agent loop** — structured prompt inputs, replayable state and stable-prefix caching lessons.
+  https://openai.com/index/unrolling-the-codex-agent-loop/
+- OpenAI Codex repository, context checkpoint/compaction implementation references.
+  https://github.com/openai/codex/blob/main/codex-rs/prompts/templates/compact/prompt.md
+  https://github.com/openai/codex/blob/main/codex-rs/core/src/compact_remote.rs
+- Anthropic, **Context editing** — keep full client history while editing only model-visible context; thinking/tool-result retention and cache tradeoffs.
+  https://platform.claude.com/docs/en/build-with-claude/context-editing
+- Anthropic, **Compaction** — structured server-side summary blocks and cache-boundary guidance.
   https://platform.claude.com/docs/en/build-with-claude/compaction
-- Anthropic, **Prompt caching** — stable system-prefix caching behavior.
+- Anthropic, **Extended thinking / prompt caching** — thinking continuity and cache invalidation behavior.
+  https://platform.claude.com/docs/en/build-with-claude/extended-thinking
   https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 
-Community issues were used only to identify failure modes to avoid (for example flattening imported compacted sessions or losing active context after compaction), not as authoritative API specifications.
+Community issues are used only to identify compatibility failure modes. They are not treated as authoritative protocol specifications.
