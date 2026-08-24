@@ -145,11 +145,16 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized Session createSession(ModelProfile profile, String title, String originSnapshotId,
                                               String parentSessionId, String reasoningEffort) {
-        return createSession(profile, title, originSnapshotId, parentSessionId, reasoningEffort, ContextMode.AUTO);
+        return createSession(profile, title, originSnapshotId, parentSessionId, reasoningEffort, ContextMode.AUTO, ChatTurnOptions.WEB_AUTO);
     }
 
     public synchronized Session createSession(ModelProfile profile, String title, String originSnapshotId,
                                               String parentSessionId, String reasoningEffort, String contextMode) {
+        return createSession(profile, title, originSnapshotId, parentSessionId, reasoningEffort, contextMode, ChatTurnOptions.WEB_AUTO);
+    }
+
+    public synchronized Session createSession(ModelProfile profile, String title, String originSnapshotId,
+                                              String parentSessionId, String reasoningEffort, String contextMode, String webMode) {
         if (profile == null) throw new IllegalArgumentException("model profile required");
         Session s = new Session();
         s.id = UUID.randomUUID().toString();
