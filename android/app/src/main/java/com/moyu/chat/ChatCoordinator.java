@@ -137,6 +137,23 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception error) { result(requestId, false, safe(error)); emitView(); }
     }
 
+    private void requestImagePicker(String sessionId) {
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+        if (!ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this model profile does not declare image input support");
+        if (db.draftMedia(sessionId).length() >= ChatMediaStore.MAX_DRAFT_IMAGES) throw new IllegalStateException("image attachment limit reached");
+        host.openImagePicker(sessionId);
+    }
+
+    void attachImageFromUri(String sessionId, Uri uri, ContentResolver resolver) {
+        worker.execute(() -> {
+            try {
+                ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+                if (!ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this model profile does not support image input");
+                JSONObject descriptor = mediaStore.importImage(resolver, uri); db.addDraftMedia(sessionId, descriptor); emitView();
+            } catch (Exception error) { host.showMessage(safe(error)); emitView(); }
+        });
+    }
+
     private void createSession(JSONObject p) {
         String providerId = required(p, "providerId");
         ChatDatabase.Provider provider = db.getProvider(providerId);
