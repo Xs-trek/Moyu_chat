@@ -276,9 +276,53 @@ final class ChatCoordinator implements AutoCloseable {
 
     private void createLocalBranch(String sourceSessionId, Integer throughSeq) throws Exception {
         ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
+        if (activeTurns.containsKey(sourceSessionId)) throw new IllegalStateException("interrupt the current turn before branching");
         ChatDatabase.Snapshot snapshot = snapshots.createLocal(sourceSessionId, throughSeq);
         ChatDatabase.Session branch = db.branchSession(source, "分支 · " + source.title, snapshot.id, sourceSessionId);
         activate(branch.id);
+    }
+
+    /**
+     * Standard chat-style edit without destructive history mutation: fork immediately BEFORE the
+     * selected user message, then preload that message into the new branch composer for editing.
+     */
+    private void editMessageBranch(String sourceSessionId, int localSeq) throws Exception {
+        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
+        if (activeTurns.containsKey(sourceSessionId)) throw new IllegalStateException("interrupt the current turn before editing history");
+        JSONObject selected = messageAt(sourceSessionId, localSeq);
+        if (!"user".equals(selected.optString("role"))) throw new IllegalArgumentException("only user messages can be edited");
+        ChatDatabase.Snapshot snapshot = snapshots.createLocal(sourceSessionId, Math.max(0, localSeq - 1));
+        ChatDatabase.Session branch = db.branchSession(source, "编辑 · " + source.title, snapshot.id, sourceSessionId);
+        db.setDraft(branch.id, selected.optString("text", ""));
+        JSONArray attachments = selected.optJSONArray("attachments");
+        if (attachments != null) for (int i = 0; i < attachments.length(); i++) {
+            JSONObject item = attachments.optJSONObject(i); if (item != null) db.addDraftMedia(branch.id, new JSONObject(item.toString()));
+        }
+        activate(branch.id);
+    }
+
+    /** Fork THROUGH the selected visible message so the original transcript remains reversible. */
+    private void rollbackMessageBranch(String sourceSessionId, int localSeq) throws Exception {
+        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
+        if (activeTurns.containsKey(sourceSessionId)) throw new IllegalStateException("interrupt the current turn before rolling back");
+        messageAt(sourceSessionId, localSeq); // validates that the target is a finalized visible message
+        ChatDatabase.Snapshot snapshot = snapshots.createLocal(sourceSessionId, localSeq);
+        ChatDatabase.Session branch = db.branchSession(source, "回滚 · " + source.title, snapshot.id, sourceSessionId);
+        activate(branch.id);
+    }
+
+    private JSONObject messageAt(String sessionId, int localSeq) {
+        if (localSeq < 1) throw new IllegalArgumentException("invalid localSeq");
+        JSONArray timeline = db.timeline(sessionId);
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject item = timeline.optJSONObject(i);
+            if (item == null || item.optInt("localSeq", -1) != localSeq) continue;
+            if (!"message".equals(item.optString("kind")) || item.optBoolean("streaming", false)) throw new IllegalArgumentException("target is not a finalized message");
+            String role = item.optString("role", "");
+            if (!("user".equals(role) || "assistant".equals(role))) throw new IllegalArgumentException("target message role cannot be branched");
+            return item;
+        }
+        throw new IllegalArgumentException("message not found");
     }
 
     private void createRemoteBranch(String sourceId, Integer throughSeq) throws Exception {
