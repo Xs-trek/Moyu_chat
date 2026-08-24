@@ -7,6 +7,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +55,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     private void run(Call call, String protocol, ChatTransport.Sink sink) {
+        Set<String> emittedImages = new HashSet<>();
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return; }
             if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
@@ -64,7 +67,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                     if ("[DONE]".equals(data)) { sink.onCompleted(); return; }
                     JSONObject event;
                     try { event = new JSONObject(data); } catch (Exception ignored) { continue; }
-                    if (CHAT_COMPLETIONS.equals(protocol)) parseChat(event, sink); else parseResponses(event, sink);
+                    if (CHAT_COMPLETIONS.equals(protocol)) parseChat(event, sink); else parseResponses(event, sink, emittedImages);
                 }
             }
             sink.onCompleted();
@@ -74,29 +77,62 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         }
     }
 
-    /** Keep Chat Completions request fields intentionally minimal for broad third-party compatibility. */
+    /** OpenAI-compatible multimodal input: user text + image_url data URLs; assistant history remains text. */
     private static JSONObject chatBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
         JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", prompt.instructions));
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
-            messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+            JSONArray attachments = item.optJSONArray("attachments");
+            if ("user".equals(role) && attachments != null && attachments.length() > 0) {
+                JSONArray content = new JSONArray(); String text = item.optString("text", "");
+                if (!text.isEmpty()) content.put(new JSONObject().put("type", "text").put("text", text));
+                appendChatImages(content, attachments);
+                messages.put(new JSONObject().put("role", role).put("content", content));
+            } else {
+                messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+            }
         }
         JSONObject body = new JSONObject().put("model", model).put("messages", messages).put("stream", true);
         if (maxOutputTokens > 0) body.put("max_tokens", maxOutputTokens);
         return body;
     }
 
+    /** Responses multimodal input uses input_text/input_image content parts. */
     private static JSONObject responsesBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
         JSONArray input = new JSONArray();
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
-            input.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+            JSONArray attachments = item.optJSONArray("attachments");
+            if ("user".equals(role) && attachments != null && attachments.length() > 0) {
+                JSONArray content = new JSONArray(); String text = item.optString("text", "");
+                if (!text.isEmpty()) content.put(new JSONObject().put("type", "input_text").put("text", text));
+                appendResponseImages(content, attachments);
+                input.put(new JSONObject().put("role", role).put("content", content));
+            } else {
+                input.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+            }
         }
         JSONObject body = new JSONObject().put("model", model).put("instructions", prompt.instructions).put("input", input).put("stream", true);
         if (maxOutputTokens > 0) body.put("max_output_tokens", maxOutputTokens);
         return body;
+    }
+
+    private static void appendChatImages(JSONArray content, JSONArray attachments) throws Exception {
+        for (int i = 0; i < attachments.length(); i++) {
+            JSONObject image = attachments.optJSONObject(i); if (image == null || !"image".equals(image.optString("kind"))) continue;
+            String dataUrl = image.optString("dataUrl", ""); if (dataUrl.isEmpty()) continue;
+            content.put(new JSONObject().put("type", "image_url").put("image_url", new JSONObject().put("url", dataUrl)));
+        }
+    }
+
+    private static void appendResponseImages(JSONArray content, JSONArray attachments) throws Exception {
+        for (int i = 0; i < attachments.length(); i++) {
+            JSONObject image = attachments.optJSONObject(i); if (image == null || !"image".equals(image.optString("kind"))) continue;
+            String dataUrl = image.optString("dataUrl", ""); if (dataUrl.isEmpty()) continue;
+            content.put(new JSONObject().put("type", "input_image").put("image_url", dataUrl));
+        }
     }
 
     private static void parseChat(JSONObject event, ChatTransport.Sink sink) {
@@ -105,22 +141,40 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         JSONArray choices = event.optJSONArray("choices");
         if (choices != null && choices.length() > 0) {
             JSONObject first = choices.optJSONObject(0); JSONObject delta = first == null ? null : first.optJSONObject("delta");
-            String text = delta == null ? "" : delta.optString("content", ""); if (!text.isEmpty()) sink.onTextDelta(text);
+            if (delta != null) {
+                Object content = delta.opt("content");
+                if (content instanceof String) { String text = (String) content; if (!text.isEmpty()) sink.onTextDelta(text); }
+                else if (content instanceof JSONArray) parseChatContentParts((JSONArray) content, sink);
+            }
         }
         JSONObject usage = event.optJSONObject("usage");
         if (usage != null) sink.onUsage(usage.has("prompt_tokens") ? usage.optInt("prompt_tokens") : null, usage.has("completion_tokens") ? usage.optInt("completion_tokens") : null);
     }
 
-    private static void parseResponses(JSONObject event, ChatTransport.Sink sink) {
+    private static void parseChatContentParts(JSONArray parts, ChatTransport.Sink sink) {
+        for (int i = 0; i < parts.length(); i++) {
+            JSONObject part = parts.optJSONObject(i); if (part == null) continue;
+            String type = part.optString("type", "");
+            if ("text".equals(type)) { String text = part.optString("text", ""); if (!text.isEmpty()) sink.onTextDelta(text); }
+            else if ("image_url".equals(type)) {
+                JSONObject image = part.optJSONObject("image_url"); if (image != null) emitDataUrl(image.optString("url", ""), sink, "chat-output");
+            }
+        }
+    }
+
+    private static void parseResponses(JSONObject event, ChatTransport.Sink sink, Set<String> emittedImages) {
         String type = event.optString("type");
         if ("response.output_text.delta".equals(type)) {
             String delta = event.optString("delta", ""); if (!delta.isEmpty()) sink.onTextDelta(delta); return;
         }
+        if ("response.output_item.done".equals(type)) {
+            emitImageItem(event.optJSONObject("item"), sink, emittedImages); return;
+        }
         if ("response.completed".equals(type)) {
-            JSONObject response = event.optJSONObject("response"); emitResponseUsage(response, sink); sink.onCompleted(); return;
+            JSONObject response = event.optJSONObject("response"); emitResponseImages(response, sink, emittedImages); emitResponseUsage(response, sink); sink.onCompleted(); return;
         }
         if ("response.incomplete".equals(type)) {
-            JSONObject response = event.optJSONObject("response"); emitResponseUsage(response, sink);
+            JSONObject response = event.optJSONObject("response"); emitResponseImages(response, sink, emittedImages); emitResponseUsage(response, sink);
             JSONObject details = response == null ? null : response.optJSONObject("incomplete_details");
             String reason = details == null ? "unknown" : details.optString("reason", "unknown");
             sink.onError("response_incomplete", "Response incomplete: " + reason, false); return;
@@ -135,6 +189,27 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             String message = nested == null ? event.optString("message", "Provider error") : nested.optString("message", "Provider error");
             sink.onError(code, message, false);
         }
+    }
+
+    private static void emitResponseImages(JSONObject response, ChatTransport.Sink sink, Set<String> emittedImages) {
+        JSONArray output = response == null ? null : response.optJSONArray("output"); if (output == null) return;
+        for (int i = 0; i < output.length(); i++) emitImageItem(output.optJSONObject(i), sink, emittedImages);
+    }
+
+    private static void emitImageItem(JSONObject item, ChatTransport.Sink sink, Set<String> emittedImages) {
+        if (item == null || !"image_generation_call".equals(item.optString("type"))) return;
+        String result = item.optString("result", ""); if (result.isEmpty()) return;
+        String id = item.optString("id", ""); String key = id.isEmpty() ? Integer.toHexString(result.hashCode()) : id;
+        if (!emittedImages.add(key)) return;
+        String format = item.optString("output_format", "png"); String mime = "jpeg".equals(format) || "jpg".equals(format) ? "image/jpeg" : "webp".equals(format) ? "image/webp" : "image/png";
+        sink.onImage(mime, result, "generated." + ("image/jpeg".equals(mime) ? "jpg" : "image/webp".equals(mime) ? "webp" : "png"));
+    }
+
+    private static void emitDataUrl(String dataUrl, ChatTransport.Sink sink, String fileName) {
+        if (dataUrl == null || !dataUrl.startsWith("data:image/")) return;
+        int semi = dataUrl.indexOf(';'), comma = dataUrl.indexOf(','); if (semi < 5 || comma < semi) return;
+        String mime = dataUrl.substring(5, semi); String base64 = dataUrl.substring(comma + 1);
+        if (!base64.isEmpty()) sink.onImage(mime, base64, fileName);
     }
 
     private static void emitResponseUsage(JSONObject response, ChatTransport.Sink sink) {
