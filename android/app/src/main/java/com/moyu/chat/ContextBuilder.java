@@ -6,16 +6,23 @@ import org.json.JSONObject;
 /** Projects durable Moyu transcript/snapshot data into provider-neutral model-visible context. */
 final class ContextBuilder {
     private final ChatDatabase db;
+    private final ChatMediaStore mediaStore;
     private final PromptPolicy promptPolicy = new PromptPolicy();
     private final ContextBudgetManager budgets = new ContextBudgetManager();
 
-    ContextBuilder(ChatDatabase db) { this.db = db; }
+    ContextBuilder(ChatDatabase db) { this(db, null); }
+    ContextBuilder(ChatDatabase db, ChatMediaStore mediaStore) { this.db = db; this.mediaStore = mediaStore; }
 
     CanonicalPrompt build(ChatDatabase.Session session, int contextTokens, int outputTokens, String pendingUserText) throws Exception {
-        return build(session, contextTokens, 0, outputTokens, pendingUserText);
+        return build(session, contextTokens, 0, outputTokens, pendingUserText, new JSONArray());
     }
 
     CanonicalPrompt build(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens, String pendingUserText) throws Exception {
+        return build(session, contextTokens, inputTokens, outputTokens, pendingUserText, new JSONArray());
+    }
+
+    CanonicalPrompt build(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens,
+                          String pendingUserText, JSONArray pendingMedia) throws Exception {
         ChatDatabase.Snapshot snapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         JSONArray inherited = snapshot == null ? new JSONArray() : db.snapshotItems(snapshot.id);
         JSONArray local = db.timeline(session.id);
@@ -24,7 +31,12 @@ final class ContextBuilder {
         int inheritedCount = projected.length();
         appendVisible(projected, local);
         String pending = pendingUserText == null ? "" : pendingUserText;
-        if (!pending.trim().isEmpty()) projected.put(new JSONObject().put("role", "user").put("text", pending));
+        JSONArray pendingImages = projectAttachments(pendingMedia);
+        if (!pending.trim().isEmpty() || pendingImages.length() > 0) {
+            JSONObject message = new JSONObject().put("role", "user").put("text", pending);
+            if (pendingImages.length() > 0) message.put("attachments", pendingImages);
+            projected.put(message);
+        }
         int localCount = projected.length() - inheritedCount;
 
         String provisional = promptPolicy.instructions(snapshot, false);
@@ -37,15 +49,35 @@ final class ContextBuilder {
                 finalResult.estimatedTokens, inheritedCount, localCount);
     }
 
-    private static void appendVisible(JSONArray out, JSONArray source) throws Exception {
+    private void appendVisible(JSONArray out, JSONArray source) throws Exception {
         for (int i = 0; i < source.length(); i++) {
             JSONObject item = source.optJSONObject(i);
             if (item == null || !"message".equals(item.optString("kind")) || item.optBoolean("streaming", false)) continue;
             String role = item.optString("role", "");
             if (!("user".equals(role) || "assistant".equals(role))) continue;
             String text = item.optString("text", "");
-            if (text.trim().isEmpty()) continue;
-            out.put(new JSONObject().put("role", role).put("text", text));
+            JSONArray attachments = projectAttachments(item.optJSONArray("attachments"));
+            if (text.trim().isEmpty() && attachments.length() == 0) continue;
+            JSONObject visible = new JSONObject().put("role", role).put("text", text);
+            if (attachments.length() > 0) visible.put("attachments", attachments);
+            out.put(visible);
         }
+    }
+
+    private JSONArray projectAttachments(JSONArray source) throws Exception {
+        JSONArray out = new JSONArray();
+        if (source == null) return out;
+        for (int i = 0; i < source.length(); i++) {
+            JSONObject item = source.optJSONObject(i); if (item == null || !"image".equals(item.optString("kind"))) continue;
+            String mediaId = item.optString("mediaId", "").trim(); String mime = item.optString("mimeType", "").trim();
+            if (mediaId.isEmpty() || mime.isEmpty()) continue;
+            if (mediaStore != null && !mediaStore.exists(mediaId)) continue;
+            JSONObject projected = new JSONObject().put("kind", "image").put("mediaId", mediaId).put("mimeType", mime)
+                    .put("fileName", item.optString("fileName", "image")).put("sizeBytes", item.optLong("sizeBytes", 0))
+                    .put("width", item.optInt("width", 0)).put("height", item.optInt("height", 0));
+            if (mediaStore != null) projected.put("dataUrl", mediaStore.dataUrl(item));
+            out.put(projected);
+        }
+        return out;
     }
 }
