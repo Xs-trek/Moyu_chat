@@ -55,6 +55,12 @@ final class ChatMediaStore {
 
     InputStream open(String mediaId) throws Exception { return new FileInputStream(fileFor(mediaId)); }
 
+    String mimeType(String mediaId) throws Exception {
+        BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true;
+        try (InputStream in = open(mediaId)) { BitmapFactory.decodeStream(in, null, options); }
+        return normalizeMime(options.outMime);
+    }
+
     String dataUrl(JSONObject descriptor) throws Exception {
         if (descriptor == null) throw new IllegalArgumentException("image descriptor missing");
         String id = descriptor.optString("mediaId", "");
