@@ -166,6 +166,21 @@ public class SnapshotBranchContextTest {
         assertTrue("older inherited history was dropped", prompt.messages.length() < 40);
     }
 
+    @Test public void incompleteAssistantRemainsPartialAcrossProjectionAndSnapshot() throws Exception {
+        ChatDatabase.Session s = db.createSession("p1", "model", null, null);
+        db.appendTimeline(s.id, "u", message("user", "question"));
+        db.appendTimeline(s.id, "a", new JSONObject().put("kind", "message").put("role", "assistant")
+                .put("text", "partial result").put("incomplete", true).put("terminalCode", "cancelled")
+                .put("createdAt", Instant.now().toString()));
+        CanonicalPrompt prompt = contexts.build(db.getSession(s.id), 32_000, 4_096, "continue");
+        assertTrue(prompt.messages.getJSONObject(1).optString("text").contains("incomplete (cancelled)"));
+        assertTrue(prompt.messages.getJSONObject(1).optString("text").contains("partial result"));
+        ChatDatabase.Snapshot snapshot = snapshots.createLocal(s.id, null);
+        JSONObject frozen = db.snapshotItems(snapshot.id).getJSONObject(1);
+        assertTrue(frozen.optBoolean("incomplete"));
+        assertEquals("cancelled", frozen.optString("terminalCode"));
+    }
+
     @Test public void currentInputAloneOverBudgetFailsInsteadOfSilentDrop() throws Exception {
         ChatDatabase.Session s = sessionWithTurns(1);
         StringBuilder huge = new StringBuilder();
