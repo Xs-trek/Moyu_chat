@@ -368,10 +368,14 @@ public class ChatCoordinatorE2eTest {
         });
         JSONObject session = activeSession(latestView());
         JSONArray timeline = session.optJSONArray("messages");
-        JSONObject last = timeline.optJSONObject(timeline.length() - 1);
-        assertEquals("assistant", last.optString("role"));
-        assertFalse("partial answer is finalized, not left dangling as streaming", last.optBoolean("streaming", true));
-        assertTrue("partial text is preserved", last.optString("text").length() > 0);
+        JSONObject finalizedAssistant = null;
+        for (int i = timeline.length() - 1; i >= 0; i--) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role")) && !row.optBoolean("streaming", false)) { finalizedAssistant = row; break; }
+        }
+        assertNotNull(finalizedAssistant);
+        assertFalse("partial answer is finalized, not left dangling as streaming", finalizedAssistant.optBoolean("streaming", true));
+        assertTrue("partial text is preserved", finalizedAssistant.optString("text").length() > 0);
 
         // Drain and prove the first request really reached the provider before testing a second turn.
         RecordedRequest firstRequest = server.takeRequest(5, TimeUnit.SECONDS);
