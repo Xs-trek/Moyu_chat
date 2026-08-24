@@ -19,6 +19,15 @@ function button(text, action, data = {}, cls = 'btn') { return h('button', { typ
 function badge(text, cls = '') { return h('span', { class: `badge ${cls}`, text }); }
 function fmt(value) { try { return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)); } catch { return value || ''; } }
 
+function mediaGallery(items, removable = false, sessionId = '') {
+  const images = (items || []).filter((item) => item?.kind === 'image' && item.url);
+  if (!images.length) return null;
+  return h('div', { class: 'media-grid' }, images.map((item) => h('figure', { class: 'media-item' },
+    h('img', { src: item.url, alt: item.fileName || '图片', loading: 'lazy' }),
+    h('figcaption', {}, h('span', { text: item.fileName || `${item.width || '?'}×${item.height || '?'}` }), removable ? button('移除', 'remove-attachment', { sessionId, mediaId: item.mediaId }, 'btn small') : null)
+  )));
+}
+
 function shell(view, body) {
   const routes = [['home','Chat'],['imports','分支'],['providers','Provider'],['handoffs','回传'],['settings','设置']];
   return h('div', { class: 'app-shell' },
