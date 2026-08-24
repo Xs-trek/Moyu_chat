@@ -45,6 +45,7 @@ public class TransportMockServerTest {
         volatile String imageMime, imageBase64, imageFileName;
         final CountDownLatch terminal = new CountDownLatch(1);
         @Override public void onTextDelta(String delta) { text.append(delta); }
+        @Override public void onImage(String mimeType, String base64, String fileName) { imageMime = mimeType; imageBase64 = base64; imageFileName = fileName; }
         @Override public void onUsage(Integer in, Integer out) { if (in != null) inputTokens = in; if (out != null) outputTokens = out; }
         @Override public void onCompleted() { if (terminals.incrementAndGet() == 1) completed = true; terminal.countDown(); }
         @Override public void onError(String code, String summary, boolean canRetry) {
