@@ -400,6 +400,8 @@ final class ChatCoordinator implements AutoCloseable {
                 if (terminalError != null) finished.put("incomplete", true).put("terminalCode", terminalError[0]);
                 if (reasoning != null && !reasoning.isEmpty()) finished.put("reasoning", reasoning);
                 if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
+                if (webSources != null && !webSources.isEmpty()) finished.put("sources", sourceArray(webSources));
+                if (webBackend != null && !webBackend.trim().isEmpty()) finished.put("webBackend", webBackend.trim());
             }
             db.finalizeTurn(id, streamKey, finished,
                     terminalError == null ? null : terminalError[0], terminalError == null ? null : terminalError[1], finalState);
