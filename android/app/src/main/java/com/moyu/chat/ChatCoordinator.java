@@ -176,6 +176,17 @@ final class ChatCoordinator implements AutoCloseable {
     private void openSession(String id) { if (db.getSession(id) == null) throw new IllegalArgumentException("session not found"); activate(id); }
     private void activate(String id) { activeSessionId = id; db.putSetting("activeSessionId", id); route = "conversation"; db.putSetting("route", route); }
 
+    /** System back follows the same route state as UI navigation; only home exits the Activity. */
+    void handleSystemBack(Runnable exitApp) {
+        worker.execute(() -> {
+            if (!"home".equals(route)) {
+                route = "home";
+                db.putSetting("route", route);
+                emitView();
+            } else if (exitApp != null) exitApp.run();
+        });
+    }
+
     private void deleteSession(String id) {
         if (activeTurns.containsKey(id)) throw new IllegalStateException("interrupt the current turn before deleting this session");
         if (db.getSession(id) == null) throw new IllegalArgumentException("session not found");
