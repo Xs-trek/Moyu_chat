@@ -19,6 +19,8 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.open', { localSessionId: string }>
   | UiIntent<'chat.session.send', { localSessionId: string; text: string }>
   | UiIntent<'chat.session.saveDraft', { localSessionId: string; text: string }>
+  | UiIntent<'chat.attachment.pick', { localSessionId: string }>
+  | UiIntent<'chat.attachment.remove', { localSessionId: string; mediaId: string }>
   | UiIntent<'chat.session.interrupt', { localSessionId: string }>
   | UiIntent<'chat.session.delete', { localSessionId: string }>
   | UiIntent<'provider.configure.open', { providerId?: string }>
@@ -29,6 +31,19 @@ export type MoyuChatIntent =
   | UiIntent<'handoff.create', { localSessionId: string }>
   | UiIntent<'handoff.submit', { handoffId: string }>;
 
+export interface MediaView {
+  mediaId: string;
+  kind: 'image';
+  mimeType: string;
+  fileName: string;
+  sizeBytes: number;
+  width: number;
+  height: number;
+  sha256?: string;
+  createdAt?: string;
+  url: string;
+}
+
 export interface ModelProfileView {
   modelProfileId: string;
   modelId: string;
@@ -38,6 +53,8 @@ export interface ModelProfileView {
   maxOutputTokens: number;
   reasoningLevels: string;
   defaultReasoning: string;
+  inputModalities: string;
+  outputModalities: string;
 }
 
 export interface ProviderView {
@@ -71,6 +88,8 @@ export interface SessionView {
   modelProfileId?: string;
   model: string;
   reasoningEffort: string;
+  inputModalities: string;
+  outputModalities: string;
   state: SessionState;
   updatedAt: string;
   preview?: string;
@@ -78,13 +97,15 @@ export interface SessionView {
 }
 
 export type TimelineItem =
-  | { localSeq: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; streaming?: boolean; createdAt: string }
+  | { localSeq: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; attachments?: MediaView[]; streaming?: boolean; createdAt: string }
   | { localSeq: number; kind: 'usage'; inputTokens?: number; outputTokens?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
 
 export interface SessionDetailView extends SessionView {
   messages: TimelineItem[];
   composerDraft: string;
+  draftMedia: MediaView[];
+  canAttachImage: boolean;
   canSend: boolean;
   canInterrupt: boolean;
 }
