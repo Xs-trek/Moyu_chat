@@ -147,7 +147,14 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         }
         if ("message_start".equals(type)) {
             JSONObject message = event.optJSONObject("message"); JSONObject usage = message == null ? null : message.optJSONObject("usage");
-            if (usage != null) sink.onUsage(usage.has("input_tokens") ? usage.optInt("input_tokens") : null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null);
+            if (usage != null) {
+                Integer uncached = usage.has("input_tokens") ? usage.optInt("input_tokens") : null;
+                Integer output = usage.has("output_tokens") ? usage.optInt("output_tokens") : null;
+                Integer cached = usage.has("cache_read_input_tokens") ? usage.optInt("cache_read_input_tokens") : null;
+                Integer cacheWrite = usage.has("cache_creation_input_tokens") ? usage.optInt("cache_creation_input_tokens") : null;
+                int total = Math.max(0, uncached == null ? 0 : uncached) + Math.max(0, cached == null ? 0 : cached) + Math.max(0, cacheWrite == null ? 0 : cacheWrite);
+                sink.onUsageDetails(total > 0 ? total : uncached, output, cached, cacheWrite, total > 0 ? total : null);
+            }
             return false;
         }
         if ("message_delta".equals(type)) {
