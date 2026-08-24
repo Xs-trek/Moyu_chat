@@ -311,6 +311,29 @@ public class ChatCoordinatorE2eTest {
 
     // ---------- multi-turn + interrupt ----------
 
+    @Test public void plainSecondTurnUsesStandardRoleHistoryWithoutToolPayload() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
+        RecordedRequest first = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(first);
+        await("first normal turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second"));
+        RecordedRequest second = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(second);
+        JSONObject body = new JSONObject(second.getBody().readUtf8());
+        assertFalse("plain Chat must not send tools", body.has("tools"));
+        JSONArray messages = body.getJSONArray("messages");
+        assertEquals(4, messages.length());
+        assertEquals("system", messages.getJSONObject(0).optString("role"));
+        assertEquals("user", messages.getJSONObject(1).optString("role"));
+        assertEquals("first", messages.getJSONObject(1).optString("content"));
+        assertEquals("assistant", messages.getJSONObject(2).optString("role"));
+        assertEquals("mock answer", messages.getJSONObject(2).optString("content"));
+        assertEquals("user", messages.getJSONObject(3).optString("role"));
+        assertEquals("second", messages.getJSONObject(3).optString("content"));
+        await("second normal turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+    }
+
     @Test public void interruptKeepsPartialAnswerAndUnlocksSession() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
