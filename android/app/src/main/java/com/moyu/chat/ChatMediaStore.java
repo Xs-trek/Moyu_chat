@@ -74,6 +74,17 @@ final class ChatMediaStore {
         try { return fileFor(mediaId).isFile(); } catch (Exception ignored) { return false; }
     }
 
+    /** Best-effort GC for private media files that are no longer referenced by durable Chat state. */
+    void pruneUnreferenced(java.util.Set<String> referencedIds) {
+        java.util.Set<String> keep = referencedIds == null ? java.util.Collections.emptySet() : referencedIds;
+        File[] files = root.listFiles(); if (files == null) return;
+        for (File file : files) {
+            if (file != null && file.isFile() && !keep.contains(file.getName())) {
+                try { file.delete(); } catch (Exception ignored) { }
+            }
+        }
+    }
+
     private JSONObject persist(byte[] bytes, String mime, String requestedName) throws Exception {
         if (bytes == null || bytes.length == 0 || bytes.length > MAX_IMAGE_BYTES) throw new IllegalArgumentException("image exceeds local size limit");
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true;
