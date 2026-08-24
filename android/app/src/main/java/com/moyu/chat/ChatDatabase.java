@@ -612,6 +612,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         v.put("context_tokens", context); v.put("input_tokens", input); v.put("max_output_tokens", output);
         v.put("reasoning_levels", levels); v.put("default_reasoning", defaultReasoning);
         v.put("input_modalities", normalizeModalities(p.inputModalities)); v.put("output_modalities", normalizeModalities(p.outputModalities));
+        v.put("tool_capabilities", ChatTurnOptions.normalizeCapabilities(p.toolCapabilities));
         v.put("updated_at", Instant.now().toString());
         return v;
     }
