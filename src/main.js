@@ -29,6 +29,14 @@ document.addEventListener('click', (event) => {
   if (action === 'nav') postIntent('nav.open', { route: target.dataset.route });
   else if (action === 'theme') postIntent('appearance.set', { theme: target.dataset.theme });
   else if (action === 'open-session') postIntent('chat.session.open', { localSessionId: target.dataset.sessionId });
+  else if (action === 'delete-session') {
+    const sessionId = target.dataset.sessionId;
+    if (!sessionId) return;
+    const title = target.dataset.sessionTitle || '此会话';
+    if (window.confirm(`删除“${title}”？\n\n本地会话记录将被删除，此操作不可恢复。`)) {
+      postIntent('chat.session.delete', { localSessionId: sessionId });
+    }
+  }
   else if (action === 'new-chat') {
     const view = window.__moyuChatView;
     const provider = view?.providers?.find((item) => item.configured) || view?.providers?.find((item) => item.models?.length);
