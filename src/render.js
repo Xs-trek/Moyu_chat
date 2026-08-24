@@ -191,7 +191,7 @@ function handoffs(view) {
 function settings(view) {
   const nextTheme = view.appearance.theme === 'dark' ? 'system' : view.appearance.theme === 'system' ? 'light' : 'dark';
   const reasoningVisible = Boolean(view.ui?.showReasoning);
-  const smartContext = view.ui?.smartContextEnabled !== false;
+  const defaultContextMode = view.ui?.defaultContextMode || 'auto';
   return h('main', { class: 'page' }, h('h1', { text: '设置' }),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('strong', { text: '主题' }), h('span', { class: 'grow' }), button(`${view.appearance.theme} → ${nextTheme}`, 'theme', { theme: nextTheme }, 'btn small'))),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '智能上下文' }), h('p', { class: 'muted', text: '首轮用一次受限模型分类选择本地专家模块；长会话发生裁剪时生成结构化 Checkpoint。预处理失败会自动退回普通 Chat，不会让模型自由改写系统提示词。' })), button(smartContext ? '已开启' : '已关闭', 'toggle-smart-context', { enabled: smartContext ? 'false' : 'true' }, 'btn small'))),
