@@ -491,6 +491,9 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("inputModalities", ChatDatabase.normalizeModalities(s.inputModalities)).put("outputModalities", ChatDatabase.normalizeModalities(s.outputModalities))
                 .put("state", visibleState).put("updatedAt", s.updatedAt);
         if (s.preview != null) o.put("preview", s.preview);
+        TaskProfile taskProfile = TaskProfile.fromStored(s.taskProfile);
+        if (taskProfile != null) o.put("taskProfile", taskProfile.toJson());
+        o.put("hasContextCheckpoint", ContextCheckpoint.fromStored(s.contextCheckpoint) != null);
         if (s.originSnapshotId != null) { ChatDatabase.Snapshot snap = db.getSnapshot(s.originSnapshotId); if (snap != null) o.put("origin", new JSONObject().put("snapshotId", snap.id).put("sourceType", snap.sourceType).put("sourceTitle", snap.sourceTitle).put("sourceRuntime", snap.sourceRuntime == null ? JSONObject.NULL : snap.sourceRuntime).put("createdAt", snap.createdAt).put("itemCount", snap.itemCount).put("sourceItemCount", snap.sourceItemCount).put("truncated", snap.truncated)); }
         if (detail) o.put("messages", displayTimeline(s)).put("composerDraft", s.draft == null ? "" : s.draft)
                 .put("draftMedia", db.draftMedia(s.id)).put("canAttachImage", ChatDatabase.supportsModality(s.inputModalities, "image") && !activeTurns.containsKey(s.id))
