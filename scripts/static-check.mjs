@@ -38,6 +38,18 @@ if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_i
 if (!db.includes('input_modalities') || !db.includes('output_modalities') || !db.includes('draft_media')) fail('model/session multimodal capability persistence missing');
 if (/\bput\("text",\s*trimmed\b/.test(coordinator)) fail('send must store the raw user text; trim is only an emptiness check');
 if (!coordinator.includes('db.recoverInterruptedSessions()')) fail('coordinator must recover stale running sessions at startup');
+if (!coordinator.includes('"assistant:live:" + id + ":" + UUID.randomUUID()')) fail('every provider turn must use a unique live assistant key');
+if (!coordinator.includes('db.beginTurn(') || !coordinator.includes('db.finalizeTurn(')) fail('turn start/finalization must use the durable transactional state helpers');
+if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
+
+const openAiTransport = read('android/app/src/main/java/com/moyu/chat/OpenAiCompatibleTransport.java');
+const anthropicTransport = read('android/app/src/main/java/com/moyu/chat/AnthropicMessagesTransport.java');
+for (const [name, transport] of [['OpenAI', openAiTransport], ['Anthropic', anthropicTransport]]) {
+  if (transport.includes('.readTimeout(0,')) fail(`${name} streaming transport must not wait forever for provider bytes`);
+  if (!transport.includes('stream_stalled') || !transport.includes('stream_timeout')) fail(`${name} streaming transport lacks bounded stall/timeout terminal mapping`);
+}
+if (!openAiTransport.includes('static boolean parseResponses(')) fail('Responses terminal events must signal the HTTP reader to exit');
+if (!anthropicTransport.includes('static boolean parse(')) fail('Anthropic terminal events must signal the HTTP reader to exit');
 
 const registry = read('android/app/src/main/java/com/moyu/chat/ChatTransportRegistry.java');
 for (const protocol of ['CHAT_COMPLETIONS', 'RESPONSES', 'AnthropicMessagesTransport.PROTOCOL']) if (!registry.includes(protocol)) fail(`transport registry missing ${protocol}`);
