@@ -103,6 +103,15 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         }
     }
 
+    private static boolean isSemanticEvent(String protocol, JSONObject event) {
+        if (CHAT_COMPLETIONS.equals(protocol)) {
+            JSONArray choices = event.optJSONArray("choices");
+            return event.optJSONObject("error") != null || (choices != null && choices.length() > 0)
+                    || event.optJSONObject("usage") != null || event.has("cost");
+        }
+        return !event.optString("type", "").isEmpty();
+    }
+
     /** OpenAI-compatible multimodal input: user text + image_url data URLs; assistant history remains text. */
     private static JSONObject chatBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
         JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", prompt.instructions));
