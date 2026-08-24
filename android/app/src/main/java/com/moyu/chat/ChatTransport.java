@@ -14,7 +14,7 @@ interface ChatTransport {
          * cache-hit percentage when the provider exposes enough information; null means unknown.
          */
         default void onUsageDetails(Integer inputTokens, Integer outputTokens, Integer cachedInputTokens,
-                                    Integer cacheWriteInputTokens, Integer cacheHitBaseTokens) {
+                                    Integer cacheWriteInputTokens, Integer cacheHitBaseTokens, Integer reasoningTokens) {
             onUsage(inputTokens, outputTokens);
         }
         void onCompleted();

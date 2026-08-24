@@ -15,8 +15,8 @@ final class TerminalSink implements ChatTransport.Sink {
     @Override public void onImage(String mimeType, String base64, String fileName) { if (!terminal.get()) delegate.onImage(mimeType, base64, fileName); }
     @Override public void onUsage(Integer inputTokens, Integer outputTokens) { if (!terminal.get()) delegate.onUsage(inputTokens, outputTokens); }
     @Override public void onUsageDetails(Integer inputTokens, Integer outputTokens, Integer cachedInputTokens,
-                                         Integer cacheWriteInputTokens, Integer cacheHitBaseTokens) {
-        if (!terminal.get()) delegate.onUsageDetails(inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, cacheHitBaseTokens);
+                                         Integer cacheWriteInputTokens, Integer cacheHitBaseTokens, Integer reasoningTokens) {
+        if (!terminal.get()) delegate.onUsageDetails(inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, cacheHitBaseTokens, reasoningTokens);
     }
     @Override public void onCompleted() { if (terminal.compareAndSet(false, true)) delegate.onCompleted(); }
     @Override public void onError(String code, String summary, boolean retryable) { if (terminal.compareAndSet(false, true)) delegate.onError(code, summary, retryable); }
