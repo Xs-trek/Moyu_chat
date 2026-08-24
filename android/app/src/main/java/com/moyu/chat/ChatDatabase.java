@@ -17,10 +17,10 @@ import java.util.UUID;
 /** Chat-owned database. It never opens or attaches the Remote APK database. */
 public final class ChatDatabase extends SQLiteOpenHelper {
     private static final String NAME = "moyu-chat.db";
-    private static final int VERSION = 5;
+    private static final int VERSION = 6;
 
     public static final class Session {
-        public String id, title, providerId, modelProfileId, model, reasoningEffort, state, updatedAt, draft, originSnapshotId, parentSessionId, preview;
+        public String id, title, providerId, modelProfileId, model, reasoningEffort, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
         public int contextTokens, inputTokens, maxOutputTokens;
     }
 
