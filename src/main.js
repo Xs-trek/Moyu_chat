@@ -116,4 +116,4 @@ document.addEventListener('input', (event) => {
   draftTimer = setTimeout(() => postIntent('chat.session.saveDraft', { localSessionId: sessionId, text: event.target.value }), 400);
 });
 
-postIntent('app.ready', { uiVersion: '0.0.1' });
+postIntent('app.ready', { uiVersion: '0.0.2' });
