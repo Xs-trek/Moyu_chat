@@ -11,15 +11,27 @@ final class CanonicalPrompt {
     final int estimatedInputTokens;
     final int inheritedItemCount;
     final int localItemCount;
+    final int omittedItemCount;
+    /** Full provider-neutral projection before budgeting; internal only, never sent directly. */
+    final JSONArray projectedMessages;
 
     CanonicalPrompt(String instructions, JSONArray messages, boolean truncated,
                     int estimatedInputTokens, int inheritedItemCount, int localItemCount) {
+        this(instructions, messages, truncated, estimatedInputTokens, inheritedItemCount, localItemCount,
+                Math.max(0, (inheritedItemCount + localItemCount) - (messages == null ? 0 : messages.length())), null);
+    }
+
+    CanonicalPrompt(String instructions, JSONArray messages, boolean truncated,
+                    int estimatedInputTokens, int inheritedItemCount, int localItemCount,
+                    int omittedItemCount, JSONArray projectedMessages) {
         this.instructions = instructions;
-        this.messages = messages;
+        this.messages = messages == null ? new JSONArray() : messages;
         this.truncated = truncated;
         this.estimatedInputTokens = estimatedInputTokens;
         this.inheritedItemCount = inheritedItemCount;
         this.localItemCount = localItemCount;
+        this.omittedItemCount = Math.max(0, omittedItemCount);
+        this.projectedMessages = projectedMessages;
     }
 
     JSONObject diagnostics() {
@@ -28,7 +40,8 @@ final class CanonicalPrompt {
                     .put("truncated", truncated)
                     .put("estimatedInputTokens", estimatedInputTokens)
                     .put("inheritedItemCount", inheritedItemCount)
-                    .put("localItemCount", localItemCount);
+                    .put("localItemCount", localItemCount)
+                    .put("omittedItemCount", omittedItemCount);
         } catch (Exception ignored) { return new JSONObject(); }
     }
 }
