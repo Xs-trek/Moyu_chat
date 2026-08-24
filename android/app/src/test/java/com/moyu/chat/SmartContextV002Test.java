@@ -130,6 +130,41 @@ public class SmartContextV002Test {
         await("second complete", () -> calls.get() == 3 && "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
     }
 
+    @Test public void minimalModeMakesOnlyTheMainRequest() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) { return chat("minimal answer"); }
+        });
+        post("chat.session.create", new JSONObject().put("providerId", "p").put("contextMode", ContextMode.MINIMAL));
+        await("minimal session", () -> latestView() != null && !latestView().optString("activeLocalSessionId", "").isEmpty());
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "hello"));
+        RecordedRequest main = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(main);
+        assertFalse(main.getBody().readUtf8().contains("Classify the conversation"));
+        assertNull("minimal must not make a hidden second request", server.takeRequest(500, TimeUnit.MILLISECONDS));
+        await("minimal complete", () -> "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
+        ChatDatabase.Session stored = app.database().getSession(sessionId);
+        assertEquals(ContextMode.MINIMAL, stored.contextMode);
+        assertEquals("", stored.taskProfile);
+        assertEquals("", stored.contextCheckpoint);
+    }
+
+    @Test public void autoLocalSkipsRouterOnFirstTurn() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) { return chat("auto answer"); }
+        });
+        post("chat.session.create", new JSONObject().put("providerId", "p").put("contextMode", ContextMode.AUTO));
+        await("auto session", () -> latestView() != null && !latestView().optString("activeLocalSessionId", "").isEmpty());
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "hello"));
+        RecordedRequest main = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(main);
+        assertFalse(main.getBody().readUtf8().contains("Classify the conversation"));
+        assertNull("auto local first turn must not pay a Router request", server.takeRequest(500, TimeUnit.MILLISECONDS));
+        await("auto complete", () -> "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
+        JSONObject view = latestView().optJSONObject("activeSession");
+        assertEquals("auto", view.optString("contextMode"));
+        assertEquals("auto-minimal", view.optString("effectiveContextMode"));
+    }
+
     @Test public void truncationBuildsCheckpointWithoutRewritingDurableTimeline() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         server.setDispatcher(new Dispatcher() {
