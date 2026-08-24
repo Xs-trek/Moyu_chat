@@ -383,7 +383,8 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception ignored) { }
     }
 
-    private void finishTurn(String id, String streamKey, JSONObject seed, String text, String reasoning, JSONArray outputMedia, String[] error) {
+    private void finishTurn(String id, String streamKey, JSONObject seed, String text, String reasoning, JSONArray outputMedia,
+                            Map<String, JSONObject> webSources, String webBackend, String[] error) {
         boolean hasVisibleOutput = !text.isEmpty() || (outputMedia != null && outputMedia.length() > 0);
         boolean hasProjection = hasVisibleOutput || (reasoning != null && !reasoning.isEmpty());
         String[] terminalError = error;
