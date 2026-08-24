@@ -99,7 +99,7 @@ export interface SessionView {
 }
 
 export type TimelineItem =
-  | { localSeq: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; attachments?: MediaView[]; streaming?: boolean; streamStage?: 'connecting' | 'connected' | 'reasoning' | 'output'; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; attachments?: MediaView[]; inherited?: boolean; streaming?: boolean; streamStage?: 'connecting' | 'connected' | 'reasoning' | 'output'; createdAt: string }
   | { localSeq: number; kind: 'usage'; inputTokens?: number; outputTokens?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
 
