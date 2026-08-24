@@ -74,7 +74,11 @@ document.addEventListener('click', (event) => {
   else if (action === 'pick-attachment') postIntent('chat.attachment.pick', { localSessionId: target.dataset.sessionId });
   else if (action === 'remove-attachment') postIntent('chat.attachment.remove', { localSessionId: target.dataset.sessionId, mediaId: target.dataset.mediaId });
   else if (action === 'refresh-sources') postIntent('branch.sources.refresh', {});
-  else if (action === 'branch-remote') postIntent('branch.create.remote', { sourceId: target.dataset.sourceId });
+  else if (action === 'branch-remote') {
+    const sourceCard = target.closest('.remote-source-card');
+    const contextMode = sourceCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'auto';
+    postIntent('branch.create.remote', { sourceId: target.dataset.sourceId, contextMode });
+  }
   else if (action === 'branch-local') postIntent('branch.create.local', { localSessionId: target.dataset.sessionId });
   else if (action === 'interrupt') postIntent('chat.session.interrupt', { localSessionId: target.dataset.sessionId });
   else if (action === 'handoff') postIntent('handoff.create', { localSessionId: target.dataset.sessionId });
