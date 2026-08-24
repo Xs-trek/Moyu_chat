@@ -106,6 +106,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "app.ready": uiReady = true; break;
                 case "view.reload": break;
                 case "appearance.set": theme = validTheme(required(p, "theme")); db.putSetting("theme", theme); break;
+                case "chat.reasoning.visibility.set": showReasoning = p.optBoolean("show", false); db.putSetting("showReasoning", showReasoning ? "true" : "false"); break;
                 case "nav.open": route = validRoute(required(p, "route")); db.putSetting("route", route); break;
                 case "chat.session.create": createSession(p); break;
                 case "chat.session.open": openSession(required(p, "localSessionId")); break;
