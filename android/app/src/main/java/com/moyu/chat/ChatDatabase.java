@@ -196,7 +196,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized Session getSession(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,task_profile,context_checkpoint,checkpoint_covered_items FROM sessions WHERE local_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,context_mode,task_profile,context_checkpoint,checkpoint_covered_items FROM sessions WHERE local_id=?", new String[]{id})) {
             return c.moveToFirst() ? readSession(c) : null;
         }
     }
