@@ -119,5 +119,6 @@ export function render() {
   document.documentElement.dataset.theme = view.appearance.resolvedTheme;
   root.replaceChildren(shell(view, body));
   const toast = document.querySelector('#toast-root');
-  toast.replaceChildren(state.notice ? h('div', { class: `toast ${state.notice.level || 'info'}`, text: state.notice.text }) : null);
+  if (state.notice) toast.replaceChildren(h('div', { class: `toast ${state.notice.level || 'info'}`, text: state.notice.text }));
+  else toast.replaceChildren();
 }
