@@ -225,7 +225,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (descriptor == null || descriptor.optString("mediaId", "").trim().isEmpty()) throw new IllegalArgumentException("image descriptor required");
         JSONArray items = draftMedia(id);
         if (items.length() >= ChatMediaStore.MAX_DRAFT_IMAGES) throw new IllegalArgumentException("at most " + ChatMediaStore.MAX_DRAFT_IMAGES + " images per message");
-        items.put(new JSONObject(descriptor.toString()));
+        items.put(descriptor);
         ContentValues v = new ContentValues(); v.put("draft_media", items.toString()); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
     }
 
