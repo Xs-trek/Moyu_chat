@@ -85,6 +85,9 @@ final class SnapshotService {
             chars += text.length();
             JSONObject normalizedItem = new JSONObject().put("kind", "message").put("role", item.optString("role")).put("text", text)
                     .put("createdAt", bounded(item.optString("createdAt", Instant.now().toString()), "createdAt"));
+            if ("assistant".equals(item.optString("role")) && item.optBoolean("incomplete", false)) {
+                normalizedItem.put("incomplete", true).put("terminalCode", bounded(item.optString("terminalCode", "interrupted"), "terminal code"));
+            }
             JSONArray attachments = normalizeAttachments(item.optJSONArray("attachments"));
             if (attachments.length() > 0) normalizedItem.put("attachments", attachments);
             reverse.add(normalizedItem);
