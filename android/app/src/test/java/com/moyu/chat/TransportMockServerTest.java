@@ -73,6 +73,14 @@ public class TransportMockServerTest {
         return new CanonicalPrompt("SYSTEM-INSTRUCTIONS", messages, false, 10, 0, messages.length());
     }
 
+    private static CanonicalPrompt imagePrompt() throws Exception {
+        JSONObject image = new JSONObject().put("kind", "image").put("mimeType", "image/png")
+                .put("dataUrl", "data:image/png;base64,QUJD").put("width", 1).put("height", 1);
+        JSONArray messages = new JSONArray().put(new JSONObject().put("role", "user").put("text", "describe")
+                .put("attachments", new JSONArray().put(image)));
+        return new CanonicalPrompt("SYSTEM-INSTRUCTIONS", messages, false, 100, 0, 1);
+    }
+
     private String bodyOf() throws Exception {
         RecordedRequest request = server.takeRequest(10, TimeUnit.SECONDS);
         assertNotNull(request);
