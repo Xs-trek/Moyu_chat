@@ -355,7 +355,7 @@ final class ChatCoordinator implements AutoCloseable {
             turn = transport.stream(provider, key, session.model, session.reasoningEffort, prompt, sink);
         } catch (Exception startError) {
             settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
-            finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+            finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0],
                     new String[]{"transport_start_failed", safe(startError)});
             return;
         }
