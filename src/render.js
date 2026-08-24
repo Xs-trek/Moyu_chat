@@ -163,6 +163,11 @@ function contextModeControl(value = 'auto', dataset = { contextModeSelect: '1' }
   return h('select', { class: 'reasoning-select context-mode-select', dataset }, ['auto','minimal','smart'].map((mode) => h('option', { value: mode, selected: mode === value, text: labels[mode] })));
 }
 
+function webModeControl(value = 'auto', dataset = { webModeSelect: '1' }) {
+  const labels = { off: '联网 · 关闭', auto: '联网 · 自动', on: '联网 · 开启' };
+  return h('select', { class: 'reasoning-select web-mode-select', dataset }, ['off','auto','on'].map((mode) => h('option', { value: mode, selected: mode === value, text: labels[mode] })));
+}
+
 function providers(view) {
   return h('main', { class: 'page' },
     h('div', { class: 'section-head' }, h('div', { class: 'grow' }, h('h1', { text: 'Provider / Models' }), h('p', { class: 'muted', text: 'Endpoint/Auth 属于 Provider；上下文、输入输出模态与推理能力属于该 endpoint 下的 Model Profile。' })), button('＋ Provider', 'configure-provider', {}, 'btn primary')),
