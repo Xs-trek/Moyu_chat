@@ -44,8 +44,8 @@ if (!coordinator.includes('"assistant:live:" + id + ":" + UUID.randomUUID()')) f
 if (!coordinator.includes('db.beginTurn(') || !coordinator.includes('db.finalizeTurn(')) fail('turn start/finalization must use durable transactional state helpers');
 if (!coordinator.includes('if (activeTurns.containsKey(id)) throw new IllegalStateException("interrupt the current turn before deleting this session")')) fail('running provider turns must not be deleted underneath asynchronous callbacks');
 if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
-if (!coordinator.includes('context.intelligence.set') || !coordinator.includes('smartContextEnabled')) fail('v0.0.2 Smart Context authority/toggle missing');
-if (!coordinator.includes('taskRouter.route(') || !coordinator.includes('checkpointService.update(')) fail('v0.0.2 router/checkpoint orchestration missing');
+if (!coordinator.includes('context.mode.default.set') || !coordinator.includes('defaultContextMode')) fail('v0.0.2 default context-mode authority missing');
+if (!coordinator.includes('ContextMode.resolve(') || !coordinator.includes('taskRouter.route(') || !coordinator.includes('checkpointService.update(')) fail('v0.0.2 session context-mode/router/checkpoint orchestration missing');
 if (!coordinator.includes('.put("incomplete", true).put("terminalCode"')) fail('partial provider turns must preserve incomplete semantics');
 
 const taskProfile = read('android/app/src/main/java/com/moyu/chat/TaskProfile.java');
