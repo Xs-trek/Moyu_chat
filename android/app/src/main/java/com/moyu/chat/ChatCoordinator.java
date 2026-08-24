@@ -314,6 +314,8 @@ final class ChatCoordinator implements AutoCloseable {
                 JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage[0]);
                 if (reasoningOut.length() > 0) next.put("reasoning", reasoningOut.toString());
                 if (outputMedia.length() > 0) next.put("attachments", outputMedia);
+                if (!webSources.isEmpty()) next.put("sources", sourceArray(webSources)); else next.remove("sources");
+                if (!webBackend[0].isEmpty()) next.put("webBackend", webBackend[0]); else next.remove("webBackend");
                 return next;
             }
             @Override public void onStage(String stage) { worker.execute(() -> { try { if (stage == null || stage.trim().isEmpty()) return; streamStage[0] = stage.trim(); db.replaceTimelineBody(streamKey, liveProjection()); emitView(); } catch (Exception ignored) { } }); }
