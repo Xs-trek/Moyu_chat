@@ -15,6 +15,7 @@ export type MoyuChatIntent =
   | UiIntent<'view.reload', Record<string, never>>
   | UiIntent<'appearance.set', { theme: Theme }>
   | UiIntent<'chat.reasoning.visibility.set', { show: boolean }>
+  | UiIntent<'context.intelligence.set', { enabled: boolean }>
   | UiIntent<'nav.open', { route: Route }>
   | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; title?: string }>
   | UiIntent<'chat.session.open', { localSessionId: string }>
@@ -83,6 +84,17 @@ export interface OriginView {
   truncated?: boolean;
 }
 
+export interface TaskProfileView {
+  version: 1;
+  domain: 'general' | 'software' | 'embedded' | 'research' | 'writing' | 'planning' | 'math' | 'creative';
+  taskType: 'answer' | 'explain' | 'debug' | 'review' | 'research' | 'plan' | 'write' | 'compare' | 'analyze';
+  depth: 'concise' | 'standard' | 'expert';
+  responseMode: 'direct' | 'structured' | 'tutorial' | 'diagnostic';
+  contextPolicy: 'recent' | 'checkpoint_recent';
+  modules: string[];
+  confidence: number;
+}
+
 export interface SessionView {
   localSessionId: string;
   title: string;
@@ -97,11 +109,13 @@ export interface SessionView {
   updatedAt: string;
   preview?: string;
   origin?: OriginView;
+  taskProfile?: TaskProfileView;
+  hasContextCheckpoint?: boolean;
 }
 
 export type TimelineItem =
-  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; reasoning?: string; attachments?: MediaView[]; inherited?: boolean; streaming?: boolean; streamStage?: 'connecting' | 'connected' | 'reasoning' | 'output'; createdAt: string }
-  | { localSeq: number; kind: 'usage'; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number }; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; reasoning?: string; attachments?: MediaView[]; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'connecting' | 'connected' | 'reasoning' | 'output'; createdAt: string }
+  | { localSeq: number; kind: 'usage'; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
 
 export interface SessionDetailView extends SessionView {
@@ -111,6 +125,7 @@ export interface SessionDetailView extends SessionView {
   canAttachImage: boolean;
   canSend: boolean;
   canInterrupt: boolean;
+  contextPreparing?: boolean;
 }
 
 export interface RemoteBridgeView {
@@ -147,7 +162,7 @@ export interface AppViewModel {
   remoteBridge: RemoteBridgeView;
   remoteSources: RemoteSourceView[];
   handoffs: HandoffView[];
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; smartContextEnabled: boolean; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {
