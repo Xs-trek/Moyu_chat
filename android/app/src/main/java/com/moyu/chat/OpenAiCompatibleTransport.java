@@ -172,15 +172,19 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         return body;
     }
 
-    private static void appendOpenAiContinuation(JSONArray input, JSONObject message) throws Exception {
+    private static boolean appendOpenAiContinuation(JSONArray input, JSONObject message) throws Exception {
         JSONObject state = message.optJSONObject("_providerContinuation");
-        if (state == null || !RESPONSES.equals(state.optString("protocol", ""))) return;
-        JSONArray items = state.optJSONArray("items"); if (items == null) return;
+        if (state == null || !RESPONSES.equals(state.optString("protocol", ""))) return false;
+        JSONArray items = state.optJSONArray("items"); if (items == null) return false;
+        boolean replayedAssistantMessage = false;
         for (int i = 0; i < items.length(); i++) {
             JSONObject item = items.optJSONObject(i); if (item == null) continue;
-            if (!"reasoning".equals(item.optString("type", ""))) continue;
+            String type = item.optString("type", "").trim();
+            if (type.isEmpty()) continue;
             input.put(new JSONObject(item.toString()));
+            if ("message".equals(type)) replayedAssistantMessage = true;
         }
+        return replayedAssistantMessage;
     }
 
     private static void applyHostedTools(JSONObject body, String protocol, ChatTurnOptions options) throws Exception {
