@@ -38,6 +38,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     private ChatRuntime runtime;
     private ChatCoordinator coordinator;
     private String pendingImageSessionId;
+    private String pendingConversationImportSource;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
