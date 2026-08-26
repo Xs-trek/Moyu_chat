@@ -1,54 +1,48 @@
 # Moyu Chat
 
-Moyu Chat is a supplemental Android application built on the same offline WebView + native glue boundary as Moyu Remote.
-
-It is intentionally **not** a fourth Remote adapter and does not depend on Moyu Server, EasyTier, Claude Code, Codex, or OpenCode at runtime.
+Moyu Chat is a supplemental Android application built on the same offline WebView + native glue boundary as Moyu Remote. It is intentionally not a fourth Remote adapter and does not depend on Moyu Server, EasyTier, Claude Code, Codex, or OpenCode at runtime.
 
 ## Product boundary
 
-- Android-local chat sessions are owned by Moyu Chat.
-- Chat data is stored in Moyu Chat's own database.
-- Provider credentials stay in Android native secure storage and are never injected into the WebView.
-- Optional access to locally cached Moyu Remote history is through a narrow, signature-protected `RemoteDataBridge` contract.
-- Imported Remote history becomes an immutable local Snapshot. Existing Remote state is not mutated.
-- Export back to Remote uses an explicit Handoff package. No queued handoff is auto-sent after reconnection.
+- Android-local Chat sessions are owned by Moyu Chat and stored in its own database.
+- Provider credentials remain in Android native secure storage and never enter the WebView.
+- Remote history is optional input through a narrow `RemoteDataBridge`; imported history becomes an immutable local Snapshot.
+- Local branches never mutate the source Remote/Chat history.
+- Provider-native reasoning/continuation state is optional derived state and never replaces the durable visible transcript.
 
-## Runtime topology
+## Context modes
+
+v0.0.2 exposes three frozen per-session Harness modes:
+
+- **Minimal** — thin Moyu policy + raw complete turns. No Router, Memory/RAG caller, Checkpoint model call or verifier.
+- **Standard** — mature Chat harness: raw context first, optional global user Memory/RAG, Snapshot retrieval, proactive 50%→~30% compaction, structured Checkpoint and same-provider/model native reasoning continuation where the protocol exposes replayable state. No Task Router or verifier.
+- **Smart** — Standard plus bounded Task Router, reviewed local PromptModules, evidence/completion-honesty policy, fresh same-model verifier, deterministic verifier validation, provisional calibration and at most one repair/re-verify cycle.
+
+A global user-memory switch controls whether cross-chat Memory/RAG is allowed at all. Minimal still has no Memory caller even when the global switch is on; Standard and Smart may use it.
+
+The provider-neutral visible transcript stays authoritative across all three modes. OpenAI Responses reasoning items and Anthropic thinking/signature blocks are treated as discardable provider-private continuation state and are reused only on an exact compatible same-provider/model chain.
+
+## Context and retrieval
+
+Context selection keeps complete user-led turns. Current input is mandatory. Fallback Web/RAG material is ephemeral and never becomes user-authored durable text. SQLite FTS4 provides a lightweight local retrieval layer without adding a vector-database framework.
+
+Standard/Smart proactive compaction uses an explicit quality-protection envelope:
 
 ```text
-Bundled WebView UI
-      |
- window.MoyuHost
-      |
-ChatCoordinator
-  |        |         |
-Chat DB  Provider  RemoteDataBridge (optional)
-            |              |
-      model endpoint     Moyu Remote APK
+trigger = 50% of effective input window
+target  = approximately 30%
 ```
 
-If Moyu Remote is absent, disabled, has no database, or the PC is offline, Local Chat remains fully usable.
+The target is best-effort and never forces deletion of mandatory current input or durable history.
 
-## Current implementation scope
+## Verification
 
-v0.0.2 upgrades the context layer while preserving the v0.0.1 provider-neutral transcript boundary. The app compiles in debug + release/R8 and is covered by Robolectric/MockWebServer tests; the credential-gated real-endpoint smoke suite remains opt-in and must not be reported as verified when skipped.
+Smart verification separates verifier validity from answer verdict. A verifier must satisfy a fixed JSON schema, cover mandatory local rules and reference only evidence IDs that Moyu actually supplied. Invalid/unsupported verification abstains instead of pretending success. Initial numerical risk thresholds are permissive cold-start defaults and are designed to be replaced by model/policy-scoped calibration from explicit verifier feedback.
 
-Context v0.0.2 adds:
+## Web and transport
 
-- complete user-led turn selection instead of message-level truncation;
-- `incomplete` assistant semantics for interrupted/failed partial answers;
-- explicit Session Context Modes: `auto`, `minimal`, and `smart`, frozen at creation time;
-- `minimal` performs no extra model preprocessing; `smart` enables the bounded Task Router plus model-generated Checkpoint; `auto` keeps ordinary local Chat Router-free, enables Checkpoint only under real context pressure, and resolves Remote-origin Snapshots to the full smart layer;
-- the Task Router creates only an allowlisted `TaskProfile` and selects local reviewed prompt modules;
-- model-generated structured `ContextCheckpoint` is created only when enabled by the mode and older turns must be omitted;
-- immutable Timeline/Snapshot remains the source of truth; TaskProfile/Checkpoint never rewrite old messages;
-- model-card Chat creation and Remote import can explicitly choose a mode; local edit/rollback/branches inherit the source Session mode;
-- provider-native response IDs/reasoning blocks/Claude compaction are intentionally not authoritative state in this version.
+Web remains a separate capability plane. OpenAI Responses may use hosted `web_search`; Anthropic Messages may use hosted `web_search` / `web_fetch`; missing native capability can fall back to bounded Exa Search and SSRF-bounded HTTPS Fetch. Raw fetched/search material is not a timeline row.
 
-Web v0.0.2 is a Chat capability rather than a model label. Each Session freezes `webMode = off | auto | on` and a snapshot of provider-native Web capabilities. OpenAI Responses may use hosted `web_search`; Anthropic Messages may use hosted `web_search` / `web_fetch`. When a deployment has no matching native capability, Moyu can build bounded ephemeral Web context through Exa Search and SSRF-bounded HTTPS Fetch. Raw search/fetch payloads are never durable timeline rows; finalized assistants persist only visible answer text, source metadata, and the effective Web backend. Hidden Router/Checkpoint calls always use the no-Web transport path.
+Transport scope remains protocol-centric: `openai-chat-completions`, `openai-responses`, and `anthropic-messages`. Provider definitions select `protocol + baseUrl + authMode`; Session/Branch/Snapshot layers do not hardcode vendor URLs.
 
-The conversation UI now keeps keyed DOM identity while streaming instead of rebuilding the full timeline. Final assistant messages use a local safe Markdown reader, fold usage/cache/speed and Web source metadata into the assistant footer, expose copy/source actions, and provide a jump-to-latest affordance without relaxing the WebView network boundary.
-
-Transport scope remains protocol-centric: `openai-chat-completions`, `openai-responses`, and `anthropic-messages`. Provider definitions select `protocol + baseUrl + authMode` (`bearer`, `x-api-key`, or `api-key`); Session/Branch/Snapshot layers do not know which wire vendor is used. Transports append only protocol paths (`/chat/completions`, `/responses`, `/v1/messages`) and never hardcode vendor base URLs.
-
-SQLite schema v9 persists `tool_capabilities` and `web_mode` while retaining v8 context-mode state. See `PROMPT_CONTEXT.md` and `V0.0.2_DESIGN.md` for the context/Web invariants and v0.0.2 scope.
+See `PROMPT_CONTEXT.md` and `V0.0.2_DESIGN.md` for normative context/Memory/compaction/reasoning/verifier behavior.
