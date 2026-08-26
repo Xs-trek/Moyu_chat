@@ -198,7 +198,7 @@ document.addEventListener('click', (event) => {
     const provider = view?.providers?.find((item) => item.configured) || view?.providers?.find((item) => item.models?.length);
     const model = provider?.models?.[0];
     if (!provider || !model) return setNotice({ level: 'warning', text: '请先配置 Provider 和 Model' });
-    postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId, contextMode: view?.ui?.defaultContextMode || 'auto', webMode: view?.ui?.defaultWebMode || 'auto' });
+    postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId, contextMode: view?.ui?.defaultContextMode || 'standard', webMode: view?.ui?.defaultWebMode || 'auto' });
   } else if (action === 'new-chat-model') {
     const modelCard = target.closest('.model-card');
     const effort = modelCard?.querySelector('select[data-reasoning-select]')?.value || 'default';
