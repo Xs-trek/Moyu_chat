@@ -104,7 +104,8 @@ function conversation(view) {
   const imageInput = String(session.inputModalities || '').split(',').includes('image');
   const imageOutput = String(session.outputModalities || '').split(',').includes('image');
   const busyLabel = session.webPreparingStage === 'web_fetch' ? '读取网页' : session.webPreparingStage === 'web_search' ? '搜索网页' : session.contextPreparing ? '整理上下文' : session.state === 'running' ? '生成中' : '';
-  return h('main', { class: 'conversation-layout' },
+  const configSignature = JSON.stringify({ modelProfileId: session.modelProfileId, reasoningEffort: session.reasoningEffort, inputModalities: session.inputModalities, outputModalities: session.outputModalities, webMode: session.webMode, webPreparingStage: session.webPreparingStage || '', contextPreparing: Boolean(session.contextPreparing), state: session.state });
+  return h('main', { class: 'conversation-layout', dataset: { sessionId: session.localSessionId, configSignature } },
     h('header', { class: 'conversation-head' },
       button('←', 'nav', { route: 'home' }, 'btn small icon-btn'),
       h('div', { class: 'conversation-title grow' }, h('strong', { class: 'truncate-safe', text: session.title }), h('small', { class: 'muted truncate-safe', text: busyLabel || `${session.providerName} · ${session.modelName || session.model}` })),
