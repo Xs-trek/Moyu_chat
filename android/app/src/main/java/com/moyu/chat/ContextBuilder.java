@@ -72,19 +72,19 @@ final class ContextBuilder {
         JSONArray budgetProjection = new JSONArray(durableProjected.toString());
         if (committed && !pending.isEmpty()) mergeIntoLatestUser(budgetProjection, pending);
 
-        String provisional = promptPolicy.instructions(session, snapshot, false);
-        ContextBudgetManager.Result first = budgets.select(provisional, budgetProjection, contextTokens, inputTokens, outputTokens);
+        PolicySelection firstSelection = selectWithPolicy(session, snapshot, false, budgetProjection,
+                contextTokens, inputTokens, outputTokens);
+        ContextBudgetManager.Result first = firstSelection.result;
 
         if (first.truncated && mode.retrievalEnabled && snapshot != null && !retrievalQuery.trim().isEmpty()) {
             String retrievalSuffix = retrievalSuffix(snapshot, retrievalQuery, first.messages);
-            if (!retrievalSuffix.isEmpty()) {
-                mergeIntoLatestUser(budgetProjection, retrievalSuffix);
-            }
+            if (!retrievalSuffix.isEmpty()) mergeIntoLatestUser(budgetProjection, retrievalSuffix);
         }
 
-        String instructions = promptPolicy.instructions(session, snapshot, first.truncated);
-        ContextBudgetManager.Result finalResult = budgets.select(instructions, budgetProjection, contextTokens, inputTokens, outputTokens);
-        return new CanonicalPrompt(instructions, finalResult.messages, finalResult.truncated,
+        PolicySelection finalSelection = selectWithPolicy(session, snapshot, first.truncated, budgetProjection,
+                contextTokens, inputTokens, outputTokens);
+        ContextBudgetManager.Result finalResult = finalSelection.result;
+        return new CanonicalPrompt(finalSelection.instructions, finalResult.messages, finalResult.truncated,
                 finalResult.estimatedTokens, inheritedCount, localCount, finalResult.omittedMessageCount,
                 new JSONArray(durableProjected.toString()));
     }
