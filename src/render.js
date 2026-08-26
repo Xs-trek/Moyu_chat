@@ -254,6 +254,9 @@ function assistantFooter(item, finalized, sessionId) {
   const speed = Number(usage?.outputTokensPerSecond);
   const verification = item.verification || null;
   const feedbackRecorded = Boolean(verification?.feedbackLabel);
+  const verificationVerdict = String(verification?.verdict || '');
+  const feedbackEligible = canAct && verification?.status === 'valid' && verification?.coverageComplete === true
+    && (verificationVerdict === 'pass' || verificationVerdict === 'fail');
   const verificationLabel = verification
     ? verification.status !== 'valid' ? '智能校验 · 无效'
       : verification.coverageComplete === false ? '智能校验 · 覆盖不足'
