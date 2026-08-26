@@ -269,7 +269,7 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** Reasoning effort is a future-turn setting and is validated against the active model profile. */
     private void setSessionReasoning(String sessionId, String effort) {
-        if (activeTurns.containsKey(sessionId) || startingSessions.contains(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId)) {
+        if (activeTurns.containsKey(sessionId) || startingSessions.contains(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId) || postProcessingStages.containsKey(sessionId)) {
             throw new IllegalStateException("wait for the current turn before changing reasoning effort");
         }
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
