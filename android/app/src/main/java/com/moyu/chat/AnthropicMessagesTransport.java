@@ -135,6 +135,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         boolean sawData = false;
         boolean sawUnexpectedPayload = false;
         long lastSemantic = System.nanoTime();
+        AnthropicContinuationCollector continuation = new AnthropicContinuationCollector(sink);
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return; }
             sink.onStage("connected");
