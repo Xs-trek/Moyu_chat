@@ -201,8 +201,9 @@ export interface AppViewModel {
   activeSession?: SessionDetailView;
   remoteBridge: RemoteBridgeView;
   remoteSources: RemoteSourceView[];
+  importedSources: ImportedSourceView[];
   handoffs: HandoffView[];
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; importInProgress: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {
