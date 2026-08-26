@@ -252,6 +252,15 @@ function assistantFooter(item, finalized, sessionId) {
   const canAct = finalized && Number(item.localSeq) > 0;
   const reasoningTokens = tokenCount(usage?.reasoningTokens);
   const speed = Number(usage?.outputTokensPerSecond);
+  const verification = item.verification || null;
+  const feedbackRecorded = Boolean(verification?.feedbackLabel);
+  const verificationLabel = verification
+    ? verification.status !== 'valid' ? '智能校验 · 无效'
+      : verification.coverageComplete === false ? '智能校验 · 覆盖不足'
+      : verification.action === 'accept' ? '智能校验 · 通过'
+      : verification.action === 'repair' ? '智能校验 · 已修正'
+      : '智能校验 · 未裁决'
+    : '';
   const facts = [
     ['模型', item.modelName || item.model || '—'],
     ['深度', effortFact(item)],
@@ -262,10 +271,19 @@ function assistantFooter(item, finalized, sessionId) {
     ['首字', usage?.firstOutputLatencyMs === undefined ? '—' : seconds(usage.firstOutputLatencyMs)],
     ['总耗', usage?.requestDurationMs === undefined ? '—' : seconds(usage.requestDurationMs)],
   ];
-  const signature = JSON.stringify({ sources: item.sources || [], backend, usage: usage || null, facts, canAct, localSeq: item.localSeq });
+  const signature = JSON.stringify({ sources: item.sources || [], backend, usage: usage || null, facts, canAct, localSeq: item.localSeq, verification });
   return h('footer', { class: 'assistant-footer', dataset: { footerSignature: signature } },
     sourceNode,
     backend ? h('div', { class: 'assistant-web muted', text: `联网 · ${backend}` }) : null,
+    verification ? h('div', { class: 'row assistant-verification' },
+      badge(verificationLabel, verification.action === 'accept' ? 'good' : verification.action === 'repair' ? 'warn' : 'quiet'),
+      verification.coverageReason ? h('small', { class: 'muted', text: verification.coverageReason }) : null,
+      h('span', { class: 'grow' }),
+      feedbackRecorded ? badge('反馈已记录', 'quiet') : canAct ? [
+        button('校验正确', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'accurate' }, 'btn ghost small'),
+        button('误判', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'false_alarm' }, 'btn ghost small'),
+        button('漏错', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'missed_error' }, 'btn ghost small')
+      ] : null) : null,
     h('div', { class: 'reply-meta' }, facts.map(([label, value]) => metric(label, value))),
     canAct ? h('div', { class: 'message-actions' },
       button('复制', 'copy-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small'),
