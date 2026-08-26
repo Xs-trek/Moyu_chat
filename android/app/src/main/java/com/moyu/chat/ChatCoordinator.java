@@ -353,11 +353,13 @@ final class ChatCoordinator implements AutoCloseable {
         emitView();
 
         CanonicalPrompt prompt;
+        ContextBuilder.CompactionPlan compactionPlan;
         boolean needsCheckpoint;
         boolean preparing;
         try {
             prompt = contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, "");
-            needsCheckpoint = checkpointAllowed && prompt.truncated && prompt.omittedItemCount > session.checkpointCoveredItems;
+            compactionPlan = checkpointAllowed ? contexts.compactionPlan(session, session.contextTokens, session.inputTokens, session.maxOutputTokens) : null;
+            needsCheckpoint = compactionPlan != null;
             preparing = needsRouter || needsCheckpoint;
         } catch (Exception contextError) {
             finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
