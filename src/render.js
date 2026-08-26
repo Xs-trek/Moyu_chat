@@ -381,7 +381,7 @@ function webModeControl(value = 'auto', dataset = { webModeSelect: '1' }) {
 
 function providers(view) {
   return h('main', { class: 'page' },
-    h('div', { class: 'section-head' }, h('div', { class: 'grow' }, h('h1', { text: 'Provider / Models' }), h('p', { class: 'muted', text: 'Endpoint/Auth 属于 Provider；上下文、输入输出模态与推理能力属于该 endpoint 下的 Model Profile。' })), button('＋ Provider', 'configure-provider', {}, 'btn primary')),
+    pageHeader('Provider / Models', 'Endpoint/Auth 属于 Provider；模型能力与推理配置属于具体 Model Profile。', button('＋ Provider', 'configure-provider', {}, 'btn primary')),
     view.providers.length ? h('section', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card provider-card' },
       h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: provider.displayName }), badge(provider.protocol), badge(provider.hasCredential ? '凭据已配置' : '缺少凭据', provider.hasCredential ? 'good' : 'warn')),
       h('div', { class: 'provider-actions row' }, badge(`reasoning · ${provider.reasoningWire || 'none'}`, 'quiet'), h('span', { class: 'grow' }), button('编辑 Provider', 'configure-provider', { providerId: provider.providerId }, 'btn small'), button('＋ 模型', 'configure-model', { providerId: provider.providerId }, 'btn small')),
