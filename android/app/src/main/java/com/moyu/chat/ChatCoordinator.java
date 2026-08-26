@@ -383,7 +383,7 @@ final class ChatCoordinator implements AutoCloseable {
                     emitStreamingView(id);
                 });
             } finally {
-                if (webPreparingStages.remove(id) != null) emitView();
+                if (webPreparingStages.remove(id) != null) emitStreamingView(id);
             }
             if (preparedWeb.hasContext()) {
                 // Rebuild only the disposable main prompt so Web material is budgeted but never persisted as user text.
