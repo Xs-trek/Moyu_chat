@@ -329,7 +329,8 @@ final class ChatCoordinator implements AutoCloseable {
         ContextMode.Policy contextPolicy = ContextMode.resolve(session, originSnapshot);
         TaskProfile profile = TaskProfile.fromStored(session.taskProfile);
         boolean needsRouter = contextPolicy.routerEnabled && profile == null;
-        boolean checkpointAllowed = contextPolicy.checkpointEnabled && (profile == null || !"recent".equals(profile.contextPolicy));
+        // Deterministic Standard/Smart compaction cannot be disabled by the model-authored TaskProfile.
+        boolean checkpointAllowed = contextPolicy.checkpointEnabled;
         boolean mayPrepare = needsRouter || checkpointAllowed;
 
         ChatDatabase.ModelProfile requestModelProfile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
