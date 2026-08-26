@@ -260,6 +260,17 @@ final class ChatCoordinator implements AutoCloseable {
         });
     }
 
+    private boolean sessionBusy(String id) {
+        return activeTurns.containsKey(id) || startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id);
+    }
+
+    private void saveDraft(String id, String text) {
+        if (db.getSession(id) == null) throw new IllegalArgumentException("session not found");
+        // Ignore stale IME/debounce writes from the just-submitted composer while a turn owns this session.
+        if (sessionBusy(id)) return;
+        db.setDraft(id, text == null ? "" : text);
+    }
+
     private void deleteSession(String id) {
         if (startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id)) throw new IllegalStateException("wait for preparation before deleting this session");
         if (activeTurns.containsKey(id)) throw new IllegalStateException("interrupt the current turn before deleting this session");
