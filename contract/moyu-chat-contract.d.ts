@@ -116,6 +116,9 @@ export interface SessionView {
   providerName: string;
   modelProfileId?: string;
   model: string;
+  modelName: string;
+  reasoningLevels: string;
+  defaultReasoning: string;
   reasoningEffort: string;
   contextMode: ContextMode;
   effectiveContextMode: 'minimal' | 'smart' | 'auto-minimal' | 'auto-smart';
