@@ -171,7 +171,7 @@ final class ConversationImportService {
     }
 
     private void importJsonArray(String source, InputStream input, Consumer consumer, Report report) throws Exception {
-        JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+        JsonReader reader = new JsonReader(new InputStreamReader(new BoundedJsonInputStream(input, report), StandardCharsets.UTF_8));
         reader.setLenient(false);
         if (reader.peek() != JsonToken.BEGIN_ARRAY) throw new IllegalArgumentException("官方 conversations JSON 顶层应为数组");
         report.jsonEntries++;
