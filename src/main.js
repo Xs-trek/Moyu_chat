@@ -107,7 +107,12 @@ document.addEventListener('click', (event) => {
   else if (action === 'open-source' && target.dataset.url) postIntent('external.open', { url: target.dataset.url });
   else if (action === 'jump-latest') {
     const node = document.querySelector('.timeline-scroll');
-    if (node) node.scrollTop = node.scrollHeight;
+    if (node) {
+      setTimelineFollowLatest(node.dataset.sessionId || '', true);
+      node.scrollTop = node.scrollHeight;
+      noteTimelineScroll(node);
+      node.querySelector('.jump-latest')?.classList.add('is-hidden');
+    }
   }
   else if (action === 'copy-message') {
     const seq = Number(target.dataset.localSeq);
