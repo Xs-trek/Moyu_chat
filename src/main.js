@@ -202,7 +202,7 @@ document.addEventListener('click', (event) => {
   } else if (action === 'new-chat-model') {
     const modelCard = target.closest('.model-card');
     const effort = modelCard?.querySelector('select[data-reasoning-select]')?.value || 'default';
-    const contextMode = modelCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'auto';
+    const contextMode = modelCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'standard';
     const webMode = modelCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
     postIntent('chat.session.create', { providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId, reasoningEffort: effort, contextMode, webMode });
   } else if (action === 'configure-provider') postIntent('provider.configure.open', target.dataset.providerId ? { providerId: target.dataset.providerId } : {});
