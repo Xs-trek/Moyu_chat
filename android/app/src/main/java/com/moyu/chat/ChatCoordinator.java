@@ -383,6 +383,10 @@ final class ChatCoordinator implements AutoCloseable {
                     prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
                 }
             }
+        } catch (Exception preparationError) {
+            finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                    new String[]{"context_prepare_failed", safe(preparationError)});
+            return;
         } finally {
             if (preparing) { preparingSessions.remove(id); emitStreamingView(id); }
         }
