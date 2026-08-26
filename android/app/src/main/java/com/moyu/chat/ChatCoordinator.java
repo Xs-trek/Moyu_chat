@@ -31,6 +31,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final MoyuWebService webService = new MoyuWebService();
     private final RemoteDataBridge remoteBridge;
     private final Map<String, ChatTransport.Turn> activeTurns = new HashMap<>();
+    private final java.util.Set<String> startingSessions = new java.util.HashSet<>();
     private final java.util.Set<String> preparingSessions = new java.util.HashSet<>();
     private final Map<String, String> webPreparingStages = new HashMap<>();
 
