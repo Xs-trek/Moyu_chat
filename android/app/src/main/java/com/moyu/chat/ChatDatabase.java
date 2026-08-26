@@ -499,6 +499,42 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
+    /** Last-resort terminal guard for exceptions that escape after beginTurn() but before transport ownership. */
+    public synchronized void failUnhandledTurn(String sessionId, String code, String summary) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            ArrayList<String> streamingKeys = new ArrayList<>();
+            try (Cursor c = db.rawQuery("SELECT item_key,body FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+                while (c.moveToNext()) {
+                    try { if (new JSONObject(c.getString(1)).optBoolean("streaming", false)) streamingKeys.add(c.getString(0)); }
+                    catch (Exception ignored) { }
+                }
+            }
+            for (String key : streamingKeys) db.delete("timeline", "item_key=?", new String[]{key});
+            Session session = getSession(sessionId);
+            if (session != null && "running".equals(session.state)) {
+                int seq;
+                try (Cursor c = db.rawQuery("SELECT COALESCE(MAX(local_seq),0)+1 FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+                    if (!c.moveToFirst()) throw new IllegalStateException("cannot allocate terminal error sequence");
+                    seq = c.getInt(0);
+                }
+                JSONObject error = new JSONObject().put("kind", "error").put("code", code == null ? "turn_internal_error" : code)
+                        .put("summary", summary == null ? "Turn failed before provider ownership" : summary)
+                        .put("createdAt", Instant.now().toString()).put("localSeq", seq);
+                ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
+                row.put("local_seq", seq); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
+                db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
+                ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", Instant.now().toString());
+                db.update("sessions", state, "local_id=?", new String[]{sessionId});
+            }
+            db.setTransactionSuccessful();
+        } catch (org.json.JSONException error) {
+            throw new IllegalStateException(error);
+        } finally { db.endTransaction(); }
+    }
+
     public synchronized void deleteTimelineItem(String itemKey) { getWritableDatabase().delete("timeline", "item_key=?", new String[]{itemKey}); }
     public synchronized JSONArray timeline(String sessionId) { return timelineThrough(sessionId, null); }
 
