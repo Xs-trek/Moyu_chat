@@ -349,20 +349,17 @@ final class ChatCoordinator implements AutoCloseable {
         }
         final MoyuWebService.Prepared webPrepared = preparedWeb;
         provider.maxOutputTokens = session.maxOutputTokens; // request-local provider copy; transport only needs the wire output cap.
-        JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
-        if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
         LinkedHashMap<String, JSONObject> webSources = new LinkedHashMap<>();
         for (int i = 0; i < webPrepared.sources.length(); i++) {
             JSONObject source = webPrepared.sources.optJSONObject(i); if (source == null) continue;
             String url = source.optString("url", ""); if (!url.isEmpty()) webSources.put(url, new JSONObject(source.toString()));
         }
         String[] webBackend = new String[]{webPrepared.backend};
-        String streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();
-        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("streamStage", "connecting").put("createdAt", Instant.now().toString());
+        live.put("streamStage", "connecting");
         if (!webSources.isEmpty()) live.put("sources", sourceArray(webSources));
         if (!webBackend[0].isEmpty()) live.put("webBackend", webBackend[0]);
-        db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
-        final long requestStartedNanos = System.nanoTime();
+        db.replaceTimelineBody(streamKey, live);
+        emitView();
         final long[] firstOutputNanos = new long[]{0L};
         StringBuilder textOut = new StringBuilder();
         StringBuilder reasoningOut = new StringBuilder();
