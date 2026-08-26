@@ -199,7 +199,7 @@ final class ConversationImportService {
         }
         String stableId = !sourceId.isEmpty() ? sourceId : !currentNode.isEmpty() ? currentNode : digest(title + "\n" + createdAt + "\n" + nodes.size());
         return new ImportedConversation(stableId, cleanTitle(title, "ChatGPT 导入会话"),
-                emptyInstant(createdAt), emptyInstant(updatedAt), items, path.size(), skipped);
+                emptyInstant(createdAt), emptyInstant(updatedAt), items, items.length(), skipped);
     }
 
     private void readChatGptMapping(JsonReader reader, Map<String, MessageNode> nodes) throws Exception {
