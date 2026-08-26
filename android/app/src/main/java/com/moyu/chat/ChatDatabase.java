@@ -333,6 +333,47 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized void clearDraftMedia(String id) { ContentValues v = new ContentValues(); v.put("draft_media", "[]"); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
 
+    public synchronized void replaceDraftMedia(String id, JSONArray items) {
+        ContentValues v = new ContentValues(); v.put("draft_media", items == null ? "[]" : items.toString());
+        getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
+    }
+
+    public synchronized int maxLocalSeq(String sessionId) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT COALESCE(MAX(local_seq),0) FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
+    public synchronized void truncateTimelineFrom(String sessionId, int localSeq) { truncateTimeline(sessionId, localSeq, true); }
+    public synchronized void truncateTimelineAfter(String sessionId, int localSeq) { truncateTimeline(sessionId, localSeq, false); }
+
+    private void truncateTimeline(String sessionId, int localSeq, boolean inclusive) {
+        if (sessionId == null || sessionId.trim().isEmpty() || localSeq < 1) throw new IllegalArgumentException("invalid rollback target");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.delete("timeline", "session_id=? AND local_seq" + (inclusive ? ">=?" : ">?") , new String[]{sessionId, String.valueOf(localSeq)});
+            ContentValues state = new ContentValues();
+            state.put("state", "idle"); state.put("updated_at", Instant.now().toString()); state.put("draft", ""); state.put("draft_media", "[]");
+            state.put("task_profile", ""); state.put("context_checkpoint", ""); state.put("checkpoint_covered_items", 0);
+            state.putNull("preview");
+            if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalArgumentException("session not found");
+            try (Cursor c = db.rawQuery("SELECT body FROM timeline WHERE session_id=? ORDER BY local_seq DESC", new String[]{sessionId})) {
+                while (c.moveToNext()) {
+                    try {
+                        JSONObject body = new JSONObject(c.getString(0));
+                        if (!"message".equals(body.optString("kind")) || body.optBoolean("streaming", false)) continue;
+                        String text = body.optString("text", "").trim(); if (text.isEmpty()) continue;
+                        String preview = text.length() > 160 ? text.substring(0, 160) : text;
+                        ContentValues p = new ContentValues(); p.put("preview", preview); db.update("sessions", p, "local_id=?", new String[]{sessionId});
+                        break;
+                    } catch (Exception ignored) { }
+                }
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
     /** Atomically commits the user's turn and one unique live assistant projection before network streaming starts. */
     public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody) {
         SQLiteDatabase db = getWritableDatabase();
