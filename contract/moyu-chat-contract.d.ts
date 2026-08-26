@@ -147,6 +147,7 @@ export interface SessionDetailView extends SessionView {
   canAttachImage: boolean;
   canSend: boolean;
   canInterrupt: boolean;
+  canConfigureTurn: boolean;
   contextPreparing?: boolean;
   webPreparingStage?: 'web_search' | 'web_fetch' | string;
 }
