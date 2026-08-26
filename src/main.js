@@ -138,6 +138,15 @@ document.addEventListener('click', (event) => {
     if (!text) return;
     navigator.clipboard?.writeText(text).then(() => setNotice({ level: 'info', text: '已复制回答' })).catch(() => setNotice({ level: 'warning', text: '复制失败' }));
   }
+  else if (action === 'copy-code') {
+    const text = target.closest('.md-code-block')?.querySelector('code')?.textContent || '';
+    if (!text) return;
+    navigator.clipboard?.writeText(text).then(() => {
+      const previous = target.textContent;
+      target.textContent = '已复制';
+      setTimeout(() => { if (target.isConnected) target.textContent = previous || '复制'; }, 1200);
+    }).catch(() => setNotice({ level: 'warning', text: '复制代码失败' }));
+  }
 });
 
 document.addEventListener('change', (event) => {
