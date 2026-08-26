@@ -192,7 +192,7 @@ function timelineProjection(items = []) {
 function messageBody(item) {
   if (!item.text) return null;
   if (item.role === 'assistant' && !item.streaming) {
-    const body = h('div', { class: 'message markdown-body', dataset: { messageBody: 'markdown' } });
+    const body = h('div', { class: 'message markdown-body', dataset: { messageBody: 'markdown', selectionScope: 'message' } });
     body.append(renderSafeMarkdown(item.text));
     return body;
   }
