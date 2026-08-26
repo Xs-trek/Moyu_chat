@@ -655,6 +655,15 @@ final class ChatCoordinator implements AutoCloseable {
         return "";
     }
 
+    private static void attachProviderContinuation(JSONObject seed, ChatDatabase.Session session,
+                                                   ChatDatabase.Provider provider, JSONArray items) throws Exception {
+        if (seed == null || session == null || provider == null || items == null || items.length() == 0) return;
+        JSONObject state = new JSONObject().put("protocol", provider.protocol).put("providerId", session.providerId)
+                .put("modelProfileId", session.modelProfileId == null ? "" : session.modelProfileId)
+                .put("model", session.model).put("items", new JSONArray(items.toString()));
+        seed.put("providerContinuation", state);
+    }
+
     private static JSONArray sourceArray(Map<String, JSONObject> sources) {
         JSONArray out = new JSONArray();
         if (sources == null) return out;
