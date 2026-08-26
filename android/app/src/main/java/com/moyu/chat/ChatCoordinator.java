@@ -135,7 +135,30 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.open": openSession(required(p, "localSessionId")); break;
                 case "chat.session.model.set": setSessionModel(required(p, "localSessionId"), required(p, "modelProfileId")); break;
                 case "chat.session.reasoning.set": setSessionReasoning(required(p, "localSessionId"), required(p, "reasoningEffort")); break;
-                case "chat.session.send": send(required(p, "localSessionId"), p.optString("text", "")); break;
+                case "chat.session.send": {
+                    final String sessionId = required(p, "localSessionId");
+                    final String message = p.optString("text", "");
+                    if (sessionBusy(sessionId)) throw new IllegalStateException("session busy");
+                    if (message.trim().isEmpty() && db.draftMedia(sessionId).length() == 0) break;
+                    final String asyncRequestId = requestId;
+                    startingSessions.add(sessionId);
+                    host.setTurnRuntimeActive(sessionId, true);
+                    preparationWorker.execute(() -> {
+                        try {
+                            send(sessionId, message);
+                            result(asyncRequestId, true, null);
+                        } catch (Exception error) {
+                            startingSessions.remove(sessionId);
+                            preparingSessions.remove(sessionId);
+                            webPreparingStages.remove(sessionId);
+                            host.setTurnRuntimeActive(sessionId, false);
+                            result(asyncRequestId, false, safe(error));
+                        } finally {
+                            emitView();
+                        }
+                    });
+                    return;
+                }
                 case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); break;
                 case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;
                 case "chat.attachment.remove": db.removeDraftMedia(required(p, "localSessionId"), required(p, "mediaId")); break;
