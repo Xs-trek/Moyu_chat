@@ -4,6 +4,7 @@ export type Route = 'home' | 'conversation' | 'providers' | 'imports' | 'handoff
 export type SessionState = 'idle' | 'running' | 'completed' | 'failed';
 export type ContextMode = 'minimal' | 'standard' | 'smart';
 export type WebMode = 'off' | 'auto' | 'on';
+export type ImportSource = 'chatgpt' | 'claude';
 
 export interface UiIntent<T extends string = string, P = unknown> {
   version: 1;
