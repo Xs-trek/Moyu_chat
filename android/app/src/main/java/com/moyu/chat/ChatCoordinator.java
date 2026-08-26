@@ -26,6 +26,16 @@ final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
     interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openConversationImportPicker(String source) { } default void openExternalUrl(String url) { } default void setTurnRuntimeActive(String sessionId, boolean active) { } void showMessage(String text); }
 
+    /** Immutable deployment snapshot captured on the serialized intent worker before preparation begins. */
+    private static final class RequestDeployment {
+        final ChatDatabase.Provider provider;
+        final String apiKey;
+        final String fingerprint;
+        RequestDeployment(ChatDatabase.Provider provider, String apiKey, String fingerprint) {
+            this.provider = provider; this.apiKey = apiKey; this.fingerprint = fingerprint;
+        }
+    }
+
     private final ChatDatabase db;
     private final ChatSecretStore secrets;
     private final ChatMediaStore mediaStore;
