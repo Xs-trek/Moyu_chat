@@ -128,7 +128,7 @@ document.addEventListener('click', (event) => {
     postIntent('chat.session.model.set', { localSessionId: target.dataset.sessionId, modelProfileId: target.dataset.modelProfileId });
   }
   else if (action === 'session-reasoning-set') {
-    target.closest('.choice-field')?.classList.remove('open');
+    closeChoiceField(target.closest('.choice-field'));
     postIntent('chat.session.reasoning.set', { localSessionId: target.dataset.sessionId, reasoningEffort: target.dataset.reasoningEffort });
   }
   else if (action === 'nav') postIntent('nav.open', { route: target.dataset.route });
