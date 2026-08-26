@@ -118,6 +118,36 @@ export interface WebSourceView {
   backend?: string;
 }
 
+export interface VerificationCheckView {
+  rule: 'constraint_adherence' | 'evidence_integrity' | 'completion_honesty' | 'uncertainty_honesty' | 'material_factual_support';
+  result: 'pass' | 'fail' | 'unknown';
+  severity: 'hard' | 'major' | 'minor';
+  evidenceIds: string[];
+  note: string;
+}
+
+export interface VerificationView {
+  status: 'valid' | 'invalid' | 'unavailable';
+  verdict?: 'pass' | 'fail' | 'partial';
+  selfConfidence?: number;
+  checks?: VerificationCheckView[];
+  coverageComplete: boolean;
+  coverageReason?: string;
+  invalidReason?: string;
+  policyVersion?: string;
+  risk?: number;
+  recommendedAction?: 'accept' | 'repair' | 'abstain';
+  action?: 'accept' | 'repair' | 'abstain';
+  calibrationKey?: string;
+  calibrationLabels?: number;
+  learnedCalibration?: boolean;
+  repairAttempted?: boolean;
+  repaired?: boolean;
+  repairLimitReached?: boolean;
+  feedbackLabel?: 'accurate' | 'false_alarm' | 'missed_error';
+  feedbackRecordedAt?: string;
+}
+
 export interface SessionView {
   localSessionId: string;
   title: string;
