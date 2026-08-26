@@ -773,6 +773,18 @@ final class ChatCoordinator implements AutoCloseable {
         activate(branch.id);
     }
 
+    private void createImportedBranch(String snapshotId, String contextMode, String webMode) throws Exception {
+        ChatDatabase.Snapshot snapshot = db.getSnapshot(snapshotId);
+        if (snapshot == null || !("import-chatgpt".equals(snapshot.sourceType) || "import-claude".equals(snapshot.sourceType))) {
+            throw new IllegalArgumentException("imported conversation not found");
+        }
+        ChatDatabase.Provider provider = preferredProvider(); if (provider == null) throw new IllegalStateException("configure a Chat provider before opening an imported conversation");
+        ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); if (profile == null) throw new IllegalStateException("configure a model before opening an imported conversation");
+        ChatDatabase.Session branch = db.createSession(profile, "导入 · " + snapshot.sourceTitle, snapshot.id, null,
+                profile.defaultReasoning, contextMode, webMode);
+        activate(branch.id);
+    }
+
     private ChatDatabase.Provider preferredProvider() {
         for (ChatDatabase.Provider provider : db.listProviders()) if (secrets.has(provider.id)) return provider;
         return null;
