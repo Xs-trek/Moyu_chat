@@ -37,7 +37,7 @@ public class SmartVerifierServiceTest {
         assertEquals("fail_without_evidence", result.invalidReason);
     }
 
-    @Test public void incompleteHarnessCoverageForcesAbstainEvenIfChecksPass() {
+    @Test public void incompleteHarnessCoverageForcesAbstainEvenIfChecksPass() throws Exception {
         JSONArray checks = new JSONArray();
         for (String rule : new String[]{"constraint_adherence","evidence_integrity","completion_honesty","uncertainty_honesty","material_factual_support"}) {
             checks.put(new org.json.JSONObject().put("rule", rule).put("result", "pass").put("severity", "minor")
