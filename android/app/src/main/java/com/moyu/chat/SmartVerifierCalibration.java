@@ -46,7 +46,7 @@ final class SmartVerifierCalibration {
 
     static Decision decide(ChatDatabase db, String calibrationKey, SmartVerifierService.Result result) {
         JSONArray features = featureVector(result);
-        if (result == null || !SmartVerifierService.STATUS_VALID.equals(result.status)) {
+        if (result == null || !SmartVerifierService.STATUS_VALID.equals(result.status) || !result.coverageComplete) {
             return new Decision(0.50d, ACTION_ABSTAIN, labelCount(db, calibrationKey), false, features);
         }
         double cold = coldRisk(result, features);
