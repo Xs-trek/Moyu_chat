@@ -488,6 +488,9 @@ final class ChatCoordinator implements AutoCloseable {
         String[] streamStage = new String[]{"connecting"};
         JSONArray outputMedia = new JSONArray();
         JSONArray providerContinuationItems = new JSONArray();
+        java.util.Set<String> providerContinuationKeys = new java.util.HashSet<>();
+        int[] providerContinuationChars = new int[]{0};
+        boolean[] providerContinuationOverflow = new boolean[]{false};
         final boolean allowImageOutput = ChatDatabase.supportsModality(session.outputModalities, "image");
         String usageKey = "usage:turn:" + UUID.randomUUID();
         JSONObject usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString()).put("context", prompt.diagnostics());
