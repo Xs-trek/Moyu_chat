@@ -109,6 +109,7 @@ final class ContextBuilder {
 
         int covered = validCoveredItems(session, durableProjected.length());
         JSONArray budgetProjection = slice(durableProjected, covered);
+        JSONArray requiredProjection = new JSONArray(budgetProjection.toString());
 
         // Web/Memory/RAG are optional enhancements. They may consume spare context, but must never
         // make a current user turn fail when that turn fits without the optional material.
