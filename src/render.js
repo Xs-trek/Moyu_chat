@@ -259,6 +259,17 @@ function assistantFooter(item, finalized, sessionId) {
       button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
 }
 
+function contextModeBadge(item) {
+  if (item?.role !== 'assistant') return null;
+  const mode = String(item.contextMode || '').trim();
+  if (!mode) return null;
+  const labels = { minimal: '极简', auto: '自动', smart: '智能' };
+  const label = labels[mode] || mode;
+  const effective = String(item.effectiveContextMode || '').trim();
+  const title = effective && effective !== mode ? `上下文模式：${label} · 实际 ${effective}` : `上下文模式：${label}`;
+  return h('span', { class: `badge context-mode ${mode}`, title, text: label });
+}
+
 function timelineItem(item, runtimeRunning = false, sessionId = '', showReasoning = false) {
   if (item.kind === 'message') {
     const finalized = !item.streaming && !runtimeRunning && Number(item.localSeq) > 0 && (item.role === 'user' || item.role === 'assistant');
