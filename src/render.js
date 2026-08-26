@@ -433,6 +433,15 @@ export function patchConversation() {
     timeline.querySelectorAll('.streaming-state').forEach((node) => node.remove());
   }
 
+  const busyLabel = session.webPreparingStage === 'web_fetch' ? '读取网页' : session.webPreparingStage === 'web_search' ? '搜索网页' : contextPreparing ? '整理上下文' : running ? '生成中' : '';
+  const subtitle = document.querySelector('.conversation-title small');
+  if (subtitle) subtitle.textContent = busyLabel || `${session.providerName} · ${session.modelName || session.model}`;
+  const busy = document.querySelector('.conversation-busy');
+  if (busy) {
+    busy.textContent = busyLabel;
+    busy.classList.toggle('is-hidden', !busyLabel);
+  }
+
   const candidateComposer = document.querySelector('form[data-form="composer"]');
   const composer = candidateComposer?.dataset.sessionId === session.localSessionId ? candidateComposer : null;
   const send = composer?.querySelector('.send-btn');
