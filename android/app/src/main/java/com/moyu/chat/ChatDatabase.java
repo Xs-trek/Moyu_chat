@@ -194,6 +194,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.maxOutputTokens = profile.maxOutputTokens;
         s.inputModalities = normalizeModalities(profile.inputModalities); s.outputModalities = normalizeModalities(profile.outputModalities);
         s.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
+        s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); s.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
+        s.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
         s.webMode = ChatTurnOptions.normalizeWebMode(webMode);
         s.reasoningEffort = ReasoningPolicy.normalizeEffort(reasoningEffort == null ? profile.defaultReasoning : reasoningEffort);
         if (!ReasoningPolicy.allows(profile.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("reasoning effort not supported by model profile");
