@@ -137,6 +137,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("UPDATE settings SET value='standard' WHERE key='defaultContextMode' AND value='auto'");
             db.execSQL("CREATE VIRTUAL TABLE knowledge_fts USING fts4(scope_id,item_ref,ordinal,role,text,terms,tokenize=simple)");
         }
+        if (oldVersion < 11) {
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
