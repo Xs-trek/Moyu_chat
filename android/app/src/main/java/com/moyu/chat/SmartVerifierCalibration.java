@@ -14,7 +14,7 @@ import java.util.Locale;
  * explicit verifier feedback a small regularized logistic head is blended in progressively.
  */
 final class SmartVerifierCalibration {
-    static final String POLICY_VERSION = "smart-verifier-v1";
+    static final String POLICY_VERSION = "smart-verifier-v2";
     static final double COLD_ACCEPT_MAX_RISK = 0.45d;
     static final double COLD_REPAIR_MIN_RISK = 0.65d;
     static final int MIN_PERSONAL_LABELS = 30;
