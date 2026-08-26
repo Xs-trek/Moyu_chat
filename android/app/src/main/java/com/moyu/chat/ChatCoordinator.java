@@ -520,6 +520,10 @@ final class ChatCoordinator implements AutoCloseable {
         } finally {
             activeTurns.remove(id);
             startingSessions.remove(id);
+            preparingSessions.remove(id);
+            webPreparingStages.remove(id);
+            lastStreamViewNanos.remove(id);
+            host.setTurnRuntimeActive(id, false);
             emitView();
         }
     }
