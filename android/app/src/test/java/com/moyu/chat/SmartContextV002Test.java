@@ -148,21 +148,21 @@ public class SmartContextV002Test {
         assertEquals("", stored.contextCheckpoint);
     }
 
-    @Test public void autoLocalSkipsRouterOnFirstTurn() throws Exception {
+    @Test public void standardSkipsRouterOnFirstTurn() throws Exception {
         server.setDispatcher(new Dispatcher() {
-            @Override public MockResponse dispatch(RecordedRequest request) { return chat("auto answer"); }
+            @Override public MockResponse dispatch(RecordedRequest request) { return chat("standard answer"); }
         });
-        post("chat.session.create", new JSONObject().put("providerId", "p").put("contextMode", ContextMode.AUTO));
-        await("auto session", () -> latestView() != null && !latestView().optString("activeLocalSessionId", "").isEmpty());
+        post("chat.session.create", new JSONObject().put("providerId", "p").put("contextMode", ContextMode.STANDARD));
+        await("standard session", () -> latestView() != null && !latestView().optString("activeLocalSessionId", "").isEmpty());
         String sessionId = latestView().optString("activeLocalSessionId");
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "hello"));
         RecordedRequest main = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(main);
         assertFalse(main.getBody().readUtf8().contains("Classify the conversation"));
-        assertNull("auto local first turn must not pay a Router request", server.takeRequest(500, TimeUnit.MILLISECONDS));
-        await("auto complete", () -> "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
+        assertNull("standard first turn must not pay a Router request", server.takeRequest(500, TimeUnit.MILLISECONDS));
+        await("standard complete", () -> "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
         JSONObject view = latestView().optJSONObject("activeSession");
-        assertEquals("auto", view.optString("contextMode"));
-        assertEquals("auto-minimal", view.optString("effectiveContextMode"));
+        assertEquals("standard", view.optString("contextMode"));
+        assertEquals("standard", view.optString("effectiveContextMode"));
     }
 
     @Test public void truncationBuildsCheckpointWithoutRewritingDurableTimeline() throws Exception {
