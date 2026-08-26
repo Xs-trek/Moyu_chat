@@ -224,6 +224,27 @@ final class ChatCoordinator implements AutoCloseable {
         });
     }
 
+    void importConversationFromUri(String source, Uri uri, ContentResolver resolver) {
+        final String importSource = importSource(source);
+        if (uri == null || resolver == null) { host.showMessage("导入文件不可用"); return; }
+        if (!importInProgress.compareAndSet(false, true)) { host.showMessage("已有会话导入正在进行"); return; }
+        emitView();
+        preparationWorker.execute(() -> {
+            try (InputStream input = resolver.openInputStream(uri)) {
+                if (input == null) throw new IllegalArgumentException("无法读取导入文件");
+                String displayName = importDisplayName(resolver, uri);
+                ConversationImportService.Report report = conversationImporter.importFile(importSource, displayName, input,
+                        conversation -> snapshots.importExternal(importSource, conversation));
+                host.showMessage(report.summary(importSource));
+            } catch (Exception error) {
+                host.showMessage("会话导入失败：" + safe(error));
+            } finally {
+                importInProgress.set(false);
+                emitView();
+            }
+        });
+    }
+
     private void createSession(JSONObject p) {
         String providerId = required(p, "providerId");
         ChatDatabase.Provider provider = db.getProvider(providerId);
