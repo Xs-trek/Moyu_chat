@@ -605,7 +605,8 @@ final class ChatCoordinator implements AutoCloseable {
                                    CanonicalPrompt mainPrompt, String currentUserText, String candidate,
                                    String candidateReasoning, JSONArray candidateMedia,
                                    LinkedHashMap<String, JSONObject> webSources, String webBackend,
-                                   JSONArray providerContinuationItems, String webContext) {
+                                   JSONArray providerContinuationItems, String webContext,
+                                   String requestDeploymentFingerprint) {
         String finalText = candidate == null ? "" : candidate;
         String finalReasoning = candidateReasoning == null ? "" : candidateReasoning;
         boolean repairAttempted = false;
