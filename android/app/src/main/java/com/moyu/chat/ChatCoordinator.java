@@ -612,7 +612,7 @@ final class ChatCoordinator implements AutoCloseable {
         boolean repairAttempted = false;
         boolean repaired = false;
         boolean repairLimitReached = false;
-        String calibrationKey = SmartVerifierCalibration.calibrationKey(db, provider, session);
+        String calibrationKey = SmartVerifierCalibration.calibrationKey(requestDeploymentFingerprint);
         JSONArray evidence = SmartVerifierService.evidence(currentUserText, mainPrompt, sourceArray(webSources), webContext);
         JSONArray attempts = new JSONArray();
         SmartVerifierService.Result verification = smartVerifier.verify(transport, provider, apiKey, session,
