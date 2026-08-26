@@ -23,13 +23,22 @@ systemTheme?.addEventListener?.('change', () => {
   if (getState().view?.appearance?.theme === 'system') renderGate.request();
 });
 
+let scrollFrame = 0;
+let pendingScrollNode = null;
 document.addEventListener('scroll', (event) => {
   const node = event.target;
   if (!(node instanceof Element) || !node.classList.contains('timeline-scroll')) return;
-  const jump = node.querySelector('.jump-latest');
-  if (!jump) return;
-  const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
-  jump.classList.toggle('is-hidden', nearBottom);
+  pendingScrollNode = node;
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = 0;
+    const scroller = pendingScrollNode;
+    pendingScrollNode = null;
+    if (!scroller) return;
+    const state = noteTimelineScroll(scroller);
+    const jump = scroller.querySelector('.jump-latest');
+    if (jump) jump.classList.toggle('is-hidden', state.nearBottom && state.followLatest);
+  });
 }, true);
 
 document.addEventListener('click', (event) => {
