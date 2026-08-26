@@ -573,10 +573,24 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized Snapshot getSnapshot(String id) {
         if (id == null) return null;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_type,source_id,source_title,source_runtime,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE snapshot_id=?", new String[]{id})) {
-            if (!c.moveToFirst()) return null;
-            Snapshot s = new Snapshot(); s.id = c.getString(0); s.sourceType = c.getString(1); s.sourceId = c.getString(2); s.sourceTitle = c.getString(3);
-            s.sourceRuntime = c.isNull(4) ? null : c.getString(4); s.createdAt = c.getString(5); s.itemCount = c.getInt(6); s.sourceItemCount = c.getInt(7); s.truncated = c.getInt(8) != 0; s.contentHash = c.isNull(9) ? null : c.getString(9); return s;
+            return c.moveToFirst() ? readSnapshot(c) : null;
         }
+    }
+
+    public synchronized Snapshot findSnapshotBySourceContent(String sourceType, String sourceId, String contentHash) {
+        if (sourceType == null || sourceId == null || contentHash == null) return null;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_type,source_id,source_title,source_runtime,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE source_type=? AND source_id=? AND content_hash=? LIMIT 1",
+                new String[]{sourceType, sourceId, contentHash})) {
+            return c.moveToFirst() ? readSnapshot(c) : null;
+        }
+    }
+
+    public synchronized List<Snapshot> listImportedSnapshots() {
+        ArrayList<Snapshot> out = new ArrayList<>();
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_type,source_id,source_title,source_runtime,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE source_type IN ('import-chatgpt','import-claude') ORDER BY created_at DESC, source_title", null)) {
+            while (c.moveToNext()) out.add(readSnapshot(c));
+        }
+        return out;
     }
 
     public synchronized JSONArray snapshotItems(String id) {
