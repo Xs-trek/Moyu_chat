@@ -4,25 +4,44 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Locale;
 
-/** Stable identity for provider-private replay state; never includes the raw API key. */
+/** Stable identities for deployment-scoped calibration and session-chain-scoped native replay. */
 final class ProviderContinuationIdentity {
     private static final String CREDENTIAL_EPOCH_PREFIX = "providerCredentialEpoch:";
+    private static final String HISTORY_EPOCH_PREFIX = "sessionContinuationEpoch:";
 
     private ProviderContinuationIdentity() { }
 
+    /** Concrete deployment identity; intentionally stable across ordinary conversation edits. */
     static String fingerprint(ChatDatabase db, ChatDatabase.Provider provider, ChatDatabase.Session session) {
         if (db == null || provider == null || session == null) return "";
         String endpoint;
         try { endpoint = ProviderEndpoint.normalize(provider.baseUrl); }
         catch (Exception ignored) { endpoint = provider.baseUrl == null ? "" : provider.baseUrl.trim(); }
-        String epoch = db.setting(CREDENTIAL_EPOCH_PREFIX + provider.id, "0");
+        String credentialEpoch = db.setting(CREDENTIAL_EPOCH_PREFIX + provider.id, "0");
         String profile = session.modelProfileId == null ? "" : session.modelProfileId;
-        return digest(provider.protocol + "\n" + endpoint + "\n" + provider.id + "\n" + profile + "\n" + session.model + "\n" + epoch);
+        String authMode = provider.authMode == null ? "" : provider.authMode.trim();
+        return digest(provider.protocol + "\n" + endpoint + "\n" + authMode + "\n" + provider.id + "\n"
+                + profile + "\n" + session.model + "\n" + credentialEpoch);
+    }
+
+    /** Native replay additionally requires an unbroken local conversation-history chain. */
+    static String continuationFingerprint(ChatDatabase db, ChatDatabase.Provider provider, ChatDatabase.Session session) {
+        if (session == null) return "";
+        String historyEpoch = db == null ? "0" : db.setting(HISTORY_EPOCH_PREFIX + session.id, "0");
+        return digest(fingerprint(db, provider, session) + "\n" + historyEpoch);
     }
 
     static void bumpCredentialEpoch(ChatDatabase db, String providerId) {
         if (db == null || providerId == null || providerId.trim().isEmpty()) return;
-        String key = CREDENTIAL_EPOCH_PREFIX + providerId;
+        bump(db, CREDENTIAL_EPOCH_PREFIX + providerId);
+    }
+
+    static void bumpHistoryEpoch(ChatDatabase db, String sessionId) {
+        if (db == null || sessionId == null || sessionId.trim().isEmpty()) return;
+        bump(db, HISTORY_EPOCH_PREFIX + sessionId);
+    }
+
+    private static void bump(ChatDatabase db, String key) {
         long current = 0L;
         try { current = Long.parseLong(db.setting(key, "0")); } catch (Exception ignored) { }
         db.putSetting(key, Long.toString(current + 1L));
