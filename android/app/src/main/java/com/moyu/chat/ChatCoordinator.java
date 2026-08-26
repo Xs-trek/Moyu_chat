@@ -39,6 +39,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final java.util.Set<String> startingSessions = ConcurrentHashMap.newKeySet();
     private final java.util.Set<String> preparingSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, String> webPreparingStages = new ConcurrentHashMap<>();
+    private final Map<String, String> postProcessingStages = new ConcurrentHashMap<>();
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
