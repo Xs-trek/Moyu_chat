@@ -738,7 +738,13 @@ final class ChatCoordinator implements AutoCloseable {
             }
         }
         JSONArray local = db.timeline(s.id);
-        for (int i = 0; i < local.length(); i++) { JSONObject item = local.optJSONObject(i); if (item != null) out.put(item); }
+        for (int i = 0; i < local.length(); i++) {
+            JSONObject item = local.optJSONObject(i); if (item == null) continue;
+            JSONObject visible = new JSONObject(item.toString());
+            // Opaque provider continuation can contain encrypted reasoning/signatures and is native-only.
+            visible.remove("providerContinuation");
+            out.put(visible);
+        }
         return out;
     }
 
