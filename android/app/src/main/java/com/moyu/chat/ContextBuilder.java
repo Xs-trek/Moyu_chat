@@ -60,8 +60,9 @@ final class ContextBuilder {
         ContextMode.Policy mode = ContextMode.resolve(session, snapshot);
         if (!mode.checkpointEnabled) return null;
         ChatDatabase.Provider provider = db.getProvider(session.providerId);
+        boolean allowContinuation = mode.providerContinuationEnabled && ProviderContinuationPolicy.enabled(session.continuationMode);
 
-        JSONArray durable = durableProjection(session, snapshot, provider, mode.providerContinuationEnabled);
+        JSONArray durable = durableProjection(session, snapshot, provider, allowContinuation);
         int covered = validCoveredItems(session, durable.length());
         JSONArray activeTail = slice(durable, covered);
         String instructions = promptPolicy.instructions(session, snapshot, false);
