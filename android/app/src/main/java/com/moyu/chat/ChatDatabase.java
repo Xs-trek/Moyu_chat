@@ -51,6 +51,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public String inputModalities = "text", outputModalities = "text", toolCapabilities = "";
         /** Explicit thinking capability; provider-default avoids model-name guessing. */
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
+        public String continuationMode = ProviderContinuationPolicy.NONE;
         public int thinkingBudgetTokens = 0;
         public int contextTokens, inputTokens, maxOutputTokens;
     }
