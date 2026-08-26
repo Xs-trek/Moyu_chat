@@ -85,7 +85,23 @@ function positionChoiceMenu(field) {
   const viewportHeight = viewport?.height || window.innerHeight;
   const margin = 10;
   const rect = trigger.getBoundingClientRect();
-  const width = Math.min(340, Math.max(rect.width, viewportWidth - margin * 2));
+  const mobileSheet = viewportWidth <= 640 && Boolean(window.matchMedia?.('(pointer: coarse)')?.matches);
+
+  if (mobileSheet) {
+    field.classList.add('sheet');
+    const width = Math.max(280, viewportWidth - margin * 2);
+    const maxHeight = Math.min(420, Math.max(180, viewportHeight * 0.58));
+    menu.style.left = `${Math.round(viewportLeft + margin)}px`;
+    menu.style.width = `${Math.round(width)}px`;
+    menu.style.maxHeight = `${Math.round(maxHeight)}px`;
+    const renderedHeight = Math.min(maxHeight, Math.max(120, menu.scrollHeight));
+    menu.style.top = `${Math.round(viewportTop + viewportHeight - renderedHeight - margin)}px`;
+    menu.style.bottom = 'auto';
+    return;
+  }
+
+  field.classList.remove('sheet');
+  const width = Math.min(340, Math.max(rect.width, Math.min(340, viewportWidth - margin * 2)));
   const maxLeft = viewportLeft + viewportWidth - width - margin;
   const left = Math.max(viewportLeft + margin, Math.min(rect.right - width, maxLeft));
   const availableAbove = Math.max(120, rect.top - viewportTop - margin * 2);
