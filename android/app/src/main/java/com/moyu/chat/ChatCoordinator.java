@@ -507,8 +507,20 @@ final class ChatCoordinator implements AutoCloseable {
             @Override public void onStage(String stage) { worker.execute(() -> { try { if (stage == null || stage.trim().isEmpty()) return; streamStage[0] = stage.trim(); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception ignored) { } }); }
             @Override public void onReasoningDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { streamStage[0] = "reasoning"; reasoningOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception ignored) { } }); }
             @Override public void onProviderContinuation(JSONObject state) { if (state == null || !contextPolicy.providerContinuationEnabled) return; worker.execute(() -> { try {
-                if (!provider.protocol.equals(state.optString("protocol", ""))) return;
-                JSONObject item = state.optJSONObject("item"); if (item != null) providerContinuationItems.put(new JSONObject(item.toString()));
+                if (!provider.protocol.equals(state.optString("protocol", "")) || providerContinuationOverflow[0]) return;
+                JSONObject item = state.optJSONObject("item"); if (item == null) return;
+                String serialized = item.toString();
+                String key = item.optString("id", "").trim();
+                if (key.isEmpty()) key = item.optString("type", "") + ":" + Integer.toHexString(serialized.hashCode());
+                if (!providerContinuationKeys.add(key)) return;
+                if (providerContinuationChars[0] + serialized.length() > MAX_PROVIDER_CONTINUATION_CHARS) {
+                    providerContinuationOverflow[0] = true;
+                    providerContinuationKeys.clear();
+                    while (providerContinuationItems.length() > 0) providerContinuationItems.remove(providerContinuationItems.length() - 1);
+                    return; // never persist/replay a partial opaque output-item set.
+                }
+                providerContinuationChars[0] += serialized.length();
+                providerContinuationItems.put(new JSONObject(serialized));
             } catch (Exception ignored) { } }); }
             @Override public void onTextDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage[0] = "output"; textOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception ignored) { } }); }
             @Override public void onImage(String mimeType, String base64, String fileName) { if (!allowImageOutput) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage[0] = "output"; JSONObject image = mediaStore.saveBase64Image(mimeType, base64, fileName); outputMedia.put(image); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception error) { host.showMessage("image output ignored: " + safe(error)); } }); }
