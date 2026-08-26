@@ -44,7 +44,8 @@ for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
-if (!coordinator.includes('contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia)')) fail('send must preflight pending text+media using the session-snapshotted model limits before durable mutation');
+if (!coordinator.includes('contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row without duplicating the pending input');
+if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
 if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_id')) fail('deployment-scoped model profile/session binding missing');
 if (!db.includes('input_modalities') || !db.includes('output_modalities') || !db.includes('draft_media')) fail('model/session multimodal capability persistence missing');
 if (/\bput\("text",\s*trimmed\b/.test(coordinator)) fail('send must store the raw user text; trim is only an emptiness check');
