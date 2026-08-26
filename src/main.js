@@ -180,11 +180,17 @@ document.addEventListener('click', (event) => {
     const localSeq = Number(target.dataset.localSeq);
     if (target.dataset.sessionId && Number.isInteger(localSeq) && localSeq > 0) {
       openConfirmDialog({
-        title: '从这里继续',
-        message: '将以这条消息为截止点创建一个新的本地分支。原会话不会被修改或删除。',
-        confirmText: '创建回滚分支',
+        title: '回退当前会话',
+        message: '这条消息及其后的本地消息将从当前会话撤销，不会自动创建分支。若要保留两条路线，请先使用“分支”。',
+        confirmText: '回退', danger: true,
         onConfirm: () => postIntent('chat.message.rollback', { localSessionId: target.dataset.sessionId, localSeq }),
       });
+    }
+  }
+  else if (action === 'branch-message') {
+    const localSeq = Number(target.dataset.localSeq);
+    if (target.dataset.sessionId && Number.isInteger(localSeq) && localSeq > 0) {
+      postIntent('branch.create.local', { localSessionId: target.dataset.sessionId, throughSeq: localSeq });
     }
   }
   else if (action === 'new-chat') {
