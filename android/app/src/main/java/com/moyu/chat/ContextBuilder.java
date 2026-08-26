@@ -90,7 +90,7 @@ final class ContextBuilder {
         JSONArray durableProjected = new JSONArray();
         appendVisible(durableProjected, inherited, session, provider, false);
         int inheritedCount = durableProjected.length();
-        appendVisible(durableProjected, local, session, provider, mode.providerContinuationEnabled);
+        appendVisible(durableProjected, local, session, provider, allowContinuation);
 
         String pending = pendingUserText == null ? "" : pendingUserText;
         JSONArray pendingImages = projectAttachments(pendingMedia);
