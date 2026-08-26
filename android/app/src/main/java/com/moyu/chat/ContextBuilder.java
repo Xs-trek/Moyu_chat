@@ -135,8 +135,17 @@ final class ContextBuilder {
                     retrievalSuffix, contextTokens, inputTokens, outputTokens);
         }
 
-        PolicySelection finalSelection = selectWithPolicy(session, snapshot, first.truncated, budgetProjection,
-                contextTokens, inputTokens, outputTokens);
+        PolicySelection finalSelection;
+        try {
+            finalSelection = selectWithPolicy(session, snapshot, first.truncated, budgetProjection,
+                    contextTokens, inputTokens, outputTokens);
+        } catch (IllegalArgumentException optionalOverflow) {
+            // Optional Web/Memory/RAG must never turn an otherwise valid current request into a hard failure.
+            PolicySelection requiredFirst = selectWithPolicy(session, snapshot, false, requiredProjection,
+                    contextTokens, inputTokens, outputTokens);
+            finalSelection = selectWithPolicy(session, snapshot, requiredFirst.result.truncated, requiredProjection,
+                    contextTokens, inputTokens, outputTokens);
+        }
         ContextBudgetManager.Result finalResult = finalSelection.result;
         return new CanonicalPrompt(finalSelection.instructions, finalResult.messages, finalResult.truncated,
                 finalResult.estimatedTokens, inheritedCount, localCount, finalResult.omittedMessageCount,
