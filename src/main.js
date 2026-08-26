@@ -257,6 +257,13 @@ document.addEventListener('change', (event) => {
 });
 
 let draftTimer = 0;
+const draftGenerations = new Map();
+function draftGeneration(sessionId) { return draftGenerations.get(sessionId) || 0; }
+function advanceDraftGeneration(sessionId) {
+  const next = draftGeneration(sessionId) + 1;
+  draftGenerations.set(sessionId, next);
+  return next;
+}
 
 function resizeComposerTextarea(input) {
   if (!input || input.name !== 'message') return;
