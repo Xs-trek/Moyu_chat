@@ -446,6 +446,13 @@ export function patchConversation() {
   const composer = candidateComposer?.dataset.sessionId === session.localSessionId ? candidateComposer : null;
   const send = composer?.querySelector('.send-btn');
   if (send) { send.disabled = !session.canSend; send.textContent = '↑'; }
+  const attachment = composer?.querySelector('.attachment-btn');
+  if (attachment) attachment.disabled = !session.canAttachImage;
+  composer?.querySelectorAll('.choice-field').forEach((field) => {
+    const trigger = field.querySelector('.choice-trigger');
+    if (!trigger) return;
+    trigger.disabled = field.classList.contains('disabled-choice') || !session.canConfigureTurn;
+  });
   const input = composer?.querySelector('textarea[name="message"]');
   if (input) input.placeholder = session.canSend
     ? (String(session.inputModalities || '').split(',').includes('image') ? '输入消息，或添加图片' : '输入消息')
