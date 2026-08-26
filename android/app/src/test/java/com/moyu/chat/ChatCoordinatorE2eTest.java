@@ -257,10 +257,7 @@ public class ChatCoordinatorE2eTest {
     @Test public void providerImageOutputPersistsAsAssistantAttachment() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
-                String event = new JSONObject().put("choices", new JSONArray().put(new JSONObject()
-                        .put("delta", new JSONObject().put("content", new JSONArray().put(new JSONObject()
-                                .put("type", "image_url").put("image_url", new JSONObject().put("url", "data:image/gif;base64," + TINY_GIF)))))
-                        .put("finish_reason", "stop"))).toString();
+                String event = "{\"choices\":[{\"delta\":{\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/gif;base64," + TINY_GIF + "\"}}]},\"finish_reason\":\"stop\"}]}";
                 return sse("data: " + event + "\n\ndata: [DONE]\n\n");
             }
         });
