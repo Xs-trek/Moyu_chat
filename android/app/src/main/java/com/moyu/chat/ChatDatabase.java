@@ -258,7 +258,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
-    /** Deletes one local session and its now-unreferenced origin snapshot; timeline/handoffs cascade by FK. */
+    /** Deletes one local session and all derived lexical-index data that belongs to it. */
     public synchronized void deleteSession(String id) {
         if (id == null || id.trim().isEmpty()) throw new IllegalArgumentException("session id required");
         SQLiteDatabase db = getWritableDatabase();
@@ -274,14 +274,35 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         }
         db.beginTransaction();
         try {
+            db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(id)});
+            db.delete("settings", "key=?", new String[]{LocalKnowledgeStore.indexMarkerKey(id)});
             if (db.delete("sessions", "local_id=?", new String[]{id}) != 1) throw new IllegalStateException("session delete failed");
             if (originSnapshotId != null && !isReusableImportSource(originSourceType)) {
                 boolean referenced;
                 try (Cursor c = db.rawQuery("SELECT 1 FROM sessions WHERE origin_snapshot_id=? LIMIT 1", new String[]{originSnapshotId})) {
                     referenced = c.moveToFirst();
                 }
-                if (!referenced) db.delete("snapshots", "snapshot_id=?", new String[]{originSnapshotId});
+                if (!referenced) {
+                    db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.snapshotScope(originSnapshotId)});
+                    db.delete("snapshots", "snapshot_id=?", new String[]{originSnapshotId});
+                }
             }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    /** Reusable imported history has its own lifecycle; refuse deletion while any Chat still references it. */
+    public synchronized void deleteImportedSnapshot(String snapshotId) {
+        Snapshot snapshot = getSnapshot(snapshotId);
+        if (snapshot == null || !isReusableImportSource(snapshot.sourceType)) throw new IllegalArgumentException("imported conversation not found");
+        SQLiteDatabase db = getWritableDatabase();
+        try (Cursor c = db.rawQuery("SELECT 1 FROM sessions WHERE origin_snapshot_id=? LIMIT 1", new String[]{snapshotId})) {
+            if (c.moveToFirst()) throw new IllegalStateException("delete Chats created from this import before deleting the imported source");
+        }
+        db.beginTransaction();
+        try {
+            db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.snapshotScope(snapshotId)});
+            if (db.delete("snapshots", "snapshot_id=?", new String[]{snapshotId}) != 1) throw new IllegalStateException("import source delete failed");
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
