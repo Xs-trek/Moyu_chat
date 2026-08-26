@@ -93,34 +93,56 @@ final class SnapshotService {
         return snapshot;
     }
 
-    /** Keeps one contiguous recent visible tail. Older content is either retained or explicitly marked omitted. */
+    /** Keeps one contiguous recent tail of complete user-led turns; orphan assistants are never snapshotted alone. */
     private static Normalized normalize(JSONArray raw, int maxItems, int maxTextChars) throws Exception {
         if (raw == null) return new Normalized(new JSONArray(), 0, false);
         int sourceVisible = 0;
-        for (int i = 0; i < raw.length(); i++) if (visible(raw.optJSONObject(i))) sourceVisible++;
-
-        ArrayList<JSONObject> reverse = new ArrayList<>();
-        int chars = 0;
-        boolean truncated = false;
-        for (int i = raw.length() - 1; i >= 0; i--) {
+        boolean structurallyOmitted = false;
+        ArrayList<ArrayList<JSONObject>> turns = new ArrayList<>();
+        ArrayList<JSONObject> current = null;
+        for (int i = 0; i < raw.length(); i++) {
             JSONObject item = raw.optJSONObject(i);
             if (!visible(item)) continue;
-            String text = item.optString("text", "");
-            if (text.length() > maxTextChars && reverse.isEmpty()) throw new IllegalArgumentException("latest snapshot message exceeds snapshot limit");
-            if (reverse.size() >= maxItems || chars + text.length() > maxTextChars) { truncated = true; break; }
-            chars += text.length();
-            JSONObject normalizedItem = new JSONObject().put("kind", "message").put("role", item.optString("role")).put("text", text)
-                    .put("createdAt", bounded(item.optString("createdAt", Instant.EPOCH.toString()), "createdAt"));
-            if ("assistant".equals(item.optString("role")) && item.optBoolean("incomplete", false)) {
-                normalizedItem.put("incomplete", true).put("terminalCode", bounded(item.optString("terminalCode", "interrupted"), "terminal code"));
+            sourceVisible++;
+            JSONObject normalizedItem = normalizeVisibleItem(item);
+            if ("user".equals(normalizedItem.optString("role"))) {
+                current = new ArrayList<>(); current.add(normalizedItem); turns.add(current);
+            } else if (current != null) {
+                current.add(normalizedItem);
+            } else {
+                structurallyOmitted = true;
             }
-            JSONArray attachments = normalizeAttachments(item.optJSONArray("attachments"));
-            if (attachments.length() > 0) normalizedItem.put("attachments", attachments);
-            reverse.add(normalizedItem);
         }
-        Collections.reverse(reverse);
-        JSONArray out = new JSONArray(); for (JSONObject item : reverse) out.put(item);
+
+        ArrayList<ArrayList<JSONObject>> keptReverse = new ArrayList<>();
+        int keptItems = 0, chars = 0;
+        boolean truncated = structurallyOmitted;
+        for (int i = turns.size() - 1; i >= 0; i--) {
+            ArrayList<JSONObject> turn = turns.get(i);
+            int turnChars = 0;
+            for (JSONObject item : turn) turnChars += item.optString("text", "").length();
+            if (keptReverse.isEmpty() && (turn.size() > maxItems || turnChars > maxTextChars)) {
+                throw new IllegalArgumentException("latest snapshot turn exceeds snapshot limit");
+            }
+            if (keptItems + turn.size() > maxItems || chars + turnChars > maxTextChars) { truncated = true; break; }
+            keptReverse.add(turn); keptItems += turn.size(); chars += turnChars;
+        }
+        Collections.reverse(keptReverse);
+        JSONArray out = new JSONArray();
+        for (ArrayList<JSONObject> turn : keptReverse) for (JSONObject item : turn) out.put(item);
         return new Normalized(out, sourceVisible, truncated || out.length() < sourceVisible);
+    }
+
+    private static JSONObject normalizeVisibleItem(JSONObject item) throws Exception {
+        String text = item.optString("text", "");
+        JSONObject normalizedItem = new JSONObject().put("kind", "message").put("role", item.optString("role")).put("text", text)
+                .put("createdAt", bounded(item.optString("createdAt", Instant.EPOCH.toString()), "createdAt"));
+        if ("assistant".equals(item.optString("role")) && item.optBoolean("incomplete", false)) {
+            normalizedItem.put("incomplete", true).put("terminalCode", bounded(item.optString("terminalCode", "interrupted"), "terminal code"));
+        }
+        JSONArray attachments = normalizeAttachments(item.optJSONArray("attachments"));
+        if (attachments.length() > 0) normalizedItem.put("attachments", attachments);
+        return normalizedItem;
     }
 
     private static boolean visible(JSONObject item) {
