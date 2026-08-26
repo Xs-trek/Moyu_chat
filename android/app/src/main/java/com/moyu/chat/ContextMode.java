@@ -15,13 +15,20 @@ final class ContextMode {
         final boolean checkpointEnabled;
         final boolean retrievalEnabled;
         final boolean evidencePolicyEnabled;
+        final boolean memoryCallerEnabled;
+        final boolean providerContinuationEnabled;
+        final boolean verifierEnabled;
         final String effectiveLabel;
         Policy(boolean routerEnabled, boolean checkpointEnabled, boolean retrievalEnabled,
-               boolean evidencePolicyEnabled, String effectiveLabel) {
+               boolean evidencePolicyEnabled, boolean memoryCallerEnabled,
+               boolean providerContinuationEnabled, boolean verifierEnabled, String effectiveLabel) {
             this.routerEnabled = routerEnabled;
             this.checkpointEnabled = checkpointEnabled;
             this.retrievalEnabled = retrievalEnabled;
             this.evidencePolicyEnabled = evidencePolicyEnabled;
+            this.memoryCallerEnabled = memoryCallerEnabled;
+            this.providerContinuationEnabled = providerContinuationEnabled;
+            this.verifierEnabled = verifierEnabled;
             this.effectiveLabel = effectiveLabel;
         }
     }
@@ -36,14 +43,14 @@ final class ContextMode {
     }
 
     /**
-     * Minimal keeps only deterministic context budgeting. Standard mirrors the publicly observable
-     * mature-chat pattern: raw context first, retrieval/compaction only under real context pressure.
-     * Smart adds model-assisted task classification and reviewed evidence/response policies.
+     * Minimal deliberately has no caller capability for Memory/RAG or provider-private continuation.
+     * Standard keeps mature-chat context/retrieval/compaction plus native same-provider continuation.
+     * Smart adds bounded routing, evidence policy and the second-pass verifier.
      */
     static Policy resolve(ChatDatabase.Session session, ChatDatabase.Snapshot snapshot) {
         String mode = normalize(session == null ? null : session.contextMode);
-        if (MINIMAL.equals(mode)) return new Policy(false, false, false, false, MINIMAL);
-        if (SMART.equals(mode)) return new Policy(true, true, true, true, SMART);
-        return new Policy(false, true, true, false, STANDARD);
+        if (MINIMAL.equals(mode)) return new Policy(false, false, false, false, false, false, false, MINIMAL);
+        if (SMART.equals(mode)) return new Policy(true, true, true, true, true, true, true, SMART);
+        return new Policy(false, true, true, false, true, true, false, STANDARD);
     }
 }
