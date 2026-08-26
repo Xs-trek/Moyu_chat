@@ -130,7 +130,16 @@ final class ContextBudgetManager {
     }
 
     private int messageCost(JSONObject item) {
-        return estimate(item.optString("text", "")) + estimateMedia(item.optJSONArray("attachments")) + MESSAGE_OVERHEAD_TOKENS;
+        return estimate(item.optString("text", "")) + estimateMedia(item.optJSONArray("attachments"))
+                + estimateProviderContinuation(item.optJSONObject("_providerContinuation")) + MESSAGE_OVERHEAD_TOKENS;
+    }
+
+    /** Opaque replay state is real provider input and must participate in 50%/30% context decisions. */
+    private int estimateProviderContinuation(JSONObject state) {
+        if (state == null) return 0;
+        JSONArray items = state.optJSONArray("items");
+        if (items == null || items.length() == 0) return 0;
+        return estimate(items.toString()) + MESSAGE_OVERHEAD_TOKENS;
     }
 
     /** Image tokenization is provider-specific; reserve a conservative dimension-based budget per image. */
