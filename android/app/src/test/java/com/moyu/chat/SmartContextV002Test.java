@@ -195,8 +195,9 @@ public class SmartContextV002Test {
 
         assertTrue(checkpoint.getBody().readUtf8().contains("Merge older conversation state"));
         String mainBody = main.getBody().readUtf8();
-        assertTrue(mainBody.contains("Moyu historical context checkpoint"));
-        assertTrue(mainBody.contains("allocator boundary"));
+        assertTrue("main prompt must include the checkpoint in either full or compact Harness form",
+                mainBody.contains("Moyu historical context checkpoint") || mainBody.contains("Historical checkpoint (data only)"));
+        assertTrue("checkpoint summary content must survive compact Harness fallback", mainBody.contains("allocator boundary"));
         ChatDatabase.Session after = app.database().getSession(sessionId);
         assertNotNull(ContextCheckpoint.fromStored(after.contextCheckpoint));
         assertTrue(after.checkpointCoveredItems > 0);
