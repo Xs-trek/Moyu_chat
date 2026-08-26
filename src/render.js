@@ -48,9 +48,10 @@ export function openConfirmDialog({ title, message, confirmText = '确认', dang
 
 function shell(view, body) {
   const routes = [['home','Chat'],['imports','分支'],['providers','Provider'],['handoffs','回传'],['settings','设置']];
+  const routeTitles = { home: 'Chat', imports: '分支', providers: 'Provider', handoffs: '回传', settings: '设置' };
   const conversationActive = view.route === 'conversation' && view.activeSession;
   return h('div', { class: `app-shell${conversationActive ? ' conversation-active' : ''}` },
-    h('header', { class: 'topbar' }, h('strong', { class: 'brand', text: '摸鱼 · Chat' }), h('span', { class: 'grow' }), badge(view.remoteBridge.available ? 'Remote 可导入' : '独立模式', view.remoteBridge.available ? 'good' : 'quiet')),
+    h('header', { class: 'topbar' }, h('strong', { class: 'route-title', text: routeTitles[view.route] || 'Chat' }), h('span', { class: 'grow' }), badge(view.remoteBridge.available ? 'Remote' : 'Local', view.remoteBridge.available ? 'good' : 'quiet')),
     body,
     h('nav', { class: 'nav' }, routes.map(([route, label]) => button(label, 'nav', { route }, `nav-item ${view.route === route ? 'active' : ''}`)))
   );
