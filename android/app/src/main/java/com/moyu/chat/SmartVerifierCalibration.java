@@ -40,8 +40,10 @@ final class SmartVerifierCalibration {
 
     private SmartVerifierCalibration() { }
 
-    static String calibrationKey(String providerId, String model) {
-        return "verify:" + digest((providerId == null ? "" : providerId) + "\n" + (model == null ? "" : model) + "\n" + POLICY_VERSION);
+    static String calibrationKey(ChatDatabase db, ChatDatabase.Provider provider, ChatDatabase.Session session) {
+        if (db == null || provider == null || session == null) return "verify:" + digest(POLICY_VERSION + "\nmissing-deployment");
+        String deployment = ProviderContinuationIdentity.fingerprint(db, provider, session);
+        return "verify:" + digest(deployment + "\n" + POLICY_VERSION);
     }
 
     static Decision decide(ChatDatabase db, String calibrationKey, SmartVerifierService.Result result) {
