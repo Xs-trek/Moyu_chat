@@ -316,24 +316,22 @@ final class ChatCoordinator implements AutoCloseable {
         if (provider == null || key == null) throw new IllegalStateException("provider credential missing");
         ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
 
-        // Preflight the exact text+image prompt before mutating durable chat history. Session owns resolved capabilities.
-        CanonicalPrompt prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
+        // Resolve only stable session policy before durable mutation. Once the user taps Send the
+        // message belongs in the transcript and the composer draft must be cleared even if later
+        // context preparation, Web retrieval, or provider startup fails.
         ChatDatabase.Snapshot originSnapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         ContextMode.Policy contextPolicy = ContextMode.resolve(session, originSnapshot);
         TaskProfile profile = TaskProfile.fromStored(session.taskProfile);
         boolean needsRouter = contextPolicy.routerEnabled && profile == null;
         boolean checkpointAllowed = contextPolicy.checkpointEnabled && (profile == null || !"recent".equals(profile.contextPolicy));
-        boolean needsCheckpoint = checkpointAllowed && prompt.truncated && prompt.omittedItemCount > session.checkpointCoveredItems;
-        boolean preparing = needsRouter || needsCheckpoint;
+        boolean mayPrepare = needsRouter || checkpointAllowed;
 
-        // Commit the accepted user turn before any hidden preprocessing or Web retrieval. This keeps
-        // the transcript responsive like a native chat app even when Exa/search needs several seconds.
         ChatDatabase.ModelProfile requestModelProfile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
         String streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();
         JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "")
-                .put("streaming", true).put("streamStage", preparing ? "preparing" : "connecting").put("createdAt", Instant.now().toString())
+                .put("streaming", true).put("streamStage", mayPrepare ? "preparing" : "connecting").put("createdAt", Instant.now().toString())
                 .put("providerId", session.providerId).put("providerName", provider.displayName)
                 .put("modelProfileId", session.modelProfileId == null ? JSONObject.NULL : session.modelProfileId)
                 .put("model", session.model)
@@ -347,6 +345,23 @@ final class ChatCoordinator implements AutoCloseable {
         final long requestStartedNanos = System.nanoTime();
         emitView();
 
+        CanonicalPrompt prompt;
+        boolean needsCheckpoint;
+        boolean preparing;
+        try {
+            prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
+            needsCheckpoint = checkpointAllowed && prompt.truncated && prompt.omittedItemCount > session.checkpointCoveredItems;
+            preparing = needsRouter || needsCheckpoint;
+        } catch (Exception contextError) {
+            finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                    new String[]{"context_prepare_failed", safe(contextError)});
+            return;
+        }
+        if (!preparing && mayPrepare) {
+            live.put("streamStage", "connecting");
+            db.replaceTimelineBody(streamKey, live);
+            emitStreamingView(id);
+        }
         if (preparing) { preparingSessions.add(id); emitView(); }
         try {
             if (needsRouter) {
