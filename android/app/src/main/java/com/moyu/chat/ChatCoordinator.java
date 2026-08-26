@@ -950,15 +950,51 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception error) { host.showMessage("view update failed: " + safe(error)); }
     }
 
-    private JSONArray displayTimeline(ChatDatabase.Session s) throws Exception {
-        JSONArray out = new JSONArray();
-        if (s.originSnapshotId != null) {
-            JSONArray inherited = db.snapshotItems(s.originSnapshotId);
-            for (int i = 0; i < inherited.length(); i++) {
-                JSONObject item = inherited.optJSONObject(i); if (item == null) continue;
-                out.put(new JSONObject(item.toString()).put("inherited", true));
-            }
+    static final class DisplayTimeline {
+        final JSONArray items;
+        final int omittedInheritedItems;
+        DisplayTimeline(JSONArray items, int omittedInheritedItems) {
+            this.items = items; this.omittedInheritedItems = Math.max(0, omittedInheritedItems);
         }
+    }
+
+    /** UI-only bound: durable snapshot/model context stays intact while WebView receives a recent whole-turn tail. */
+    static DisplayTimeline boundedInheritedDisplay(JSONArray inherited) throws Exception {
+        JSONArray source = inherited == null ? new JSONArray() : inherited;
+        java.util.ArrayList<java.util.ArrayList<JSONObject>> turns = new java.util.ArrayList<>();
+        java.util.ArrayList<JSONObject> current = null;
+        int visible = 0, structurallyOmitted = 0;
+        for (int i = 0; i < source.length(); i++) {
+            JSONObject item = source.optJSONObject(i); if (item == null) continue;
+            String role = item.optString("role", "");
+            if (!("user".equals(role) || "assistant".equals(role))) continue;
+            visible++;
+            JSONObject copy = new JSONObject(item.toString()).put("inherited", true);
+            if ("user".equals(role)) {
+                current = new java.util.ArrayList<>(); current.add(copy); turns.add(current);
+            } else if (current != null) current.add(copy);
+            else structurallyOmitted++;
+        }
+        java.util.ArrayList<java.util.ArrayList<JSONObject>> keptReverse = new java.util.ArrayList<>();
+        int count = 0, chars = 0;
+        for (int i = turns.size() - 1; i >= 0; i--) {
+            java.util.ArrayList<JSONObject> turn = turns.get(i);
+            int turnChars = 0;
+            for (JSONObject item : turn) turnChars += item.optString("text", "").length();
+            if (count + turn.size() > MAX_UI_INHERITED_ITEMS || chars + turnChars > MAX_UI_INHERITED_CHARS) break;
+            keptReverse.add(turn); count += turn.size(); chars += turnChars;
+        }
+        java.util.Collections.reverse(keptReverse);
+        JSONArray out = new JSONArray();
+        for (java.util.ArrayList<JSONObject> turn : keptReverse) for (JSONObject item : turn) out.put(item);
+        return new DisplayTimeline(out, Math.max(0, visible - count + structurallyOmitted));
+    }
+
+    private DisplayTimeline displayTimeline(ChatDatabase.Session s) throws Exception {
+        DisplayTimeline inheritedDisplay = s.originSnapshotId == null
+                ? new DisplayTimeline(new JSONArray(), 0)
+                : boundedInheritedDisplay(db.snapshotItems(s.originSnapshotId));
+        JSONArray out = new JSONArray(inheritedDisplay.items.toString());
         JSONArray local = db.timeline(s.id);
         for (int i = 0; i < local.length(); i++) {
             JSONObject item = local.optJSONObject(i); if (item == null) continue;
@@ -967,7 +1003,7 @@ final class ChatCoordinator implements AutoCloseable {
             visible.remove("providerContinuation");
             out.put(visible);
         }
-        return out;
+        return new DisplayTimeline(out, inheritedDisplay.omittedInheritedItems);
     }
 
     private JSONObject sessionJson(ChatDatabase.Session s, boolean detail) throws Exception {
