@@ -97,6 +97,8 @@ if (!checkpointService.includes('Treat the supplied conversation and previous ch
 const contextBudget = read('android/app/src/main/java/com/moyu/chat/ContextBudgetManager.java');
 if (!contextBudget.includes('groupTurns(') || !contextBudget.includes('user-led turns')) fail('v0.0.2 context budget must select complete user-led turns');
 const contextBuilder = read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java');
+const terminalSink = read('android/app/src/main/java/com/moyu/chat/TerminalSink.java');
+const turnOptions = read('android/app/src/main/java/com/moyu/chat/ChatTurnOptions.java');
 const reasoningPolicy = read('android/app/src/main/java/com/moyu/chat/ReasoningPolicy.java');
 const continuationPolicy = read('android/app/src/main/java/com/moyu/chat/ProviderContinuationPolicy.java');
 if (!reasoningPolicy.includes('Third-party') || !reasoningPolicy.includes('return WIRE_NONE;')) fail('protocol must not imply optional reasoning capability for third-party endpoints');
