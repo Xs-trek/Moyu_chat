@@ -212,7 +212,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'refresh-sources') postIntent('branch.sources.refresh', {});
   else if (action === 'branch-remote') {
     const sourceCard = target.closest('.remote-source-card');
-    const contextMode = sourceCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'auto';
+    const contextMode = sourceCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'standard';
     const webMode = sourceCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
     postIntent('branch.create.remote', { sourceId: target.dataset.sourceId, contextMode, webMode });
   }
