@@ -699,6 +699,65 @@ public class ChatCoordinatorE2eTest {
         assertNull(host.editorProvider);
     }
 
+    @Test public void submittedTextStaysOutOfComposerWhenContextPreparationFails() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        ChatDatabase.Session constrained = app.database().getSession(sessionId);
+        constrained.contextTokens = 2_048;
+        constrained.inputTokens = 0;
+        constrained.maxOutputTokens = 1_024;
+        app.database().saveSession(constrained);
+        StringBuilder huge = new StringBuilder();
+        for (int i = 0; i < 6_000; i++) huge.append("oversized input ");
+        String submitted = huge.toString();
+        app.database().setDraft(sessionId, submitted);
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", submitted));
+        await("context-preparation failure settles turn", () -> "failed".equals(app.database().getSession(sessionId).state));
+
+        assertEquals("submitted text must not be restored to the composer after failure", "", app.database().getSession(sessionId).draft);
+        JSONArray rows = app.database().timeline(sessionId);
+        assertTrue("accepted user input remains visible in history", rows.length() >= 2);
+        assertEquals("user", rows.getJSONObject(0).optString("role"));
+        assertEquals(submitted, rows.getJSONObject(0).optString("text"));
+        boolean sawContextFailure = false;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row != null && "error".equals(row.optString("kind")) && "context_prepare_failed".equals(row.optString("code"))) sawContextFailure = true;
+        }
+        assertTrue("preflight failure must become a durable turn error", sawContextFailure);
+        await("failed turn view refreshes", () -> {
+            JSONObject s = activeSession(latestView());
+            return s != null && "failed".equals(s.optString("state")) && "".equals(s.optString("composerDraft"));
+        });
+    }
+
+    @Test public void runningSessionDoesNotBlockOpeningAnotherConversation() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"choices\":[{\"delta\":{\"content\":\"slow answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                        .setBodyDelay(8, TimeUnit.SECONDS);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String runningId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", runningId).put("text", "slow"));
+        await("first session starts", () -> "running".equals(app.database().getSession(runningId).state));
+
+        long started = System.nanoTime();
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
+        await("second conversation opens while first remains running", () -> {
+            JSONObject view = latestView();
+            return view != null && view.optJSONArray("sessions").length() == 2
+                    && !runningId.equals(view.optString("activeLocalSessionId"));
+        });
+        post("appearance.set", new JSONObject().put("theme", "dark"));
+        await("unrelated UI intent remains responsive", () -> "dark".equals(latestView().optJSONObject("appearance").optString("theme")));
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        assertTrue("UI intents must not wait for the 8-second provider body", elapsedMs < 4_000);
+        assertEquals("the original turn must still be running independently", "running", app.database().getSession(runningId).state);
+    }
+
     @Test public void whitespaceOnlyInputIsRejectedWithoutSideEffects() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();
