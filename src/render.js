@@ -267,7 +267,8 @@ function assistantFooter(item, finalized, sessionId) {
     h('div', { class: 'reply-meta' }, facts.map(([label, value]) => metric(label, value))),
     canAct ? h('div', { class: 'message-actions' },
       button('复制', 'copy-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small'),
-      button('回滚', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small')) : null);
+      button('回退', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small'),
+      button('分支', 'branch-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small')) : null);
 }
 
 function contextModeBadge(item) {
