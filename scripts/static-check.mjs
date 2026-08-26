@@ -147,7 +147,8 @@ const contract = read('contract/moyu-chat-contract.d.ts');
 if (contract.includes("'provider.delete'")) fail('provider.delete is not a supported v0.0.2 intent');
 if (!contract.includes("'context.mode.default.set'") || !contract.includes("export type ContextMode = 'auto' | 'minimal' | 'smart'")) fail('v0.0.2 contract missing explicit context modes');
 if (!contract.includes("'web.mode.default.set'") || !contract.includes("'external.open'") || !contract.includes("export type WebMode = 'off' | 'auto' | 'on'")) fail('v0.0.2 contract missing Web mode/external link intents');
-for (const marker of ['nativeWebCapabilities', 'effectiveWebBackend', 'webPreparingStage', 'sources?: WebSourceView[]', 'webBackend?: string']) if (!contract.includes(marker)) fail(`v0.0.2 Web view contract missing: ${marker}`);
+if (!contract.includes("'chat.session.model.set'") || !contract.includes("'chat.session.reasoning.set'")) fail('contract missing in-session model/reasoning intents');
+for (const marker of ['nativeWebCapabilities', 'effectiveWebBackend', 'webPreparingStage', 'sources?: WebSourceView[]', 'webBackend?: string', 'modelName', 'reasoningLevels', 'canConfigureTurn']) if (!contract.includes(marker)) fail(`v0.0.2 Web/session view contract missing: ${marker}`);
 
 const packageJson = JSON.parse(read('package.json'));
 const gradle = read('android/app/build.gradle');
