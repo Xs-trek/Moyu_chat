@@ -414,7 +414,7 @@ function handoffs(view) {
 function settings(view) {
   const nextTheme = view.appearance.theme === 'dark' ? 'system' : view.appearance.theme === 'system' ? 'light' : 'dark';
   const reasoningVisible = Boolean(view.ui?.showReasoning);
-  const defaultContextMode = view.ui?.defaultContextMode || 'auto';
+  const defaultContextMode = view.ui?.defaultContextMode || 'standard';
   const defaultWebMode = view.ui?.defaultWebMode || 'auto';
   return h('main', { class: 'page settings-page' }, pageHeader('设置', '只保留会直接影响本地 Chat 行为的选项。'),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('strong', { text: '主题' }), h('span', { class: 'grow' }), button(`${view.appearance.theme} → ${nextTheme}`, 'theme', { theme: nextTheme }, 'btn ghost small'))),
