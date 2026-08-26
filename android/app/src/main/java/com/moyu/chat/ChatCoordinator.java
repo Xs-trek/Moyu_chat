@@ -806,6 +806,16 @@ final class ChatCoordinator implements AutoCloseable {
         activate(branch.id);
     }
 
+    private void recordVerificationFeedback(String sessionId, int localSeq, String label) {
+        if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before rating verification");
+        String normalized = label == null ? "" : label.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!("accurate".equals(normalized) || "false_alarm".equals(normalized) || "missed_error".equals(normalized))) {
+            throw new IllegalArgumentException("unsupported verification feedback label");
+        }
+        db.verificationForFeedback(sessionId, localSeq, normalized);
+        host.showMessage("校验反馈已记录");
+    }
+
     private void createImportedBranch(String snapshotId, String contextMode, String webMode) throws Exception {
         ChatDatabase.Snapshot snapshot = db.getSnapshot(snapshotId);
         if (snapshot == null || !("import-chatgpt".equals(snapshot.sourceType) || "import-claude".equals(snapshot.sourceType))) {
