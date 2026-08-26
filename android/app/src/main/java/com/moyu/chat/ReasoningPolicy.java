@@ -5,7 +5,7 @@ import org.json.JSONObject;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/** Small provider-neutral reasoning vocabulary plus a few explicit wire encodings. */
+/** Provider-neutral effort vocabulary plus explicit provider thinking-mode configuration. */
 final class ReasoningPolicy {
     static final String DEFAULT = "default";
     static final String NONE_LEVEL = "none";
@@ -19,6 +19,11 @@ final class ReasoningPolicy {
     static final String WIRE_OPENAI_RESPONSES = "openai-responses";
     static final String WIRE_OPENAI_CHAT_EFFORT = "openai-chat-effort";
     static final String WIRE_ANTHROPIC_EFFORT = "anthropic-effort";
+
+    static final String THINKING_PROVIDER_DEFAULT = "provider-default";
+    static final String THINKING_ADAPTIVE = "adaptive";
+    static final String THINKING_DISABLED = "disabled";
+    static final String THINKING_MANUAL = "manual";
 
     private ReasoningPolicy() { }
 
@@ -36,8 +41,16 @@ final class ReasoningPolicy {
         throw new IllegalArgumentException("unsupported reasoning wire format");
     }
 
+    static String normalizeThinkingMode(String value) {
+        String v = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (v.isEmpty()) return THINKING_PROVIDER_DEFAULT;
+        if (THINKING_PROVIDER_DEFAULT.equals(v) || THINKING_ADAPTIVE.equals(v)
+                || THINKING_DISABLED.equals(v) || THINKING_MANUAL.equals(v)) return v;
+        throw new IllegalArgumentException("unsupported thinking mode");
+    }
+
     static String normalizeEffort(String value) {
-        String v = value == null ? "" : value.trim().toLowerCase();
+        String v = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
         if (v.isEmpty()) return DEFAULT;
         if (DEFAULT.equals(v) || NONE_LEVEL.equals(v) || LOW.equals(v) || MEDIUM.equals(v)
                 || HIGH.equals(v) || XHIGH.equals(v) || MAX.equals(v)) return v;
@@ -65,17 +78,53 @@ final class ReasoningPolicy {
         return false;
     }
 
-    static void apply(JSONObject body, String wireFormat, String effort) throws Exception {
+    /** Current transport entry point: thinking mode is independent from effort on Anthropic. */
+    static void apply(JSONObject body, ChatDatabase.Provider provider, String effort) throws Exception {
+        if (provider == null) throw new IllegalArgumentException("provider required");
         String level = normalizeEffort(effort);
-        if (DEFAULT.equals(level)) return; // provider/model default; preserve compatibility and cache semantics.
-        String wire = normalizeWire(wireFormat, null);
+        String wire = normalizeWire(provider.reasoningWire, provider.protocol);
+
+        if (WIRE_ANTHROPIC_EFFORT.equals(wire)) {
+            applyAnthropicThinking(body, provider);
+            // Anthropic has no effort="none". `none` means no effort override; thinking on/off is the
+            // separate explicit thinkingMode capability above.
+            if (!DEFAULT.equals(level) && !NONE_LEVEL.equals(level)) {
+                body.put("output_config", new JSONObject().put("effort", level));
+            }
+            return;
+        }
+
+        if (DEFAULT.equals(level)) return;
         if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("reasoning effort is not supported by this provider configuration");
         if (WIRE_OPENAI_RESPONSES.equals(wire)) {
             body.put("reasoning", new JSONObject().put("effort", level));
         } else if (WIRE_OPENAI_CHAT_EFFORT.equals(wire)) {
             body.put("reasoning_effort", level);
-        } else if (WIRE_ANTHROPIC_EFFORT.equals(wire)) {
-            body.put("output_config", new JSONObject().put("effort", level));
         }
+    }
+
+    private static void applyAnthropicThinking(JSONObject body, ChatDatabase.Provider provider) throws Exception {
+        String mode = normalizeThinkingMode(provider.thinkingMode);
+        if (THINKING_PROVIDER_DEFAULT.equals(mode)) return;
+        if (THINKING_ADAPTIVE.equals(mode)) {
+            body.put("thinking", new JSONObject().put("type", "adaptive"));
+            return;
+        }
+        if (THINKING_DISABLED.equals(mode)) {
+            body.put("thinking", new JSONObject().put("type", "disabled"));
+            return;
+        }
+        int budget = Math.max(0, provider.thinkingBudgetTokens);
+        int maxOutput = provider.maxOutputTokens > 0 ? provider.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
+        if (budget < 1024 || budget >= maxOutput) throw new IllegalArgumentException("manual thinking budget must be >=1024 and < max output tokens");
+        body.put("thinking", new JSONObject().put("type", "enabled").put("budget_tokens", budget));
+    }
+
+    /** Compatibility overload for tests/older callers that have no explicit thinking configuration. */
+    static void apply(JSONObject body, String wireFormat, String effort) throws Exception {
+        ChatDatabase.Provider provider = new ChatDatabase.Provider();
+        provider.reasoningWire = wireFormat;
+        provider.thinkingMode = THINKING_PROVIDER_DEFAULT;
+        apply(body, provider, effort);
     }
 }
