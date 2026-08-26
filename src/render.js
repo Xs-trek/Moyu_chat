@@ -125,6 +125,8 @@ function conversation(view) {
       button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn ghost small icon-action'),
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn ghost small icon-action')),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
+      Number(session.displayOmittedInheritedItems || 0) > 0
+        ? h('div', { class: 'history-omitted muted', text: `更早 ${Number(session.displayOmittedInheritedItems)} 条继承历史仍保留用于上下文/检索，本视图未展开。` }) : null,
       h('div', { class: 'timeline' }, timelineProjection(session.messages).map((item) => timelineItem(item, session.state === 'running', session.localSessionId, Boolean(view.ui?.showReasoning))).filter(Boolean)),
       button('↓ 回到底部', 'jump-latest', {}, 'btn small jump-latest is-hidden')),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
