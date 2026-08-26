@@ -165,8 +165,8 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.attachment.remove": db.removeDraftMedia(required(p, "localSessionId"), required(p, "mediaId")); break;
                 case "chat.session.interrupt": interrupt(required(p, "localSessionId")); break;
                 case "chat.session.delete": deleteSession(required(p, "localSessionId")); break;
-                case "chat.message.edit": editMessageBranch(required(p, "localSessionId"), requiredSeq(p)); break;
-                case "chat.message.rollback": rollbackMessageBranch(required(p, "localSessionId"), requiredSeq(p)); break;
+                case "chat.message.edit": editMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
+                case "chat.message.rollback": rollbackMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
                 // Absent providerId means "configure a new provider"; never bind null into the DB layer.
                 case "provider.configure.open": {
                     String providerId = p.optString("providerId", "");
