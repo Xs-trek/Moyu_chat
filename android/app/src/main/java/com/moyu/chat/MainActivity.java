@@ -229,6 +229,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                     p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(input.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
                     p.reasoningLevels = levels.getText().toString().trim(); p.defaultReasoning = effort.getText().toString().trim();
                     p.thinkingMode = thinkingMode.getText().toString().trim(); p.thinkingBudgetTokens = Integer.parseInt(thinkingBudget.getText().toString().trim());
+                    p.continuationMode = continuationMode.getText().toString().trim();
                     coordinator.saveModelProfile(p); dialog.dismiss();
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
             }));
