@@ -97,6 +97,11 @@ if (!checkpointService.includes('Treat the supplied conversation and previous ch
 const contextBudget = read('android/app/src/main/java/com/moyu/chat/ContextBudgetManager.java');
 if (!contextBudget.includes('groupTurns(') || !contextBudget.includes('user-led turns')) fail('v0.0.2 context budget must select complete user-led turns');
 const contextBuilder = read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java');
+const reasoningPolicy = read('android/app/src/main/java/com/moyu/chat/ReasoningPolicy.java');
+const continuationPolicy = read('android/app/src/main/java/com/moyu/chat/ProviderContinuationPolicy.java');
+if (!reasoningPolicy.includes('Third-party') || !reasoningPolicy.includes('return WIRE_NONE;')) fail('protocol must not imply optional reasoning capability for third-party endpoints');
+if (!continuationPolicy.includes('static final String NONE = "none"') || !continuationPolicy.includes('static final String NATIVE = "native"')) fail('provider-private continuation must be an explicit deployment capability');
+if (!contextBuilder.includes('mode.providerContinuationEnabled && ProviderContinuationPolicy.enabled(session.continuationMode)') || !coordinator.includes('ProviderContinuationPolicy.enabled(session.continuationMode)')) fail('native continuation requires both Harness-mode and deployment-capability gates');
 if (contextBuilder.includes('optString("reasoning"')) fail('provider reasoning must never be projected into provider-neutral CanonicalPrompt');
 if (!contextBuilder.includes('Previous assistant response was incomplete')) fail('incomplete assistant history must be disclosed to later model context');
 if (!contextBuilder.includes('assistant produced image output')) fail('assistant image history must not silently collapse to empty provider-neutral context');
