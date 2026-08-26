@@ -882,8 +882,8 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private static String providerWebBackend(String protocol) {
-        if (OpenAiCompatibleTransport.RESPONSES.equals(protocol)) return "OpenAI hosted Web";
-        if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) return "Anthropic hosted Web";
+        if (OpenAiCompatibleTransport.RESPONSES.equals(protocol)) return "Provider hosted Web · Responses";
+        if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) return "Provider hosted Web · Messages";
         return "Provider hosted Web";
     }
 
