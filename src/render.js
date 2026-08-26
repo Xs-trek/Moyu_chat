@@ -401,9 +401,26 @@ function providers(view) {
 }
 
 function imports(view) {
-  return h('main', { class: 'page' }, pageHeader('从 Remote 创建分支', '导入后生成不可变 Snapshot，之后不再依赖 Remote 数据。', button('刷新来源', 'refresh-sources', {}, 'btn ghost')),
-    !view.remoteBridge.available ? h('section', { class: 'empty', text: 'RemoteDataBridge 当前不可用。Local Chat 不受影响。' }) :
-    h('section', { class: 'stack' }, view.remoteSources.map((source) => h('article', { class: 'card remote-source-card' }, h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: source.title }), source.runtime ? badge(source.runtime) : null, badge(source.complete ? '本地缓存完整' : `缓存至 ${source.cachedThroughSeq}`, source.complete ? 'good' : 'warn')), h('small', { text: fmt(source.updatedAt) }), h('div', { class: 'row' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('创建本地分支', 'branch-remote', { sourceId: source.sourceId }, 'btn primary small'))))));
+  const importing = Boolean(view.ui?.importInProgress);
+  const imported = view.importedSources || [];
+  return h('main', { class: 'page' },
+    pageHeader('导入 / 分支', '文件导入与 Remote 分支彼此独立。导入文件只在 Android 本地解析和清洗，不恢复原产品的工具、系统提示词或运行时权限。'),
+    h('section', { class: 'card' },
+      h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '从官方数据导出导入会话' }),
+        h('p', { class: 'muted', text: '先明确选择来源，再选择官方 ZIP 或 conversations JSON。ChatGPT/Claude 的 system、tool、thinking/reasoning、隐藏上下文与 PC/runtime 身份信息会被清洗，只保留适合普通 Chat 的可见用户/助手正文。' }))),
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn primary small', disabled: importing, dataset: { action: 'import-file-pick', source: 'chatgpt' }, text: importing ? '正在导入…' : '导入 ChatGPT' }),
+        h('button', { type: 'button', class: 'btn ghost small', disabled: importing, dataset: { action: 'import-file-pick', source: 'claude' }, text: importing ? '正在导入…' : '导入 Claude' }))),
+    h('section', { class: 'section-head compact' }, h('h2', { text: '已导入会话' })),
+    imported.length ? h('section', { class: 'stack' }, imported.map((source) => h('article', { class: 'card import-source-card' },
+      h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: source.sourceTitle }), badge(source.sourceType === 'import-claude' ? 'Claude' : 'ChatGPT'), source.truncated ? badge('已截断', 'warn') : null),
+      h('small', { class: 'muted', text: `${source.itemCount} 条可见消息 · ${fmt(source.createdAt)}` }),
+      h('div', { class: 'row' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('作为 Chat 打开', 'import-open', { snapshotId: source.snapshotId }, 'btn primary small'))
+    ))) : h('section', { class: 'empty', text: '还没有导入的 ChatGPT / Claude 会话。' }),
+    h('section', { class: 'section-head compact' }, h('h2', { text: 'Remote 分支' }), h('span', { class: 'grow' }), button('刷新来源', 'refresh-sources', {}, 'btn ghost small')),
+    !view.remoteBridge.available ? h('section', { class: 'empty', text: 'RemoteDataBridge 当前不可用。文件导入与 Local Chat 不受影响。' }) :
+    h('section', { class: 'stack' }, view.remoteSources.map((source) => h('article', { class: 'card remote-source-card' }, h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: source.title }), source.runtime ? badge(source.runtime) : null, badge(source.complete ? '本地缓存完整' : `缓存至 ${source.cachedThroughSeq}`, source.complete ? 'good' : 'warn')), h('small', { text: fmt(source.updatedAt) }), h('div', { class: 'row' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('创建本地分支', 'branch-remote', { sourceId: source.sourceId }, 'btn primary small')))))
+  );
 }
 
 function handoffs(view) {
