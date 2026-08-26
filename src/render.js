@@ -469,7 +469,7 @@ export function patchConversation() {
     timeline.querySelectorAll('.streaming-state').forEach((node) => node.remove());
   }
 
-  const busyLabel = session.webPreparingStage === 'web_fetch' ? '读取网页' : session.webPreparingStage === 'web_search' ? '搜索网页' : contextPreparing ? '整理上下文' : running ? '生成中' : '';
+  const busyLabel = session.postProcessingStage === 'repairing' ? '修正回答' : session.postProcessingStage === 'verifying' ? '校验回答' : session.webPreparingStage === 'web_fetch' ? '读取网页' : session.webPreparingStage === 'web_search' ? '搜索网页' : contextPreparing ? '整理上下文' : running ? '生成中' : '';
   const subtitle = document.querySelector('.conversation-title small');
   if (subtitle) subtitle.textContent = busyLabel || `${session.providerName} · ${session.modelName || session.model}`;
   const busy = document.querySelector('.conversation-busy');
