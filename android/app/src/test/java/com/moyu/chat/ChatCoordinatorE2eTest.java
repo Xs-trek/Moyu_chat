@@ -781,6 +781,90 @@ public class ChatCoordinatorE2eTest {
         assertEquals("idle", app.database().getSession(sessionId).state);
     }
 
+    @Test public void nativeContinuationPersistsAndReplaysOnTheNextResponsesTurn() throws Exception {
+        AtomicBoolean firstCall = new AtomicBoolean(true);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                if (firstCall.getAndSet(false)) {
+                    return sse("data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_native\",\"type\":\"reasoning\",\"encrypted_content\":\"native-cipher\"}}\n\n"
+                            + "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_native\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"native answer\"}]}}\n\n"
+                            + "data: {\"type\":\"response.output_text.delta\",\"delta\":\"native answer\"}\n\n"
+                            + "data: {\"type\":\"response.completed\",\"response\":{}}\n\n");
+                }
+                return sse("data: {\"type\":\"response.output_text.delta\",\"delta\":\"second answer\"}\n\n"
+                        + "data: {\"type\":\"response.completed\",\"response\":{}}\n\n");
+            }
+        });
+        String sessionId = createResponsesSession(ProviderContinuationPolicy.NATIVE);
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
+        RecordedRequest firstRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull(firstRequest);
+        assertTrue("native continuation request should ask for replayable encrypted reasoning",
+                firstRequest.getBody().readUtf8().contains("reasoning.encrypted_content"));
+        await("first native turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+
+        JSONObject assistant = null;
+        JSONArray timeline = app.database().timeline(sessionId);
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) assistant = row;
+        }
+        assertNotNull(assistant);
+        JSONObject stored = assistant.optJSONObject("providerContinuation");
+        assertNotNull("native continuation must be durably attached to the finalized assistant turn", stored);
+        assertEquals(2, stored.getJSONArray("items").length());
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second"));
+        RecordedRequest secondRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull(secondRequest);
+        String secondBody = secondRequest.getBody().readUtf8();
+        assertTrue("next Responses turn must replay stored reasoning item", secondBody.contains("rs_native"));
+        assertTrue("next Responses turn must replay encrypted reasoning", secondBody.contains("native-cipher"));
+        assertTrue("next Responses turn must replay the stored assistant message item", secondBody.contains("msg_native"));
+        await("second native turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
+    @Test public void continuationModeNoneNeitherPersistsNorReplaysResponsesOpaqueState() throws Exception {
+        AtomicBoolean firstCall = new AtomicBoolean(true);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                if (firstCall.getAndSet(false)) {
+                    return sse("data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_none\",\"type\":\"reasoning\",\"encrypted_content\":\"none-cipher\"}}\n\n"
+                            + "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_none\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"plain answer\"}]}}\n\n"
+                            + "data: {\"type\":\"response.output_text.delta\",\"delta\":\"plain answer\"}\n\n"
+                            + "data: {\"type\":\"response.completed\",\"response\":{}}\n\n");
+                }
+                return sse("data: {\"type\":\"response.output_text.delta\",\"delta\":\"second plain\"}\n\n"
+                        + "data: {\"type\":\"response.completed\",\"response\":{}}\n\n");
+            }
+        });
+        String sessionId = createResponsesSession(ProviderContinuationPolicy.NONE);
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
+        RecordedRequest firstRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull(firstRequest);
+        assertFalse("continuationMode=none must not request encrypted private continuation",
+                firstRequest.getBody().readUtf8().contains("reasoning.encrypted_content"));
+        await("first non-native turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+        JSONArray timeline = app.database().timeline(sessionId);
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) {
+                assertFalse("continuationMode=none must not persist provider-private state", row.has("providerContinuation"));
+            }
+        }
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second"));
+        RecordedRequest secondRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull(secondRequest);
+        String secondBody = secondRequest.getBody().readUtf8();
+        assertFalse("continuationMode=none must not replay opaque reasoning items", secondBody.contains("rs_none"));
+        assertFalse("continuationMode=none must not replay opaque encrypted content", secondBody.contains("none-cipher"));
+        assertFalse("continuationMode=none must not replay opaque assistant output items", secondBody.contains("msg_none"));
+        await("second non-native turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
     @Test public void credentialRotationDuringRunningTurnCannotRelabelOldNativeContinuation() throws Exception {
         final String rotatedSecret = "sk-ROTATED-value-93b4";
         server.setDispatcher(new Dispatcher() {
