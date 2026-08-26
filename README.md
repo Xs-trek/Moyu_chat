@@ -41,8 +41,10 @@ Smart verification separates verifier validity from answer verdict. A verifier m
 
 ## Web and transport
 
-Web remains a separate capability plane. OpenAI Responses may use hosted `web_search`; Anthropic Messages may use hosted `web_search` / `web_fetch`; missing native capability can fall back to bounded Exa Search and SSRF-bounded HTTPS Fetch. Raw fetched/search material is not a timeline row.
+Third-party compatible endpoints are the primary deployment case. OpenAI and Anthropic are protocol-family references, not capability assumptions. `openai-chat-completions`, `openai-responses`, and `anthropic-messages` define request/stream shape only; they do not imply first-party reasoning, thinking, hosted Web, image, or opaque continuation support.
 
-Transport scope remains protocol-centric: `openai-chat-completions`, `openai-responses`, and `anthropic-messages`. Provider definitions select `protocol + baseUrl + authMode`; Session/Branch/Snapshot layers do not hardcode vendor URLs.
+Optional behavior is deployment-scoped and explicit in the Model Profile. Reasoning wire mapping defaults to `none`; provider-private continuation defaults to `none`; Messages thinking is independent from Messages effort support. A capability is sent only when the concrete endpoint/model profile declares it. Missing native Web capability can fall back to bounded Exa Search and SSRF-bounded HTTPS Fetch. Raw fetched/search material is not a timeline row.
+
+Provider definitions select `protocol + baseUrl + authMode`; Model Profiles select model/deployment capabilities. Session/Branch/Snapshot layers do not hardcode vendor URLs or infer capability from vendor/model names.
 
 See `PROMPT_CONTEXT.md` and `V0.0.2_DESIGN.md` for normative context/Memory/compaction/reasoning/verifier behavior.
