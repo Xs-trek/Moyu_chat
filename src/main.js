@@ -210,6 +210,13 @@ document.addEventListener('click', (event) => {
   else if (action === 'configure-model') postIntent('model.configure.open', { providerId: target.dataset.providerId, ...(target.dataset.modelProfileId ? { modelProfileId: target.dataset.modelProfileId } : {}) });
   else if (action === 'pick-attachment') postIntent('chat.attachment.pick', { localSessionId: target.dataset.sessionId });
   else if (action === 'remove-attachment') postIntent('chat.attachment.remove', { localSessionId: target.dataset.sessionId, mediaId: target.dataset.mediaId });
+  else if (action === 'import-file-pick') postIntent('import.file.pick', { source: target.dataset.source });
+  else if (action === 'import-open') {
+    const sourceCard = target.closest('.import-source-card');
+    const contextMode = sourceCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'standard';
+    const webMode = sourceCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
+    postIntent('import.session.open', { snapshotId: target.dataset.snapshotId, contextMode, webMode });
+  }
   else if (action === 'refresh-sources') postIntent('branch.sources.refresh', {});
   else if (action === 'branch-remote') {
     const sourceCard = target.closest('.remote-source-card');
