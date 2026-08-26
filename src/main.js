@@ -12,11 +12,26 @@ subscribe((_state, change) => {
 bindHost((view, revision) => setView(view, revision));
 window.addEventListener('moyu:notice', (event) => setNotice(event.detail));
 
-for (const type of ['pointerdown', 'touchstart']) document.addEventListener(type, () => renderGate.pointerDown(), { passive: true });
-for (const type of ['pointerup', 'pointercancel', 'touchend', 'touchcancel']) document.addEventListener(type, () => renderGate.pointerUp(), { passive: true });
-document.addEventListener('compositionstart', () => renderGate.compositionStart());
-document.addEventListener('compositionend', () => renderGate.compositionEnd());
-document.addEventListener('focusout', () => setTimeout(() => renderGate.interactionEnded(), 0));
+let pointerMaySelectText = false;
+function selectionScopeForNode(node) {
+  const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  return element?.closest?.('[data-selection-scope]') || null;
+}
+document.addEventListener('pointerdown', (event) => {
+  pointerMaySelectText = Boolean(selectionScopeForNode(event.target));
+  renderGate.pointerDown(pointerMaySelectText);
+}, true);
+document.addEventListener('pointerup', () => {
+  renderGate.pointerUp(pointerMaySelectText ? 160 : 0);
+  pointerMaySelectText = false;
+}, true);
+document.addEventListener('pointercancel', () => {
+  renderGate.pointerUp(0);
+  pointerMaySelectText = false;
+}, true);
+document.addEventListener('compositionstart', () => renderGate.compositionStart(), true);
+document.addEventListener('compositionend', () => renderGate.compositionEnd(), true);
+document.addEventListener('focusout', () => setTimeout(() => renderGate.interactionEnded(), 0), true);
 
 const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)');
 systemTheme?.addEventListener?.('change', () => {
