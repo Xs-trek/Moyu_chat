@@ -2,7 +2,7 @@ export type RequestId = string;
 export type Theme = 'system' | 'light' | 'dark';
 export type Route = 'home' | 'conversation' | 'providers' | 'imports' | 'handoffs' | 'settings';
 export type SessionState = 'idle' | 'running' | 'completed' | 'failed';
-export type ContextMode = 'auto' | 'minimal' | 'smart';
+export type ContextMode = 'minimal' | 'standard' | 'smart';
 export type WebMode = 'off' | 'auto' | 'on';
 
 export interface UiIntent<T extends string = string, P = unknown> {
