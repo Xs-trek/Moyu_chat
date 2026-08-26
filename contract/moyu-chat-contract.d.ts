@@ -184,6 +184,7 @@ export type TimelineItem =
 
 export interface SessionDetailView extends SessionView {
   messages: TimelineItem[];
+  displayOmittedInheritedItems?: number;
   composerDraft: string;
   draftMedia: MediaView[];
   canAttachImage: boolean;
