@@ -116,14 +116,14 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         if (options == null || !options.webEnabled()) return;
         JSONArray tools = new JSONArray();
         JSONArray direct = new JSONArray().put("direct");
-        if (options.supports(ChatTurnOptions.WEB_SEARCH)) {
-            String wire = options.wireType(ChatTurnOptions.WEB_SEARCH, "web_search_20260318");
-            tools.put(new JSONObject().put("type", wire).put("name", "web_search")
+        String searchWire = options.wireType(ChatTurnOptions.WEB_SEARCH);
+        if (!searchWire.isEmpty()) {
+            tools.put(new JSONObject().put("type", searchWire).put("name", "web_search")
                     .put("max_uses", 4).put("allowed_callers", direct));
         }
-        if (options.supports(ChatTurnOptions.WEB_FETCH)) {
-            String wire = options.wireType(ChatTurnOptions.WEB_FETCH, "web_fetch_20260318");
-            tools.put(new JSONObject().put("type", wire).put("name", "web_fetch")
+        String fetchWire = options.wireType(ChatTurnOptions.WEB_FETCH);
+        if (!fetchWire.isEmpty()) {
+            tools.put(new JSONObject().put("type", fetchWire).put("name", "web_fetch")
                     .put("max_uses", 3).put("allowed_callers", new JSONArray().put("direct"))
                     .put("max_content_tokens", 20000).put("citations", new JSONObject().put("enabled", true)));
         }

@@ -40,13 +40,13 @@ final class ChatTurnOptions {
         return false;
     }
 
-    /** Exact Messages tool wire when explicitly declared; otherwise use the transport's current default. */
-    String wireType(String capability, String fallback) {
+    /** Exact Messages tool wire only when the concrete deployment explicitly declares one. */
+    String wireType(String capability) {
         for (String item : toolCapabilities.split(",")) {
             if (WEB_SEARCH.equals(capability) && ANTHROPIC_SEARCH_WIRES.contains(item)) return item;
             if (WEB_FETCH.equals(capability) && ANTHROPIC_FETCH_WIRES.contains(item)) return item;
         }
-        return supports(capability) ? fallback : "";
+        return "";
     }
 
     static String normalizeWebMode(String raw) {
