@@ -34,6 +34,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final int REQUEST_IMAGE = 4201;
     private WebView webView;
+    private ChatRuntime runtime;
     private ChatCoordinator coordinator;
     private String pendingImageSessionId;
 
