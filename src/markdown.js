@@ -231,12 +231,14 @@ function isBlockStart(lines, index) {
 
 function paragraph(lines) {
   const p = document.createElement('p'); p.className = 'md-p';
+  let previousHardBreak = false;
   lines.forEach((raw, index) => {
     let line = raw;
     const hardBreak = /(?: {2,}|\\)$/.test(line);
     if (hardBreak) line = line.replace(/(?: {2,}|\\)$/, '');
-    if (index) p.append(hardBreak ? document.createElement('br') : textNode(' '));
+    if (index) p.append(previousHardBreak ? document.createElement('br') : textNode(' '));
     p.append(inlineFragment(line));
+    previousHardBreak = hardBreak;
   });
   return p;
 }
