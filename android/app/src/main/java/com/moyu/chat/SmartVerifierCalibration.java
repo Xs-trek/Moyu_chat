@@ -74,13 +74,16 @@ final class SmartVerifierCalibration {
      */
     static boolean recordFeedback(ChatDatabase db, JSONObject verification, String label) {
         if (db == null || verification == null) return false;
+        if (!SmartVerifierService.STATUS_VALID.equals(verification.optString("status", ""))
+                || !verification.optBoolean("coverageComplete", false)
+                || !POLICY_VERSION.equals(verification.optString("policyVersion", ""))) return false;
         String key = verification.optString("calibrationKey", "");
         JSONArray features = verification.optJSONArray("features");
         String verdict = verification.optString("verdict", "");
         if (key.isEmpty() || features == null || features.length() != FEATURE_COUNT) return false;
         Integer y = null;
-        if ("false_alarm".equals(label)) y = 0;
-        else if ("missed_error".equals(label)) y = 1;
+        if ("false_alarm".equals(label) && SmartVerifierService.VERDICT_FAIL.equals(verdict)) y = 0;
+        else if ("missed_error".equals(label) && SmartVerifierService.VERDICT_PASS.equals(verdict)) y = 1;
         else if ("accurate".equals(label)) {
             if (SmartVerifierService.VERDICT_FAIL.equals(verdict)) y = 1;
             else if (SmartVerifierService.VERDICT_PASS.equals(verdict)) y = 0;
