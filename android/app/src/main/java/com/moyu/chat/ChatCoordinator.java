@@ -136,7 +136,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.model.set": setSessionModel(required(p, "localSessionId"), required(p, "modelProfileId")); break;
                 case "chat.session.reasoning.set": setSessionReasoning(required(p, "localSessionId"), required(p, "reasoningEffort")); break;
                 case "chat.session.send": send(required(p, "localSessionId"), p.optString("text", "")); break;
-                case "chat.session.saveDraft": db.setDraft(required(p, "localSessionId"), p.optString("text", "")); break;
+                case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); break;
                 case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;
                 case "chat.attachment.remove": db.removeDraftMedia(required(p, "localSessionId"), required(p, "mediaId")); break;
                 case "chat.session.interrupt": interrupt(required(p, "localSessionId")); break;
