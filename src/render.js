@@ -208,19 +208,54 @@ function sourceList(sources = []) {
     button(`${index + 1}. ${source.title || source.url}`, 'open-source', { url: source.url }, 'source-link')));
 }
 
+function factValue(value) { return value === undefined || value === null || value === '' ? '—' : String(value); }
+function tokenPair(usage) {
+  const input = tokenCount(usage?.inputTokens ?? usage?.context?.estimatedInputTokens);
+  const output = tokenCount(usage?.outputTokens);
+  if (input === null && output === null) return '—';
+  return `${input === null ? '—' : input.toLocaleString()} / ${output === null ? '—' : output.toLocaleString()}`;
+}
+function cacheFact(usage) {
+  const cached = tokenCount(usage?.cachedInputTokens);
+  if (cached === null) return '—';
+  const base = tokenCount(usage?.cacheHitBaseTokens);
+  return base && base > 0 ? `${cached.toLocaleString()} · ${Math.min(100, cached * 100 / base).toFixed(1)}%` : `${cached.toLocaleString()} token`;
+}
+function effortFact(item) {
+  if (item.reasoningAvailable === false) return '关闭';
+  const value = String(item.reasoningEffort || '').trim();
+  if (!value) return '—';
+  if (value === 'none') return '关闭';
+  if (value === 'default') return '默认';
+  return value;
+}
+function metric(label, value) {
+  return h('div', { class: 'reply-metric' }, h('span', { class: 'reply-metric-label', text: label }), h('strong', { class: 'reply-metric-value truncate-safe', text: factValue(value) }));
+}
+
 function assistantFooter(item, finalized, sessionId) {
   if (item.role !== 'assistant') return null;
   const usage = item.__usage;
   const sourceNode = sourceList(item.sources);
   const backend = String(item.webBackend || '').trim();
   const canAct = finalized && Number(item.localSeq) > 0;
-  if (!sourceNode && !backend && !usage && !canAct) return null;
-  const signature = JSON.stringify({ sources: item.sources || [], backend, usage: usage || null, canAct, localSeq: item.localSeq });
+  const reasoningTokens = tokenCount(usage?.reasoningTokens);
+  const speed = Number(usage?.outputTokensPerSecond);
+  const facts = [
+    ['模型', item.modelName || item.model || '—'],
+    ['深度', effortFact(item)],
+    ['入/出', tokenPair(usage)],
+    ['缓存', cacheFact(usage)],
+    ['推理', reasoningTokens === null ? '—' : `${reasoningTokens.toLocaleString()} token`],
+    ['速度', Number.isFinite(speed) && speed > 0 ? `${speed.toFixed(1)} token/s` : '—'],
+    ['首字', usage?.firstOutputLatencyMs === undefined ? '—' : seconds(usage.firstOutputLatencyMs)],
+    ['总耗', usage?.requestDurationMs === undefined ? '—' : seconds(usage.requestDurationMs)],
+  ];
+  const signature = JSON.stringify({ sources: item.sources || [], backend, usage: usage || null, facts, canAct, localSeq: item.localSeq });
   return h('footer', { class: 'assistant-footer', dataset: { footerSignature: signature } },
     sourceNode,
-    (backend || usage) ? h('div', { class: 'assistant-meta muted' },
-      backend ? h('span', { text: `联网 · ${backend}` }) : null,
-      usage ? h('span', { text: usageSummary(usage) }) : null) : null,
+    backend ? h('div', { class: 'assistant-web muted', text: `联网 · ${backend}` }) : null,
+    h('div', { class: 'reply-meta' }, facts.map(([label, value]) => metric(label, value))),
     canAct ? h('div', { class: 'message-actions' },
       button('复制', 'copy-message', { sessionId, localSeq: item.localSeq }, 'btn small'),
       button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
