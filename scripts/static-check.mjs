@@ -184,7 +184,7 @@ if (!html.includes("default-src 'none'")) fail('WebView CSP must be deny-by-defa
 
 const contract = read('contract/moyu-chat-contract.d.ts');
 if (contract.includes("'provider.delete'")) fail('provider.delete is not a supported v0.0.2 intent');
-if (!contract.includes("'context.mode.default.set'") || !contract.includes("export type ContextMode = 'auto' | 'minimal' | 'smart'")) fail('v0.0.2 contract missing explicit context modes');
+if (!contract.includes("'context.mode.default.set'") || !contract.includes("export type ContextMode = 'minimal' | 'standard' | 'smart'")) fail('contract missing minimal/standard/smart context modes');
 if (!contract.includes("'web.mode.default.set'") || !contract.includes("'external.open'") || !contract.includes("export type WebMode = 'off' | 'auto' | 'on'")) fail('v0.0.2 contract missing Web mode/external link intents');
 if (!contract.includes("'chat.session.model.set'") || !contract.includes("'chat.session.reasoning.set'")) fail('contract missing in-session model/reasoning intents');
 for (const marker of ['nativeWebCapabilities', 'effectiveWebBackend', 'webPreparingStage', 'sources?: WebSourceView[]', 'webBackend?: string', 'modelName', 'reasoningLevels', 'canConfigureTurn', 'contextMode?: ContextMode', 'effectiveContextMode?:']) if (!contract.includes(marker)) fail(`v0.0.2 Web/session view contract missing: ${marker}`);
