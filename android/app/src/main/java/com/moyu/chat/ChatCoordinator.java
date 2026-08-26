@@ -250,6 +250,8 @@ final class ChatCoordinator implements AutoCloseable {
                 ConversationImportService.Report report = conversationImporter.importFile(importSource, displayName, input,
                         conversation -> snapshots.importExternal(importSource, conversation));
                 host.showMessage(report.summary(importSource));
+            } catch (ConversationImportService.PartialImportException partial) {
+                host.showMessage("会话导入部分完成：" + partial.userSummary);
             } catch (Exception error) {
                 host.showMessage("会话导入失败：" + safe(error));
             } finally {
