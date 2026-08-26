@@ -363,7 +363,7 @@ public class TransportMockServerTest {
                 "data: {\"type\":\"message_stop\"}\n\n"));
         RecordingSink sink = new RecordingSink();
         anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", ReasoningPolicy.DEFAULT,
-                prompt("user", "latest"), new ChatTurnOptions("web_search,web_fetch", "auto"), sink);
+                prompt("user", "latest"), new ChatTurnOptions("web_search_20260318,web_fetch_20260318", "auto"), sink);
         sink.awaitTerminal();
         JSONObject body = new JSONObject(bodyOf());
         JSONArray tools = body.getJSONArray("tools");
