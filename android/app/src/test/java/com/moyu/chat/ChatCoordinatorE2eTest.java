@@ -299,7 +299,7 @@ public class ChatCoordinatorE2eTest {
         assertFalse("unreferenced private media should be garbage-collected", app.mediaStore().exists(mediaId));
     }
 
-    @Test public void editAndRollbackCreateReversibleBranchesWithoutMutatingSource() throws Exception {
+    @Test public void editAndRollbackRewindCurrentSessionWhileBranchingStaysExplicit() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sourceId = createSession();
         post("chat.session.send", new JSONObject().put("localSessionId", sourceId).put("text", "original prompt"));
@@ -315,30 +315,39 @@ public class ChatCoordinatorE2eTest {
         assertTrue(userSeq > 0); assertTrue(assistantSeq > userSeq);
 
         post("chat.message.edit", new JSONObject().put("localSessionId", sourceId).put("localSeq", userSeq));
-        await("edit branch activated", () -> {
-            JSONObject s = activeSession(latestView()); return s != null && !sourceId.equals(s.optString("localSessionId")) && s.optString("title").startsWith("编辑 ·");
+        await("edit rewinds current session", () -> {
+            ChatDatabase.Session s = app.database().getSession(sourceId);
+            return s != null && "original prompt".equals(s.draft) && app.database().timeline(sourceId).length() == 0;
         });
-        String editBranchId = activeSession(latestView()).optString("localSessionId");
-        assertEquals("original prompt", app.database().getSession(editBranchId).draft);
-        ChatDatabase.Session editBranch = app.database().getSession(editBranchId);
-        assertNotNull(editBranch.originSnapshotId);
-        assertEquals("edit branch snapshot stops before selected user message", 0, app.database().snapshotItems(editBranch.originSnapshotId).length());
-        assertEquals("source transcript must remain intact", sourceTimeline.toString(), app.database().timeline(sourceId).toString());
+        assertEquals("editing must stay in the same session", sourceId, latestView().optString("activeLocalSessionId"));
+        assertEquals("edit must not silently create a branch", 1, latestView().optJSONArray("sessions").length());
 
-        post("chat.session.open", new JSONObject().put("localSessionId", sourceId));
-        await("source reopened", () -> sourceId.equals(latestView().optString("activeLocalSessionId")));
-        post("chat.message.rollback", new JSONObject().put("localSessionId", sourceId).put("localSeq", assistantSeq));
-        await("rollback branch activated", () -> {
-            JSONObject s = activeSession(latestView()); return s != null && !sourceId.equals(s.optString("localSessionId")) && s.optString("title").startsWith("回滚 ·");
+        // Re-send so rollback can be verified independently.
+        app.database().setDraft(sourceId, "");
+        post("chat.session.send", new JSONObject().put("localSessionId", sourceId).put("text", "second prompt"));
+        await("second turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+        JSONArray secondTimeline = app.database().timeline(sourceId);
+        int secondAssistantSeq = -1;
+        for (int i = 0; i < secondTimeline.length(); i++) {
+            JSONObject item = secondTimeline.optJSONObject(i);
+            if (item != null && "message".equals(item.optString("kind")) && "assistant".equals(item.optString("role"))) secondAssistantSeq = item.optInt("localSeq", -1);
+        }
+        assertTrue(secondAssistantSeq > 0);
+        post("chat.message.rollback", new JSONObject().put("localSessionId", sourceId).put("localSeq", secondAssistantSeq));
+        await("rollback removes selected assistant and later rows", () -> {
+            JSONArray rows = app.database().timeline(sourceId);
+            if (rows.length() != 1) return false;
+            JSONObject only = rows.optJSONObject(0);
+            return only != null && "user".equals(only.optString("role")) && "second prompt".equals(only.optString("text"));
         });
-        ChatDatabase.Session rollback = app.database().getSession(activeSession(latestView()).optString("localSessionId"));
-        assertNotNull(rollback.originSnapshotId);
-        JSONArray rollbackItems = app.database().snapshotItems(rollback.originSnapshotId);
-        assertEquals(2, rollbackItems.length());
-        assertEquals("original prompt", rollbackItems.getJSONObject(0).optString("text"));
-        assertEquals("mock answer", rollbackItems.getJSONObject(1).optString("text"));
-        assertEquals("", rollback.draft);
-        assertEquals("source transcript remains reversible after rollback", sourceTimeline.toString(), app.database().timeline(sourceId).toString());
+        assertEquals("rollback must stay in the same session", sourceId, latestView().optString("activeLocalSessionId"));
+        assertEquals("rollback must not silently create a branch", 1, latestView().optJSONArray("sessions").length());
+
+        // Branching is still available, but only through the explicit branch intent.
+        post("branch.create.local", new JSONObject().put("localSessionId", sourceId));
+        await("explicit branch created", () -> latestView().optJSONArray("sessions").length() == 2);
+        assertNotEquals(sourceId, latestView().optString("activeLocalSessionId"));
+        assertNotNull(activeSession(latestView()).optJSONObject("origin"));
     }
 
     @Test public void acceptedTurnIsVisibleBeforeProviderCompletes() throws Exception {
