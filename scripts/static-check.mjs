@@ -49,7 +49,7 @@ const knowledgeStore = read('android/app/src/main/java/com/moyu/chat/LocalKnowle
 if (!contextMode.includes('STANDARD = "standard"') || !contextMode.includes('retrievalEnabled') || !contextMode.includes('evidencePolicyEnabled')) fail('three-tier Harness policy missing');
 if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
 if (!promptPolicy.includes('compactInstructions(') || !read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('selectWithPolicy(')) fail('weak-context models require deterministic compact Harness fallback instead of an arbitrary occupancy threshold');
-if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('does not') || !knowledgeStore.includes('unrelated Chat sessions')) fail('snapshot-scoped local retrieval boundary missing');
+if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('searchChats(') || !knowledgeStore.includes('The caller must separately enforce the global memory switch/mode capability')) fail('snapshot + capability-gated cross-chat retrieval boundary missing');
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
 if (!coordinator.includes('contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row without duplicating the pending input');
