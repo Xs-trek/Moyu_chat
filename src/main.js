@@ -108,6 +108,7 @@ function positionChoiceMenu(field) {
   }
 
   field.classList.remove('sheet');
+  document.querySelector('[data-choice-scrim]')?.remove();
   const width = Math.min(340, Math.max(rect.width, Math.min(340, viewportWidth - margin * 2)));
   const maxLeft = viewportLeft + viewportWidth - width - margin;
   const left = Math.max(viewportLeft + margin, Math.min(rect.right - width, maxLeft));
