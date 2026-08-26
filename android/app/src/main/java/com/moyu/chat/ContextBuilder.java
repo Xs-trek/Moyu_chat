@@ -84,6 +84,7 @@ final class ContextBuilder {
         ChatDatabase.Snapshot snapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         ContextMode.Policy mode = ContextMode.resolve(session, snapshot);
         ChatDatabase.Provider provider = db.getProvider(session.providerId);
+        boolean allowContinuation = mode.providerContinuationEnabled && ProviderContinuationPolicy.enabled(session.continuationMode);
         JSONArray inherited = snapshot == null ? new JSONArray() : db.snapshotItems(snapshot.id);
         JSONArray local = db.timeline(session.id);
         JSONArray durableProjected = new JSONArray();
