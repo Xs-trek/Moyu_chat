@@ -243,7 +243,7 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** Model selection changes the configuration for future turns only; prior assistant rows keep per-turn metadata. */
     private void setSessionModel(String sessionId, String modelProfileId) {
-        if (activeTurns.containsKey(sessionId) || startingSessions.contains(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId)) {
+        if (activeTurns.containsKey(sessionId) || startingSessions.contains(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId) || postProcessingStages.containsKey(sessionId)) {
             throw new IllegalStateException("wait for the current turn before switching model");
         }
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
