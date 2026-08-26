@@ -41,6 +41,7 @@ final class ConversationImportService {
     private static final int MAX_NODES_PER_CONVERSATION = 20_000;
     private static final int MAX_TEXT_CHARS_PER_MESSAGE = 200_000;
     private static final int MAX_TITLE_CHARS = 512;
+    private static final long MAX_JSON_BYTES = 256L * 1024L * 1024L;
 
     interface Consumer { void accept(ImportedConversation conversation) throws Exception; }
 
