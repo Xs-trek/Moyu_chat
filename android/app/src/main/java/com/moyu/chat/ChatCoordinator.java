@@ -41,10 +41,10 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
-    private boolean uiReady;
+    private volatile boolean uiReady;
     private long revision;
-    private String route;
-    private String activeSessionId;
+    private volatile String route;
+    private volatile String activeSessionId;
     private String theme;
     private boolean showReasoning;
     private String defaultContextMode;
