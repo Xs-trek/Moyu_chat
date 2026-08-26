@@ -284,6 +284,7 @@ document.addEventListener('submit', (event) => {
   if ((!text.trim() && !hasDraftMedia) || !sessionId) return;
   clearTimeout(draftTimer);
   draftTimer = 0;
+  advanceDraftGeneration(sessionId);
   const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text });
   if (requestId && input) {
     input.value = '';
