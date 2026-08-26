@@ -87,7 +87,7 @@ export interface ProviderView {
 
 export interface OriginView {
   snapshotId: string;
-  sourceType: 'remote' | 'chat';
+  sourceType: 'remote' | 'chat' | 'import-chatgpt' | 'import-claude';
   sourceTitle: string;
   sourceRuntime?: string;
   createdAt: string;
