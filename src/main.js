@@ -56,6 +56,56 @@ document.addEventListener('scroll', (event) => {
   });
 }, true);
 
+function closeChoiceField(field) {
+  if (!field) return;
+  field.classList.remove('open');
+  field.querySelector('.choice-trigger')?.setAttribute('aria-expanded', 'false');
+  const menu = field.querySelector('.choice-menu');
+  if (menu) {
+    menu.style.left = '';
+    menu.style.top = '';
+    menu.style.bottom = '';
+    menu.style.width = '';
+    menu.style.maxHeight = '';
+  }
+}
+
+function closeChoiceMenus(except = null) {
+  document.querySelectorAll('.choice-field.open').forEach((field) => { if (field !== except) closeChoiceField(field); });
+}
+
+function positionChoiceMenu(field) {
+  const trigger = field?.querySelector('.choice-trigger');
+  const menu = field?.querySelector('.choice-menu');
+  if (!trigger || !menu) return;
+  const viewport = window.visualViewport;
+  const viewportLeft = viewport?.offsetLeft || 0;
+  const viewportTop = viewport?.offsetTop || 0;
+  const viewportWidth = viewport?.width || window.innerWidth;
+  const viewportHeight = viewport?.height || window.innerHeight;
+  const margin = 10;
+  const rect = trigger.getBoundingClientRect();
+  const width = Math.min(340, Math.max(rect.width, viewportWidth - margin * 2));
+  const maxLeft = viewportLeft + viewportWidth - width - margin;
+  const left = Math.max(viewportLeft + margin, Math.min(rect.right - width, maxLeft));
+  const availableAbove = Math.max(120, rect.top - viewportTop - margin * 2);
+  const maxHeight = Math.min(360, availableAbove);
+  const top = Math.max(viewportTop + margin, rect.top - maxHeight - 7);
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  menu.style.bottom = 'auto';
+  menu.style.width = `${Math.round(width)}px`;
+  menu.style.maxHeight = `${Math.round(maxHeight)}px`;
+}
+
+function repositionOpenChoiceMenu() {
+  const field = document.querySelector('.choice-field.open');
+  if (field) positionChoiceMenu(field);
+}
+window.visualViewport?.addEventListener?.('resize', repositionOpenChoiceMenu, { passive: true });
+window.visualViewport?.addEventListener?.('scroll', repositionOpenChoiceMenu, { passive: true });
+window.addEventListener('resize', repositionOpenChoiceMenu, { passive: true });
+
 document.addEventListener('click', (event) => {
   const clickedField = event.target.closest('.choice-field');
   if (!clickedField) document.querySelectorAll('.choice-field.open').forEach((node) => { node.classList.remove('open'); node.querySelector('.choice-trigger')?.setAttribute('aria-expanded', 'false'); });
