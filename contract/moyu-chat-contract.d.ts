@@ -38,6 +38,8 @@ export type MoyuChatIntent =
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
   | UiIntent<'provider.configure.open', { providerId?: string }>
   | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
+  | UiIntent<'import.file.pick', { source: ImportSource }>
+  | UiIntent<'import.session.open', { snapshotId: string; contextMode?: ContextMode; webMode?: WebMode }>
   | UiIntent<'branch.sources.refresh', Record<string, never>>
   | UiIntent<'branch.create.remote', { sourceId: string; throughSeq?: number; contextMode?: ContextMode; webMode?: WebMode }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
