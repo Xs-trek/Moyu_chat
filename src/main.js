@@ -124,7 +124,7 @@ document.addEventListener('click', (event) => {
     } else closeChoiceField(field);
   }
   else if (action === 'session-model-set') {
-    target.closest('.choice-field')?.classList.remove('open');
+    closeChoiceField(target.closest('.choice-field'));
     postIntent('chat.session.model.set', { localSessionId: target.dataset.sessionId, modelProfileId: target.dataset.modelProfileId });
   }
   else if (action === 'session-reasoning-set') {
