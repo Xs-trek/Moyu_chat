@@ -425,7 +425,12 @@ final class ConversationImportService {
             while (current != null) {
                 if (!current.id.isEmpty() && !seen.add(current.id)) throw new ImportSkip("Claude 消息父链存在循环");
                 reverse.add(current);
-                current = current.parent == null || current.parent.isEmpty() ? null : byId.get(current.parent);
+                if (current.parent == null || current.parent.isEmpty()) current = null;
+                else {
+                    ClaudeMessage parent = byId.get(current.parent);
+                    if (parent == null) throw new ImportSkip("Claude 消息父链引用不存在的 parent_message_uuid");
+                    current = parent;
+                }
             }
             Collections.reverse(reverse);
             return reverse;
