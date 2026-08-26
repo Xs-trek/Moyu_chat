@@ -421,6 +421,41 @@ public class TransportMockServerTest {
         assertEquals("answer", sink.continuationItems.getJSONObject(3).optString("text"));
     }
 
+    @Test public void anthropicReplaysSignedThinkingAndEncryptedHostedWebResult() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        JSONArray nativeItems = new JSONArray()
+                .put(new JSONObject().put("type", "thinking").put("thinking", "plan").put("signature", "sig"))
+                .put(new JSONObject().put("type", "server_tool_use").put("id", "srvtoolu_fetch").put("name", "web_fetch")
+                        .put("input", new JSONObject().put("url", "https://example.com/doc")))
+                .put(new JSONObject().put("type", "web_fetch_tool_result").put("tool_use_id", "srvtoolu_fetch")
+                        .put("content", new JSONArray().put(new JSONObject().put("type", "web_fetch_result")
+                                .put("url", "https://example.com/doc").put("encrypted_content", "fetch-cipher"))))
+                .put(new JSONObject().put("type", "text").put("text", "visible"));
+        JSONObject continuation = new JSONObject().put("protocol", AnthropicMessagesTransport.PROTOCOL).put("items", nativeItems);
+        JSONArray messages = new JSONArray()
+                .put(new JSONObject().put("role", "user").put("text", "first"))
+                .put(new JSONObject().put("role", "assistant").put("text", "visible").put("_providerContinuation", continuation))
+                .put(new JSONObject().put("role", "user").put("text", "next"));
+        CanonicalPrompt nativePrompt = new CanonicalPrompt("SYSTEM-INSTRUCTIONS", messages, false, 100, 0, 3, 0,
+                new JSONArray(messages.toString()), true);
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "native-model",
+                ReasoningPolicy.DEFAULT, nativePrompt, sink);
+        sink.awaitTerminal();
+
+        JSONArray requestMessages = new JSONObject(bodyOf()).getJSONArray("messages");
+        assertEquals(3, requestMessages.length());
+        JSONArray content = requestMessages.getJSONObject(1).getJSONArray("content");
+        assertEquals(4, content.length());
+        assertEquals("thinking", content.getJSONObject(0).optString("type"));
+        assertEquals("sig", content.getJSONObject(0).optString("signature"));
+        assertEquals("server_tool_use", content.getJSONObject(1).optString("type"));
+        assertEquals("web_fetch_tool_result", content.getJSONObject(2).optString("type"));
+        assertEquals("fetch-cipher", content.getJSONObject(2).getJSONArray("content").getJSONObject(0).optString("encrypted_content"));
+        assertEquals("text", content.getJSONObject(3).optString("type"));
+        assertEquals("visible", content.getJSONObject(3).optString("text"));
+    }
+
     @Test public void anthropicAssemblesStreamAndCompletesOnMessageStop() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":31,\"output_tokens\":1}}}\n\n" +
