@@ -160,8 +160,11 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 appendResponseImages(content, attachments);
                 input.put(new JSONObject().put("role", role).put("content", content));
             } else {
-                if ("assistant".equals(role) && prompt.allowProviderContinuation) appendOpenAiContinuation(input, item);
-                input.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+                boolean replayedAssistantMessage = "assistant".equals(role) && prompt.allowProviderContinuation
+                        && appendOpenAiContinuation(input, item);
+                // A complete Responses output-item replay already contains the assistant message item.
+                // Only synthesize provider-neutral text when no replayable message item exists.
+                if (!replayedAssistantMessage) input.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
             }
         }
         JSONObject body = new JSONObject().put("model", model).put("instructions", prompt.instructions).put("input", input).put("stream", true);
