@@ -23,6 +23,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public String id, title, providerId, modelProfileId, model, reasoningEffort, inputModalities, outputModalities, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
         /** v0.0.2 session-scoped context policy plus provider-neutral derived control state. */
         public String contextMode, taskProfile, contextCheckpoint, toolCapabilities, webMode;
+        /** Session-frozen deployment capabilities; editing a ModelProfile affects new/model-switched turns only. */
+        public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
+        public String continuationMode = ProviderContinuationPolicy.NONE;
+        public int thinkingBudgetTokens;
         public int checkpointCoveredItems;
         public int contextTokens, inputTokens, maxOutputTokens;
     }
