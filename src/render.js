@@ -409,7 +409,7 @@ export function patchConversation() {
   const scroll = document.querySelector('.timeline-scroll');
   const layout = document.querySelector('.conversation-layout');
   if (!session || view.route !== 'conversation' || !scroll || scroll.dataset.sessionId !== session.localSessionId || !layout) return false;
-  const expectedConfig = JSON.stringify({ modelProfileId: session.modelProfileId, reasoningEffort: session.reasoningEffort, inputModalities: session.inputModalities, outputModalities: session.outputModalities, webMode: session.webMode, webPreparingStage: session.webPreparingStage || '', contextPreparing: Boolean(session.contextPreparing), state: session.state });
+  const expectedConfig = JSON.stringify({ modelProfileId: session.modelProfileId, reasoningEffort: session.reasoningEffort, inputModalities: session.inputModalities, outputModalities: session.outputModalities, webMode: session.webMode });
   if (layout.dataset.configSignature !== expectedConfig) return false;
   window.__moyuChatView = view;
   const running = session.state === 'running';
