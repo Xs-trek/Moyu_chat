@@ -515,7 +515,7 @@ final class ChatCoordinator implements AutoCloseable {
             }
             @Override public void onStage(String stage) { worker.execute(() -> { try { if (stage == null || stage.trim().isEmpty()) return; streamStage[0] = stage.trim(); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception ignored) { } }); }
             @Override public void onReasoningDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { streamStage[0] = "reasoning"; reasoningOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception ignored) { } }); }
-            @Override public void onProviderContinuation(JSONObject state) { if (state == null || !contextPolicy.providerContinuationEnabled) return; worker.execute(() -> { try {
+            @Override public void onProviderContinuation(JSONObject state) { if (state == null || !allowProviderContinuation) return; worker.execute(() -> { try {
                 if (!provider.protocol.equals(state.optString("protocol", "")) || providerContinuationOverflow[0]) return;
                 JSONObject item = state.optJSONObject("item"); if (item == null) return;
                 String serialized = item.toString();
