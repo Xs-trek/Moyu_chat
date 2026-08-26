@@ -251,7 +251,7 @@ document.addEventListener('submit', (event) => {
   if (requestId && input) {
     input.value = '';
     resizeComposerTextarea(input);
-    input.blur();
+    // Keep focus after send so a stale pre-send full render cannot repopulate the submitted draft.
     renderGate.interactionEnded();
   }
 });
