@@ -132,12 +132,11 @@ function conversation(view) {
       h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或添加图片' : '输入消息') : session.contextPreparing ? '正在整理上下文' : session.webPreparingStage ? '正在联网检索' : '等待当前回合结束', 'aria-label': '消息' }),
       h('div', { class: 'composer-actions' },
         h('button', { type: 'button', class: 'composer-icon attachment-btn', disabled: !session.canAttachImage, title: imageInput ? '添加图片' : '当前模型未声明图片输入能力', 'aria-label': imageInput ? '添加图片' : '当前模型不支持图片输入', dataset: { action: 'pick-attachment', sessionId: session.localSessionId }, text: '＋' }),
-        h('span', { class: 'composer-scope muted', text: session.webMode === 'off' ? 'Web 关' : session.webMode === 'on' ? 'Web 开' : 'Web 自动' }),
-        h('span', { class: 'grow' }),
         modelChoiceField(view, session), reasoningChoiceField(session),
-        session.canInterrupt ? h('button', { type: 'button', class: 'composer-send stop', 'aria-label': '停止生成', title: '停止生成', dataset: { action: 'interrupt', sessionId: session.localSessionId }, text: '■' }) : null,
-        h('button', { type: 'submit', class: 'composer-send send-btn', disabled: !session.canSend, 'aria-label': '发送消息', title: '发送', text: '↑' })),
-      h('small', { class: 'composer-hint muted', text: '模型与推理设置只影响下一条回复' }))
+        h('span', { class: 'grow composer-spacer' }),
+        h('div', { class: 'composer-primary' }, session.canInterrupt
+          ? h('button', { type: 'button', class: 'composer-send stop', 'aria-label': '停止生成', title: '停止生成', dataset: { action: 'interrupt', sessionId: session.localSessionId }, text: '■' })
+          : h('button', { type: 'submit', class: 'composer-send send-btn', disabled: !session.canSend, 'aria-label': '发送消息', title: '发送', text: '↑' }))) )
   );
 }
 
