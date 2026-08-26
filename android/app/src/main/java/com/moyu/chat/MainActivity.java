@@ -124,6 +124,15 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         });
     }
 
+    @Override public void openConversationImportPicker(String source) {
+        runOnUiThread(() -> {
+            pendingConversationImportSource = source;
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "application/zip", "application/x-zip-compressed", "text/json"});
+            startActivityForResult(intent, REQUEST_CONVERSATION_IMPORT);
+        });
+    }
+
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_IMAGE) return;
