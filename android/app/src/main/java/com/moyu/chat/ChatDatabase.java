@@ -33,6 +33,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         public String authMode = ProviderAuth.BEARER;
         public String reasoningWire = ReasoningPolicy.WIRE_NONE;
+        /** Request-local model capability copied from the selected ModelProfile; not persisted in providers. */
+        public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
+        public int thinkingBudgetTokens = 0;
         public int contextTokens = ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
         public int inputTokens = 0;
         public int maxOutputTokens = ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
