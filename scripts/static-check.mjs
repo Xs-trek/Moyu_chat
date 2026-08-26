@@ -50,6 +50,9 @@ if (!contextMode.includes('STANDARD = "standard"') || !contextMode.includes('ret
 if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
 if (!promptPolicy.includes('compactInstructions(') || !read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('selectWithPolicy(')) fail('weak-context models require deterministic compact Harness fallback instead of an arbitrary occupancy threshold');
 if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('searchChats(') || !knowledgeStore.includes('The caller must separately enforce the global memory switch/mode capability')) fail('snapshot + capability-gated cross-chat retrieval boundary missing');
+const conversationImporter = read('android/app/src/main/java/com/moyu/chat/ConversationImportService.java');
+for (const marker of ['SOURCE_CHATGPT', 'SOURCE_CLAUDE', 'current_node', 'current_leaf_message_uuid', 'is_visually_hidden_from_conversation', 'thinking/tool_use/tool_result/image/artifact blocks are intentionally excluded']) if (!conversationImporter.includes(marker)) fail(`explicit sanitized conversation import missing: ${marker}`);
+if (!conversationImporter.includes('unsupported import source') || !conversationImporter.includes('存在多个分支')) fail('conversation import must reject provider auto-detection and ambiguous branches');
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
 if (!coordinator.includes('contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row without duplicating the pending input');
