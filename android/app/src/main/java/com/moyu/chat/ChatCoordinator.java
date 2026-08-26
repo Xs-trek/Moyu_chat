@@ -207,6 +207,8 @@ final class ChatCoordinator implements AutoCloseable {
                 }
                 case "import.file.pick": host.openConversationImportPicker(importSource(required(p, "source"))); break;
                 case "import.session.open": createImportedBranch(required(p, "snapshotId"), ContextMode.normalize(p.optString("contextMode", defaultContextMode)), ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode))); break;
+                case "import.session.delete": db.deleteImportedSnapshot(required(p, "snapshotId")); break;
+                case "verification.feedback": recordVerificationFeedback(required(p, "localSessionId"), requiredSeq(p), required(p, "label")); break;
                 case "branch.sources.refresh": refreshSources(); break;
                 case "branch.create.remote": createRemoteBranch(required(p, "sourceId"), p.has("throughSeq") ? p.optInt("throughSeq") : null, ContextMode.normalize(p.optString("contextMode", defaultContextMode)), ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode))); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
