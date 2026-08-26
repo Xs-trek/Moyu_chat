@@ -139,7 +139,7 @@ final class ContextBuilder {
         ContextBudgetManager.Result finalResult = finalSelection.result;
         return new CanonicalPrompt(finalSelection.instructions, finalResult.messages, finalResult.truncated,
                 finalResult.estimatedTokens, inheritedCount, localCount, finalResult.omittedMessageCount,
-                new JSONArray(durableProjected.toString()), mode.providerContinuationEnabled);
+                new JSONArray(durableProjected.toString()), allowContinuation);
     }
 
     private JSONArray durableProjection(ChatDatabase.Session session, ChatDatabase.Snapshot snapshot,
