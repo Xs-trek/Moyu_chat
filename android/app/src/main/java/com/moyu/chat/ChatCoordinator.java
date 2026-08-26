@@ -202,6 +202,47 @@ final class ChatCoordinator implements AutoCloseable {
     private void openSession(String id) { if (db.getSession(id) == null) throw new IllegalArgumentException("session not found"); activate(id); }
     private void activate(String id) { activeSessionId = id; db.putSetting("activeSessionId", id); route = "conversation"; db.putSetting("route", route); }
 
+    /** Model selection changes the configuration for future turns only; prior assistant rows keep per-turn metadata. */
+    private void setSessionModel(String sessionId, String modelProfileId) {
+        if (activeTurns.containsKey(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId)) {
+            throw new IllegalStateException("wait for the current turn before switching model");
+        }
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+        ChatDatabase.ModelProfile profile = db.getModelProfile(modelProfileId); if (profile == null) throw new IllegalArgumentException("model profile not found");
+        ChatDatabase.Provider provider = db.getProvider(profile.providerId);
+        if (provider == null || !secrets.has(profile.providerId)) throw new IllegalStateException("target provider credential missing");
+        if (db.draftMedia(sessionId).length() > 0 && !ChatDatabase.supportsModality(profile.inputModalities, "image")) {
+            throw new IllegalStateException("remove image attachments before switching to a text-only model");
+        }
+        session.providerId = profile.providerId;
+        session.modelProfileId = profile.id;
+        session.model = profile.modelId;
+        session.contextTokens = profile.contextTokens;
+        session.inputTokens = profile.inputTokens;
+        session.maxOutputTokens = profile.maxOutputTokens;
+        session.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
+        session.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
+        session.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
+        session.reasoningEffort = ReasoningPolicy.normalizeEffort(profile.defaultReasoning);
+        session.updatedAt = Instant.now().toString();
+        db.saveSession(session);
+    }
+
+    /** Reasoning effort is a future-turn setting and is validated against the active model profile. */
+    private void setSessionReasoning(String sessionId, String effort) {
+        if (activeTurns.containsKey(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId)) {
+            throw new IllegalStateException("wait for the current turn before changing reasoning effort");
+        }
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+        ChatDatabase.ModelProfile profile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
+        if (profile == null) throw new IllegalStateException("model profile not found");
+        String normalized = ReasoningPolicy.normalizeEffort(effort);
+        if (!ReasoningPolicy.allows(profile.reasoningLevels, normalized)) throw new IllegalArgumentException("reasoning effort not supported by model profile");
+        session.reasoningEffort = normalized;
+        session.updatedAt = Instant.now().toString();
+        db.saveSession(session);
+    }
+
     /** System back follows the same route state as UI navigation; only home exits the Activity. */
     void handleSystemBack(Runnable exitApp) {
         worker.execute(() -> {
