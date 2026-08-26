@@ -705,6 +705,7 @@ final class ChatCoordinator implements AutoCloseable {
             JSONArray handoffs = new JSONArray(); for (ChatDatabase.Handoff h : db.listHandoffs()) handoffs.put(new JSONObject().put("handoffId", h.id).put("branchSessionId", h.branchSessionId).put("state", h.state).put("createdAt", h.createdAt).put("summary", h.summary));
             view.put("remoteBridge", remote).put("remoteSources", remoteSources).put("handoffs", handoffs)
                     .put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
+                            .put("crossChatMemoryEnabled", crossChatMemoryEnabled)
                             .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));
         } catch (Exception error) { host.showMessage("view update failed: " + safe(error)); }
