@@ -167,6 +167,9 @@ final class ChatCoordinator implements AutoCloseable {
                             send(sessionId, message);
                             result(asyncRequestId, true, null);
                         } catch (Exception error) {
+                            // Last-resort durable terminal guard: if beginTurn() already committed a live row,
+                            // no escaping preparation exception may leave the DB stuck in running/streaming.
+                            try { db.failUnhandledTurn(sessionId, "turn_internal_error", safe(error)); } catch (Exception ignored) { }
                             startingSessions.remove(sessionId);
                             preparingSessions.remove(sessionId);
                             webPreparingStages.remove(sessionId);
