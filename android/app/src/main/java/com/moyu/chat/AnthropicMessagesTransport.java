@@ -183,6 +183,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     private static boolean parse(JSONObject event, ChatTransport.Sink sink, AnthropicContinuationCollector continuation) {
         String type = event.optString("type");
         if ("content_block_start".equals(type)) {
+            if (continuation != null) continuation.onStart(event);
             JSONObject block = event.optJSONObject("content_block");
             if (block != null) {
                 String blockType = block.optString("type", "");
