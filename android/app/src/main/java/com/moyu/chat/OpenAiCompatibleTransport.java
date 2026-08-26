@@ -160,6 +160,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 appendResponseImages(content, attachments);
                 input.put(new JSONObject().put("role", role).put("content", content));
             } else {
+                if ("assistant".equals(role) && prompt.allowProviderContinuation) appendOpenAiContinuation(input, item);
                 input.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
             }
         }
