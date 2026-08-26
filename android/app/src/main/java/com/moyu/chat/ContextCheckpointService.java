@@ -25,22 +25,28 @@ final class ContextCheckpointService {
         if (baseline == null || baseline.omittedItemCount <= Math.max(0, alreadyCovered) || baseline.projectedMessages == null) return null;
         try {
             int target = Math.min(baseline.omittedItemCount, baseline.projectedMessages.length());
+            int start = Math.max(0, alreadyCovered);
             StringBuilder source = new StringBuilder();
-            for (int i = target - 1; i >= Math.max(0, alreadyCovered); i--) {
-                JSONObject item = baseline.projectedMessages.optJSONObject(i); if (item == null) continue;
+            int actuallyCovered = start;
+            // Summarize one contiguous oldest-first prefix. Never mark a message covered unless its
+            // contents (or an explicit empty slot) were actually presented to the checkpoint model.
+            for (int i = start; i < target; i++) {
+                JSONObject item = baseline.projectedMessages.optJSONObject(i);
+                if (item == null) { actuallyCovered = i + 1; continue; }
                 String line = item.optString("role", "user") + ": " + item.optString("text", "") + "\n";
                 if (source.length() + line.length() > MAX_SOURCE_CHARS) break;
-                source.insert(0, line);
+                source.append(line);
+                actuallyCovered = i + 1;
             }
-            if (source.length() == 0) return null;
+            if (source.length() == 0 || actuallyCovered <= start) return null;
             StringBuilder payload = new StringBuilder();
             if (previous != null) payload.append("Previous checkpoint JSON:\n").append(previous.toJson()).append("\n\n");
-            payload.append("Newly omitted historical messages (newest relevant omitted tail may be bounded):\n").append(source);
+            payload.append("Newly omitted historical messages (contiguous oldest-first bounded chunk):\n").append(source);
             JSONArray messages = new JSONArray().put(new JSONObject().put("role", "user").put("text", payload.toString()));
             CanonicalPrompt prompt = new CanonicalPrompt(INSTRUCTIONS, messages, false, 0, 0, 1);
             String raw = ModelPreflight.run(transport, provider, apiKey, model, prompt, 1200, 15_000);
             ContextCheckpoint checkpoint = ContextCheckpoint.parseModelOutput(raw);
-            return checkpoint == null ? null : new Update(checkpoint, target);
+            return checkpoint == null ? null : new Update(checkpoint, actuallyCovered);
         } catch (Exception ignored) { return null; }
     }
 }
