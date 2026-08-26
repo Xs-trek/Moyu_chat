@@ -28,8 +28,8 @@ final class ReasoningPolicy {
     private ReasoningPolicy() { }
 
     static String defaultWireForProtocol(String protocol) {
-        if (OpenAiCompatibleTransport.RESPONSES.equals(protocol)) return WIRE_OPENAI_RESPONSES;
-        if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) return WIRE_ANTHROPIC_EFFORT;
+        // Protocol compatibility does not prove optional reasoning-effort compatibility. Third-party
+        // gateways are the primary deployment target, so blank means no optional effort field.
         return WIRE_NONE;
     }
 
