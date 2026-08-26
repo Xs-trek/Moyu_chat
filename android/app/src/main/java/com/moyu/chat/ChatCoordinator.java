@@ -284,6 +284,24 @@ final class ChatCoordinator implements AutoCloseable {
         boolean checkpointAllowed = contextPolicy.checkpointEnabled && (profile == null || !"recent".equals(profile.contextPolicy));
         boolean needsCheckpoint = checkpointAllowed && prompt.truncated && prompt.omittedItemCount > session.checkpointCoveredItems;
         boolean preparing = needsRouter || needsCheckpoint;
+
+        // Commit the accepted user turn before any hidden preprocessing or Web retrieval. This keeps
+        // the transcript responsive like a native chat app even when Exa/search needs several seconds.
+        ChatDatabase.ModelProfile requestModelProfile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
+        JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
+        if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
+        String streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "")
+                .put("streaming", true).put("streamStage", preparing ? "preparing" : "connecting").put("createdAt", Instant.now().toString())
+                .put("providerId", session.providerId).put("providerName", provider.displayName)
+                .put("modelProfileId", session.modelProfileId == null ? JSONObject.NULL : session.modelProfileId)
+                .put("model", session.model)
+                .put("modelName", requestModelProfile == null ? session.model : requestModelProfile.displayName)
+                .put("reasoningEffort", session.reasoningEffort == null ? ReasoningPolicy.DEFAULT : session.reasoningEffort);
+        db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
+        final long requestStartedNanos = System.nanoTime();
+        emitView();
+
         if (preparing) { preparingSessions.add(id); emitView(); }
         try {
             if (needsRouter) {
