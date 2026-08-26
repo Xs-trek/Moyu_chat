@@ -414,6 +414,7 @@ function handoffs(view) {
 function settings(view) {
   const nextTheme = view.appearance.theme === 'dark' ? 'system' : view.appearance.theme === 'system' ? 'light' : 'dark';
   const reasoningVisible = Boolean(view.ui?.showReasoning);
+  const memoryEnabled = Boolean(view.ui?.crossChatMemoryEnabled);
   const defaultContextMode = view.ui?.defaultContextMode || 'standard';
   const defaultWebMode = view.ui?.defaultWebMode || 'auto';
   return h('main', { class: 'page settings-page' }, pageHeader('设置', '只保留会直接影响本地 Chat 行为的选项。'),
