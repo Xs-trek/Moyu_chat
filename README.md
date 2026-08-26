@@ -37,7 +37,7 @@ The target is best-effort and never forces deletion of mandatory current input o
 
 ## Verification
 
-Smart verification separates verifier validity from answer verdict. A verifier must satisfy a fixed JSON schema, cover mandatory local rules and reference only evidence IDs that Moyu actually supplied. Invalid/unsupported verification abstains instead of pretending success. Initial numerical risk thresholds are permissive cold-start defaults and are designed to be replaced by model/policy-scoped calibration from explicit verifier feedback.
+Smart verification separates verifier validity from answer verdict. A verifier must satisfy a fixed JSON schema, cover mandatory local rules and reference only evidence IDs that Moyu actually supplied. Invalid/unsupported or coverage-incomplete verification abstains instead of pretending success and is not accepted as calibration data. Initial numerical risk thresholds are permissive cold-start defaults and are designed to be replaced by deployment/policy-scoped calibration from explicit verifier feedback.
 
 ## Web and transport
 
