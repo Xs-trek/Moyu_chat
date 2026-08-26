@@ -379,11 +379,11 @@ final class ChatCoordinator implements AutoCloseable {
                 session.taskProfile = profile.toJson().toString();
                 db.saveSession(session);
                 prompt = contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, "");
-                checkpointAllowed = contextPolicy.checkpointEnabled && !"recent".equals(profile.contextPolicy);
-                needsCheckpoint = checkpointAllowed && prompt.truncated && prompt.omittedItemCount > session.checkpointCoveredItems;
+                compactionPlan = checkpointAllowed ? contexts.compactionPlan(session, session.contextTokens, session.inputTokens, session.maxOutputTokens) : null;
+                needsCheckpoint = compactionPlan != null;
             }
             if (needsCheckpoint) {
-                ContextCheckpointService.Update update = checkpointService.update(transport, provider, key, session.model, prompt,
+                ContextCheckpointService.Update update = checkpointService.update(transport, provider, key, session.model, compactionPlan.baseline,
                         ContextCheckpoint.fromStored(session.contextCheckpoint), session.checkpointCoveredItems);
                 if (update != null) {
                     session.contextCheckpoint = update.checkpoint.toJson().toString();
