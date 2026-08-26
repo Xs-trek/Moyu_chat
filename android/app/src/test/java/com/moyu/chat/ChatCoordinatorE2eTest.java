@@ -312,6 +312,81 @@ public class ChatCoordinatorE2eTest {
         assertEquals("source transcript remains reversible after rollback", sourceTimeline.toString(), app.database().timeline(sourceId).toString());
     }
 
+    @Test public void acceptedTurnIsVisibleBeforeProviderCompletes() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"choices\":[{\"delta\":{\"content\":\"late answer\"},\"finish_reason\":\"stop\"}]}\n\n")
+                        .setBodyDelay(5, TimeUnit.SECONDS);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "visible immediately"));
+        await("accepted user/live rows committed before provider completion", () -> {
+            JSONArray rows = app.database().timeline(sessionId);
+            if (rows.length() < 2) return false;
+            JSONObject user = rows.optJSONObject(0), live = rows.optJSONObject(1);
+            return user != null && live != null && "visible immediately".equals(user.optString("text"))
+                    && live.optBoolean("streaming", false) && !"completed".equals(app.database().getSession(sessionId).state);
+        });
+        JSONArray rows = app.database().timeline(sessionId);
+        JSONObject live = rows.getJSONObject(1);
+        assertEquals("mock-model", live.optString("model"));
+        assertEquals("mock-model", live.optString("modelName"));
+        assertEquals("default", live.optString("reasoningEffort"));
+        assertFalse(live.optBoolean("reasoningAvailable", true));
+    }
+
+    @Test public void modelAndReasoningSwitchAffectFutureTurnsAndFreezeAssistantMetadata() throws Exception {
+        ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        provider.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
+        coordinator.saveProvider(provider, SECRET);
+        await("provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
+
+        ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
+        second.id = "mock-model-b-profile"; second.providerId = provider.id; second.modelId = "mock-model-b"; second.displayName = "Mock Model B";
+        second.contextTokens = 64_000; second.inputTokens = 0; second.maxOutputTokens = 4_096;
+        second.inputModalities = "text,image"; second.outputModalities = "text";
+        second.reasoningLevels = "none,low,high"; second.defaultReasoning = "none";
+        coordinator.saveModelProfile(second);
+        await("second model available", () -> latestView().optJSONArray("providers").getJSONObject(0).optJSONArray("models").length() == 2);
+
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first model"));
+        await("first model turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+        server.takeRequest(5, TimeUnit.SECONDS);
+
+        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", second.id));
+        await("model switched", () -> second.id.equals(activeSession(latestView()).optString("modelProfileId")));
+        assertEquals("Mock Model B", activeSession(latestView()).optString("modelName"));
+        assertEquals("none,low,high", activeSession(latestView()).optString("reasoningLevels"));
+        assertEquals("none", activeSession(latestView()).optString("reasoningEffort"));
+        assertTrue(activeSession(latestView()).optBoolean("canAttachImage"));
+
+        post("chat.session.reasoning.set", new JSONObject().put("localSessionId", sessionId).put("reasoningEffort", "high"));
+        await("reasoning switched", () -> "high".equals(activeSession(latestView()).optString("reasoningEffort")));
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second model"));
+        RecordedRequest secondRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(secondRequest);
+        JSONObject secondBody = new JSONObject(secondRequest.getBody().readUtf8());
+        assertEquals("mock-model-b", secondBody.optString("model"));
+        assertEquals("high", secondBody.optString("reasoning_effort"));
+        await("second model turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+
+        JSONArray timeline = app.database().timeline(sessionId);
+        ArrayList<JSONObject> assistants = new ArrayList<>();
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) assistants.add(row);
+        }
+        assertEquals(2, assistants.size());
+        assertEquals("mock-model", assistants.get(0).optString("model"));
+        assertEquals("default", assistants.get(0).optString("reasoningEffort"));
+        assertEquals("mock-model-b", assistants.get(1).optString("model"));
+        assertEquals("Mock Model B", assistants.get(1).optString("modelName"));
+        assertEquals("high", assistants.get(1).optString("reasoningEffort"));
+        assertTrue(assistants.get(1).optBoolean("reasoningAvailable"));
+    }
+
     // ---------- multi-turn + interrupt ----------
 
     @Test public void plainSecondTurnUsesStandardRoleHistoryWithoutToolPayload() throws Exception {
