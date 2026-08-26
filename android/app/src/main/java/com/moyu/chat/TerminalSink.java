@@ -1,5 +1,7 @@
 package com.moyu.chat;
 
+import org.json.JSONObject;
+
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Ensures one provider stream produces at most one terminal callback. */
@@ -11,6 +13,7 @@ final class TerminalSink implements ChatTransport.Sink {
 
     @Override public void onStage(String stage) { if (!terminal.get()) delegate.onStage(stage); }
     @Override public void onReasoningDelta(String delta) { if (!terminal.get()) delegate.onReasoningDelta(delta); }
+    @Override public void onProviderContinuation(JSONObject state) { if (!terminal.get()) delegate.onProviderContinuation(state); }
     @Override public void onTextDelta(String delta) { if (!terminal.get()) delegate.onTextDelta(delta); }
     @Override public void onImage(String mimeType, String base64, String fileName) { if (!terminal.get()) delegate.onImage(mimeType, base64, fileName); }
     @Override public void onToolActivity(String tool, String state) { if (!terminal.get()) delegate.onToolActivity(tool, state); }
