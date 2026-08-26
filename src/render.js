@@ -275,7 +275,7 @@ function contextModeBadge(item) {
   if (item?.role !== 'assistant') return null;
   const mode = String(item.contextMode || '').trim();
   if (!mode) return null;
-  const labels = { minimal: '极简', auto: '自动', smart: '智能' };
+  const labels = { minimal: '极简', standard: '标准', auto: '标准', smart: '智能' };
   const label = labels[mode] || mode;
   const effective = String(item.effectiveContextMode || '').trim();
   const title = effective && effective !== mode ? `上下文模式：${label} · 实际 ${effective}` : `上下文模式：${label}`;
