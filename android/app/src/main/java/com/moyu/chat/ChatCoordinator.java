@@ -584,7 +584,7 @@ final class ChatCoordinator implements AutoCloseable {
                 final String candidateWebBackend = webBackend[0];
                 preparationWorker.execute(() -> completeSmartTurn(id, streamKey, live, session, provider, key, transport,
                         mainPrompt, input, candidate, candidateReasoning, candidateMedia, candidateSources,
-                        candidateWebBackend, continuation, webPrepared.promptSuffix));
+                        candidateWebBackend, continuation, webPrepared.promptSuffix, requestDeploymentFingerprint));
             }); }
             @Override public void onError(String code, String summary, boolean retryable) { worker.execute(() -> { settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]); finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], new String[]{code, summary}); }); }
         };
