@@ -126,6 +126,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE sessions ADD COLUMN web_mode TEXT NOT NULL DEFAULT 'auto'");
             db.execSQL("UPDATE sessions SET tool_capabilities=COALESCE((SELECT tool_capabilities FROM model_profiles WHERE profile_id=sessions.model_profile_id),'')");
         }
+        if (oldVersion < 10) {
+            db.execSQL("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'");
+            db.execSQL("UPDATE settings SET value='standard' WHERE key='defaultContextMode' AND value='auto'");
+            db.execSQL("CREATE VIRTUAL TABLE knowledge_fts USING fts4(scope_id,item_ref,ordinal,role,text,terms,tokenize=simple)");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
