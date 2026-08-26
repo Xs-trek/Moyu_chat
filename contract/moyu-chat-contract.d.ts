@@ -155,6 +155,8 @@ export interface VerificationView {
   calibrationKey?: string;
   calibrationLabels?: number;
   learnedCalibration?: boolean;
+  features?: number[];
+  attempts?: VerificationAttemptView[];
   repairAttempted?: boolean;
   repaired?: boolean;
   repairLimitReached?: boolean;
