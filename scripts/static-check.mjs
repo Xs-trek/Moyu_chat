@@ -67,6 +67,8 @@ if (!coordinator.includes('if (activeTurns.containsKey(id)) throw new IllegalSta
 if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
 if (!coordinator.includes('context.mode.default.set') || !coordinator.includes('defaultContextMode')) fail('v0.0.2 default context-mode authority missing');
 if (!coordinator.includes('web.mode.default.set') || !coordinator.includes('defaultWebMode') || !coordinator.includes('MoyuWebService')) fail('v0.0.2 Web-mode authority/orchestration missing');
+if (!coordinator.includes('memory.global.set') || !coordinator.includes('crossChatMemoryEnabled')) fail('global cross-chat Memory switch missing');
+if (!coordinator.includes('import.file.pick') || !coordinator.includes('import.session.open') || !coordinator.includes('importConversationFromUri(') || !coordinator.includes('listImportedSnapshots()')) fail('explicit file-import library orchestration missing');
 if (!coordinator.includes('chat.session.model.set') || !coordinator.includes('chat.session.reasoning.set') || !coordinator.includes('setSessionModel(') || !coordinator.includes('setSessionReasoning(')) fail('in-session model/reasoning controls missing');
 if (coordinator.indexOf('db.beginTurn(') < 0 || coordinator.indexOf('webService.prepare(') < 0 || coordinator.indexOf('db.beginTurn(') > coordinator.indexOf('webService.prepare(')) fail('accepted user turn must become visible before Web retrieval starts');
 if (!coordinator.includes('.put("modelName"') || !coordinator.includes('.put("reasoningEffort"') || !coordinator.includes('.put("reasoningAvailable"')) fail('assistant turns must freeze model/reasoning metadata');
