@@ -47,6 +47,18 @@ public class SmartVerifierCalibrationTest {
         assertNotEquals("credential/account replacement must isolate calibration", second, third);
     }
 
+    @Test public void frozenRequestDeploymentKeepsItsCalibrationEpochAfterCredentialRotation() {
+        String frozenFingerprint = ProviderContinuationIdentity.fingerprint(db, provider, session);
+        String frozenKey = SmartVerifierCalibration.calibrationKey(frozenFingerprint);
+
+        ProviderContinuationIdentity.bumpCredentialEpoch(db, provider.id);
+        String currentKey = SmartVerifierCalibration.calibrationKey(db, provider, session);
+
+        assertNotEquals("rotated credentials must use a new calibration bucket", frozenKey, currentKey);
+        assertEquals("an already-running request must retain the bucket of the deployment that actually served it",
+                frozenKey, SmartVerifierCalibration.calibrationKey(frozenFingerprint));
+    }
+
     @Test public void invalidOrIncompleteVerifierCannotTrainCalibration() throws Exception {
         String key = SmartVerifierCalibration.calibrationKey(db, provider, session);
         JSONObject invalid = verification(key, SmartVerifierService.STATUS_INVALID, false, SmartVerifierService.VERDICT_FAIL);
