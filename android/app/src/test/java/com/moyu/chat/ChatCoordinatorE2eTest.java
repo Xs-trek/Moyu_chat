@@ -770,6 +770,67 @@ public class ChatCoordinatorE2eTest {
         assertEquals("idle", app.database().getSession(sessionId).state);
     }
 
+    @Test public void credentialRotationDuringRunningTurnCannotRelabelOldNativeContinuation() throws Exception {
+        final String rotatedSecret = "sk-ROTATED-value-93b4";
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_old\",\"type\":\"reasoning\",\"encrypted_content\":\"old-cipher\"}}\n\n"
+                        + "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_old\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"old answer\"}]}}\n\n"
+                        + "data: {\"type\":\"response.output_text.delta\",\"delta\":\"old answer\"}\n\n"
+                        + "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":8,\"output_tokens\":3}}}\n\n")
+                        .setBodyDelay(2, TimeUnit.SECONDS);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.RESPONSES);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        assertNotNull(profile);
+        profile.continuationMode = ProviderContinuationPolicy.NATIVE;
+        app.database().saveModelProfile(profile);
+
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider").put("contextMode", ContextMode.STANDARD));
+        await("native session created", () -> latestView() != null && latestView().optString("activeLocalSessionId", "").length() > 0);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        ChatDatabase.Session sessionBefore = app.database().getSession(sessionId);
+        ChatDatabase.Provider providerBefore = app.database().getProvider("mock-provider");
+        String requestFingerprint = ProviderContinuationIdentity.fingerprint(app.database(), providerBefore, sessionBefore);
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
+        RecordedRequest firstRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull("first request must start before credential rotation", firstRequest);
+
+        coordinator.saveProvider(mockProvider(OpenAiCompatibleTransport.RESPONSES), rotatedSecret);
+        await("credential rotation applied", () -> rotatedSecret.equals(secrets.get("mock-provider")));
+        String currentFingerprint = ProviderContinuationIdentity.fingerprint(app.database(), app.database().getProvider("mock-provider"), app.database().getSession(sessionId));
+        assertNotEquals("credential epoch must change deployment identity", requestFingerprint, currentFingerprint);
+
+        await("old request completes after rotation", () -> "completed".equals(app.database().getSession(sessionId).state));
+        JSONObject oldAssistant = null;
+        JSONArray firstTimeline = app.database().timeline(sessionId);
+        for (int i = 0; i < firstTimeline.length(); i++) {
+            JSONObject row = firstTimeline.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) oldAssistant = row;
+        }
+        assertNotNull(oldAssistant);
+        JSONObject oldState = oldAssistant.optJSONObject("providerContinuation");
+        assertNotNull("native output from the first request should be retained under its original deployment", oldState);
+        assertEquals("completion must preserve the request-start deployment identity", requestFingerprint, oldState.optString("deploymentFingerprint"));
+        assertNotEquals("old continuation must not be relabeled with the rotated credential epoch", currentFingerprint, oldState.optString("deploymentFingerprint"));
+
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"type\":\"response.output_text.delta\",\"delta\":\"new answer\"}\n\n"
+                        + "data: {\"type\":\"response.completed\",\"response\":{}}\n\n");
+            }
+        });
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second"));
+        RecordedRequest secondRequest = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull(secondRequest);
+        String secondBody = secondRequest.getBody().readUtf8();
+        assertFalse("old encrypted reasoning must not replay after credential rotation", secondBody.contains("old-cipher"));
+        assertFalse("old provider output item must not replay after credential rotation", secondBody.contains("rs_old"));
+        await("second request completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
     @Test public void anthropicProtocolEndToEnd() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
