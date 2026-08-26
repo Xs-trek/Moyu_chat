@@ -385,6 +385,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             db.delete("timeline", "session_id=? AND local_seq" + (inclusive ? ">=?" : ">?") , new String[]{sessionId, String.valueOf(localSeq)});
+            db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(sessionId)});
+            db.delete("settings", "key=?", new String[]{LocalKnowledgeStore.indexMarkerKey(sessionId)});
             ContentValues state = new ContentValues();
             state.put("state", "idle"); state.put("updated_at", Instant.now().toString()); state.put("draft", ""); state.put("draft_media", "[]");
             state.put("task_profile", ""); state.put("context_checkpoint", ""); state.put("checkpoint_covered_items", 0);
