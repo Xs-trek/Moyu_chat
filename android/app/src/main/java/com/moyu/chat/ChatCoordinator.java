@@ -428,6 +428,7 @@ final class ChatCoordinator implements AutoCloseable {
             }
         }
         final MoyuWebService.Prepared webPrepared = preparedWeb;
+        final CanonicalPrompt mainPrompt = prompt;
         provider.maxOutputTokens = session.maxOutputTokens; // request-local provider copy; transport only needs the wire output cap.
         LinkedHashMap<String, JSONObject> webSources = new LinkedHashMap<>();
         for (int i = 0; i < webPrepared.sources.length(); i++) {
