@@ -97,7 +97,12 @@ final class ChatCoordinator implements AutoCloseable {
                 if (provider.inputTokens < 0 || provider.inputTokens > provider.contextTokens) throw new IllegalArgumentException("input tokens out of range");
                 if (provider.maxOutputTokens < 256 || provider.maxOutputTokens >= provider.contextTokens) throw new IllegalArgumentException("max output tokens out of range");
                 db.saveProvider(provider);
-                if (apiKey != null && !apiKey.trim().isEmpty()) secrets.put(provider.id, apiKey.trim());
+                if (apiKey != null && !apiKey.trim().isEmpty()) {
+                    secrets.put(provider.id, apiKey.trim());
+                    // A replaced credential may point at a different account/tenant even when the URL is unchanged.
+                    // Invalidate all previously captured opaque continuation without persisting any secret-derived value.
+                    ProviderContinuationIdentity.bumpCredentialEpoch(db, provider.id);
+                }
                 emitView();
             } catch (Exception error) { host.showMessage(safe(error)); }
         });
