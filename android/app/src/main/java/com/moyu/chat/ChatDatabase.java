@@ -146,6 +146,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
             db.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
         }
+        if (oldVersion < 12) {
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
+            db.execSQL("UPDATE sessions SET thinking_mode=COALESCE((SELECT thinking_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),'provider-default'), thinking_budget_tokens=COALESCE((SELECT thinking_budget_tokens FROM model_profiles WHERE profile_id=sessions.model_profile_id),0), continuation_mode=COALESCE((SELECT continuation_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),'none')");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
