@@ -129,6 +129,9 @@ export interface SessionView {
   reasoningLevels: string;
   defaultReasoning: string;
   reasoningEffort: string;
+  thinkingMode: 'provider-default' | 'adaptive' | 'disabled' | 'manual';
+  thinkingBudgetTokens: number;
+  continuationMode: 'none' | 'native';
   contextMode: ContextMode;
   effectiveContextMode: 'minimal' | 'standard' | 'smart';
   inputModalities: string;
