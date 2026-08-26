@@ -403,7 +403,7 @@ final class ChatCoordinator implements AutoCloseable {
         if (!webSources.isEmpty()) live.put("sources", sourceArray(webSources));
         if (!webBackend[0].isEmpty()) live.put("webBackend", webBackend[0]);
         db.replaceTimelineBody(streamKey, live);
-        emitView();
+        emitStreamingView(id);
         final long[] firstOutputNanos = new long[]{0L};
         StringBuilder textOut = new StringBuilder();
         StringBuilder reasoningOut = new StringBuilder();
