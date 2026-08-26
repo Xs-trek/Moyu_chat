@@ -7,6 +7,8 @@ final class ContextMode {
     static final String SMART = "smart";
     /** v0.0.2 compatibility only. New UI never emits auto. */
     static final String LEGACY_AUTO = "auto";
+    /** Source-compatibility alias for older tests/callers; persisted value is standard. */
+    @Deprecated static final String AUTO = STANDARD;
 
     static final class Policy {
         final boolean routerEnabled;
