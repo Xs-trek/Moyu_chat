@@ -43,7 +43,10 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         webView = new WebView(this); webView.setBackgroundColor(Color.TRANSPARENT);
         setContentView(webView, new ViewGroup.LayoutParams(-1, -1)); configureWebView();
-        coordinator = new ChatCoordinator((MoyuChatApplication) getApplication(), this);
+        MoyuChatApplication app = (MoyuChatApplication) getApplication();
+        runtime = app.chatRuntime();
+        runtime.attach(this);
+        coordinator = runtime.coordinator();
         webView.loadUrl(ORIGIN + "/assets/ui/index.html");
     }
 
