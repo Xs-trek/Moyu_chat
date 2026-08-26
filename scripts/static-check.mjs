@@ -48,6 +48,7 @@ const promptPolicy = read('android/app/src/main/java/com/moyu/chat/PromptPolicy.
 const knowledgeStore = read('android/app/src/main/java/com/moyu/chat/LocalKnowledgeStore.java');
 if (!contextMode.includes('STANDARD = "standard"') || !contextMode.includes('retrievalEnabled') || !contextMode.includes('evidencePolicyEnabled')) fail('three-tier Harness policy missing');
 if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
+if (!promptPolicy.includes('compactInstructions(') || !read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('selectWithPolicy(')) fail('weak-context models require deterministic compact Harness fallback instead of an arbitrary occupancy threshold');
 if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('does not') || !knowledgeStore.includes('unrelated Chat sessions')) fail('snapshot-scoped local retrieval boundary missing');
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
