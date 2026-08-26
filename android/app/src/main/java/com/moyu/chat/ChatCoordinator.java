@@ -958,6 +958,18 @@ final class ChatCoordinator implements AutoCloseable {
     private static String required(JSONObject p, String key) { String v = p.optString(key, "").trim(); if (v.isEmpty()) throw new IllegalArgumentException("missing " + key); return v; }
     private static int requiredSeq(JSONObject p) { if (!p.has("localSeq")) throw new IllegalArgumentException("missing localSeq"); int seq = p.optInt("localSeq", -1); if (seq < 1) throw new IllegalArgumentException("invalid localSeq"); return seq; }
     private static String safe(Exception e) { String m = e.getMessage(); return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m; }
+    private static String importSource(String source) {
+        String value = source == null ? "" : source.trim().toLowerCase(java.util.Locale.ROOT);
+        if (ConversationImportService.SOURCE_CHATGPT.equals(value) || ConversationImportService.SOURCE_CLAUDE.equals(value)) return value;
+        throw new IllegalArgumentException("unsupported import source");
+    }
+    private static String importDisplayName(ContentResolver resolver, Uri uri) {
+        if (resolver == null || uri == null) return "conversations.json";
+        try (Cursor c = resolver.query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) { String value = c.getString(0); if (value != null && !value.trim().isEmpty()) return value.trim(); }
+        } catch (Exception ignored) { }
+        String last = uri.getLastPathSegment(); return last == null || last.trim().isEmpty() ? "conversations.json" : last.trim();
+    }
     private static String nonEmpty(String value, String fallback) { return value == null || value.trim().isEmpty() ? fallback : value.trim(); }
     private static String empty(String v) { return v == null || v.isEmpty() ? null : v; }
     private static String bounded(String value, int max, String label) { String v = value == null ? "" : value.trim(); if (v.isEmpty()) throw new IllegalArgumentException(label + " required"); if (v.length() > max) throw new IllegalArgumentException(label + " too long"); return v; }
