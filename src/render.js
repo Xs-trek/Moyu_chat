@@ -425,12 +425,18 @@ export function patchConversation() {
   const candidateComposer = document.querySelector('form[data-form="composer"]');
   const composer = candidateComposer?.dataset.sessionId === session.localSessionId ? candidateComposer : null;
   const send = composer?.querySelector('.send-btn');
-  if (send) { send.disabled = !session.canSend; send.textContent = contextPreparing ? '整理上下文' : running ? '发送中' : '发送'; }
+  if (send) { send.disabled = !session.canSend; send.textContent = '↑'; }
   const input = composer?.querySelector('textarea[name="message"]');
-  if (input) input.placeholder = session.canSend ? (String(session.inputModalities || '').split(',').includes('image') ? '输入消息，或仅发送图片' : '输入消息') : contextPreparing ? '正在识别任务 / 整理上下文' : '等待当前回合结束';
+  if (input) input.placeholder = session.canSend
+    ? (String(session.inputModalities || '').split(',').includes('image') ? '输入消息，或添加图片' : '输入消息')
+    : contextPreparing ? '正在整理上下文'
+    : session.webPreparingStage ? '正在联网检索'
+    : '等待当前回合结束';
   const existingInterrupt = composer?.querySelector('[data-action="interrupt"]');
   if (!session.canInterrupt && existingInterrupt) existingInterrupt.remove();
-  else if (session.canInterrupt && !existingInterrupt && send) send.before(button('中断', 'interrupt', { sessionId: session.localSessionId }, 'btn danger'));
+  else if (session.canInterrupt && !existingInterrupt && send) {
+    send.before(h('button', { type: 'button', class: 'composer-send stop', 'aria-label': '停止生成', title: '停止生成', dataset: { action: 'interrupt', sessionId: session.localSessionId }, text: '■' }));
+  }
   if (anchor) requestAnimationFrame(() => restoreTimelineAnchor(anchor, session.localSessionId));
   return true;
 }
