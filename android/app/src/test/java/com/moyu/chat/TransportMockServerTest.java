@@ -368,6 +368,36 @@ public class TransportMockServerTest {
         assertTrue(sink.webSources.toString().contains("https://example.com/cite#Citation"));
     }
 
+    @Test public void anthropicNativeContinuationPreservesThinkingTextAndHostedWebBlocks() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"plan\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+                "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_1\",\"name\":\"web_search\",\"input\":{}}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"latest\\\"}\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+                "data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"web_search_tool_result\",\"tool_use_id\":\"srvtoolu_1\",\"content\":[{\"type\":\"web_search_result\",\"url\":\"https://example.com\",\"title\":\"E\",\"encrypted_content\":\"enc\"}]}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":2}\n\n" +
+                "data: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":3}\n\n" +
+                "data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "native-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertEquals(4, sink.continuationItems.length());
+        assertEquals("thinking", sink.continuationItems.getJSONObject(0).optString("type"));
+        assertEquals("sig", sink.continuationItems.getJSONObject(0).optString("signature"));
+        assertEquals("server_tool_use", sink.continuationItems.getJSONObject(1).optString("type"));
+        assertEquals("latest", sink.continuationItems.getJSONObject(1).getJSONObject("input").optString("query"));
+        JSONObject result = sink.continuationItems.getJSONObject(2);
+        assertEquals("web_search_tool_result", result.optString("type"));
+        assertEquals("enc", result.getJSONArray("content").getJSONObject(0).optString("encrypted_content"));
+        assertEquals("text", sink.continuationItems.getJSONObject(3).optString("type"));
+        assertEquals("answer", sink.continuationItems.getJSONObject(3).optString("text"));
+    }
+
     @Test public void anthropicAssemblesStreamAndCompletesOnMessageStop() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":31,\"output_tokens\":1}}}\n\n" +
