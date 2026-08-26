@@ -175,6 +175,7 @@ const manifest = read('android/app/src/main/AndroidManifest.xml');
 if (!manifest.includes('android:allowBackup="false"')) fail('Android backup must remain disabled for local chat data/secrets');
 if (!manifest.includes('android:usesCleartextTraffic="false"')) fail('cleartext provider traffic must remain disabled in v0.0.2');
 if (!manifest.includes('android:windowSoftInputMode="adjustResize"')) fail('conversation viewport must resize with the Android keyboard');
+if (!manifest.includes('android.permission.FOREGROUND_SERVICE') || !manifest.includes('android.permission.FOREGROUND_SERVICE_DATA_SYNC') || !manifest.includes('android:foregroundServiceType="dataSync"')) fail('background-active chat turns require the Android dataSync foreground-service declaration');
 
 const html = read('index.html');
 if (!html.includes("connect-src 'none'")) fail('WebView CSP must block direct network connections');
