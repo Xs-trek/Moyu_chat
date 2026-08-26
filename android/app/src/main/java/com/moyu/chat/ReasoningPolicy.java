@@ -84,17 +84,22 @@ final class ReasoningPolicy {
         String level = normalizeEffort(effort);
         String wire = normalizeWire(provider.reasoningWire, provider.protocol);
 
-        if (WIRE_ANTHROPIC_EFFORT.equals(wire)) {
-            applyAnthropicThinking(body, provider);
-            // Anthropic has no effort="none". `none` means no effort override; thinking on/off is the
-            // separate explicit thinkingMode capability above.
-            if (!DEFAULT.equals(level) && !NONE_LEVEL.equals(level)) {
-                body.put("output_config", new JSONObject().put("effort", level));
-            }
+        // Messages-protocol thinking is a model/deployment capability, independent from whether the
+        // endpoint also implements Anthropic's optional output_config.effort field. This matters for
+        // third-party Anthropic-compatible gateways that implement thinking but not effort.
+        if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol)) applyAnthropicThinking(body, provider);
+
+        if (DEFAULT.equals(level)) return;
+        if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol)) {
+            // Anthropic-compatible Messages has no effort="none". `none` means no effort override;
+            // thinking on/off is controlled only by the explicit thinkingMode above.
+            if (NONE_LEVEL.equals(level)) return;
+            if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("reasoning effort is not enabled for this Messages endpoint");
+            if (!WIRE_ANTHROPIC_EFFORT.equals(wire)) throw new IllegalArgumentException("reasoning wire is incompatible with anthropic-messages");
+            body.put("output_config", new JSONObject().put("effort", level));
             return;
         }
 
-        if (DEFAULT.equals(level)) return;
         if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("reasoning effort is not supported by this provider configuration");
         if (WIRE_OPENAI_RESPONSES.equals(wire)) {
             body.put("reasoning", new JSONObject().put("effort", level));
