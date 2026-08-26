@@ -23,6 +23,18 @@ final class ContextBuilder {
 
     CanonicalPrompt build(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens,
                           String pendingUserText, JSONArray pendingMedia) throws Exception {
+        return buildInternal(session, contextTokens, inputTokens, outputTokens, pendingUserText, pendingMedia, false);
+    }
+
+    /** Build after beginTurn(): the accepted user row already exists durably, so optional ephemeral
+     * material is merged into that latest user message instead of creating a duplicate user turn. */
+    CanonicalPrompt buildCommitted(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens,
+                                   String ephemeralUserSuffix) throws Exception {
+        return buildInternal(session, contextTokens, inputTokens, outputTokens, ephemeralUserSuffix, new JSONArray(), true);
+    }
+
+    private CanonicalPrompt buildInternal(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens,
+                                          String pendingUserText, JSONArray pendingMedia, boolean mergeIntoLatestUser) throws Exception {
         ChatDatabase.Snapshot snapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         JSONArray inherited = snapshot == null ? new JSONArray() : db.snapshotItems(snapshot.id);
         JSONArray local = db.timeline(session.id);
@@ -32,7 +44,19 @@ final class ContextBuilder {
         appendVisible(projected, local);
         String pending = pendingUserText == null ? "" : pendingUserText;
         JSONArray pendingImages = projectAttachments(pendingMedia);
-        if (!pending.trim().isEmpty() || pendingImages.length() > 0) {
+        if (mergeIntoLatestUser) {
+            if (!pending.isEmpty()) {
+                boolean merged = false;
+                for (int i = projected.length() - 1; i >= 0; i--) {
+                    JSONObject message = projected.optJSONObject(i);
+                    if (message == null || !"user".equals(message.optString("role"))) continue;
+                    message.put("text", message.optString("text", "") + pending);
+                    merged = true;
+                    break;
+                }
+                if (!merged) projected.put(new JSONObject().put("role", "user").put("text", pending));
+            }
+        } else if (!pending.trim().isEmpty() || pendingImages.length() > 0) {
             JSONObject message = new JSONObject().put("role", "user").put("text", pending);
             if (pendingImages.length() > 0) message.put("attachments", pendingImages);
             projected.put(message);
