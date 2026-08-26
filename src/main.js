@@ -181,6 +181,7 @@ document.addEventListener('submit', (event) => {
   const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text });
   if (requestId && input) {
     input.value = '';
+    resizeComposerTextarea(input);
     input.blur();
     renderGate.interactionEnded();
   }
@@ -188,6 +189,8 @@ document.addEventListener('submit', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.target?.name !== 'message' || event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+  // Mobile chat keyboards use Enter for a newline; the explicit send affordance owns submission.
+  if (window.matchMedia?.('(pointer: coarse)')?.matches) return;
   event.preventDefault();
   event.target.closest('form[data-form="composer"]')?.requestSubmit();
 });
