@@ -142,6 +142,9 @@ final class ChatCoordinator implements AutoCloseable {
                     if (sessionBusy(sessionId)) throw new IllegalStateException("session busy");
                     if (message.trim().isEmpty() && db.draftMedia(sessionId).length() == 0) break;
                     final String asyncRequestId = requestId;
+                    // The composer is cleared at Send acceptance, not at provider success. This prevents
+                    // preflight/provider-start failures from resurrecting the submitted text from SQLite.
+                    db.setDraft(sessionId, "");
                     startingSessions.add(sessionId);
                     host.setTurnRuntimeActive(sessionId, true);
                     preparationWorker.execute(() -> {
