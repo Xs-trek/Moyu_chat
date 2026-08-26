@@ -976,5 +976,5 @@ final class ChatCoordinator implements AutoCloseable {
     private static String validRoute(String value) { String v = value == null ? "" : value.trim(); if (!("home".equals(v) || "conversation".equals(v) || "providers".equals(v) || "imports".equals(v) || "handoffs".equals(v) || "settings".equals(v))) return "home"; return v; }
     private static String validTheme(String value) { String v = value == null ? "" : value.trim(); if (!("system".equals(v) || "light".equals(v) || "dark".equals(v))) return "system"; return v; }
 
-    @Override public void close() { closed = true; for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); lastStreamViewNanos.clear(); webService.close(); transports.close(); preparationWorker.shutdownNow(); worker.shutdownNow(); }
+    @Override public void close() { closed = true; for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); webService.close(); transports.close(); preparationWorker.shutdownNow(); worker.shutdownNow(); }
 }
