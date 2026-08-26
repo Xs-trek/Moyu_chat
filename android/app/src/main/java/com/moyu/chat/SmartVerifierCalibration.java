@@ -41,8 +41,14 @@ final class SmartVerifierCalibration {
     private SmartVerifierCalibration() { }
 
     static String calibrationKey(ChatDatabase db, ChatDatabase.Provider provider, ChatDatabase.Session session) {
-        if (db == null || provider == null || session == null) return "verify:" + digest(POLICY_VERSION + "\nmissing-deployment");
-        String deployment = ProviderContinuationIdentity.fingerprint(db, provider, session);
+        if (db == null || provider == null || session == null) return calibrationKey("");
+        return calibrationKey(ProviderContinuationIdentity.fingerprint(db, provider, session));
+    }
+
+    /** Use the deployment identity frozen when the request started; never relabel an old request with a later credential epoch. */
+    static String calibrationKey(String deploymentFingerprint) {
+        String deployment = deploymentFingerprint == null ? "" : deploymentFingerprint.trim();
+        if (deployment.isEmpty()) deployment = "missing-deployment";
         return "verify:" + digest(deployment + "\n" + POLICY_VERSION);
     }
 
