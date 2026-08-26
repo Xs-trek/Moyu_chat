@@ -756,6 +756,8 @@ public class ChatCoordinatorE2eTest {
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
         assertTrue("UI intents must not wait for the 8-second provider body", elapsedMs < 4_000);
         assertEquals("the original turn must still be running independently", "running", app.database().getSession(runningId).state);
+        post("chat.session.interrupt", new JSONObject().put("localSessionId", runningId));
+        await("slow turn cancels cleanly before teardown", () -> !"running".equals(app.database().getSession(runningId).state));
     }
 
     @Test public void whitespaceOnlyInputIsRejectedWithoutSideEffects() throws Exception {
