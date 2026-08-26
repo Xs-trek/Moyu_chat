@@ -948,6 +948,7 @@ final class ChatCoordinator implements AutoCloseable {
                     .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", activeTurns.containsKey(s.id))
                     .put("canConfigureTurn", !active).put("contextPreparing", preparing);
             if (webPreparing) o.put("webPreparingStage", webPreparingStage);
+            if (postProcessing) o.put("postProcessingStage", postProcessingStage);
         }
         return o;
     }
