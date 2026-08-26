@@ -88,6 +88,22 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 .put("max_tokens", maxOutputTokens > 0 ? maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS).put("stream", true);
     }
 
+    private static JSONArray anthropicAssistantContent(JSONObject message) throws Exception {
+        JSONObject state = message.optJSONObject("_providerContinuation");
+        if (state == null || !PROTOCOL.equals(state.optString("protocol", ""))) return null;
+        JSONArray items = state.optJSONArray("items"); if (items == null || items.length() == 0) return null;
+        JSONArray content = new JSONArray();
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject block = items.optJSONObject(i); if (block == null) continue;
+            String type = block.optString("type", "");
+            if (!("thinking".equals(type) || "redacted_thinking".equals(type))) continue;
+            content.put(new JSONObject(block.toString()));
+        }
+        String text = message.optString("text", "");
+        if (!text.isEmpty()) content.put(new JSONObject().put("type", "text").put("text", text));
+        return content.length() == 0 ? null : content;
+    }
+
     private static void applyHostedTools(JSONObject body, ChatTurnOptions options) throws Exception {
         if (options == null || !options.webEnabled()) return;
         JSONArray tools = new JSONArray();
