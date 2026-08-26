@@ -4,15 +4,16 @@
   --text-xs:.72rem; --text-sm:.84rem; --text-md:.95rem; --text-lg:1.15rem; --text-xl:1.55rem; --text-2xl:2rem;
   --weight-medium:600; --weight-bold:800; --weight-black:900;
   --space-1:.25rem; --space-2:.5rem; --space-3:.75rem; --space-4:1rem; --space-5:1.25rem; --space-6:1.5rem; --space-8:2rem;
-  --border:3px solid var(--ink); --border-thin:2px solid var(--ink);
+  --border:3px solid var(--outline-strong); --border-thin:2px solid var(--outline);
   --radius-sm:4px; --radius-md:8px; --radius-lg:12px;
   --shadow-sm:3px 3px 0 var(--shadow); --shadow:5px 5px 0 var(--shadow); --shadow-lg:7px 7px 0 var(--shadow);
   --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px); --safe-left:env(safe-area-inset-left,0px); --safe-right:env(safe-area-inset-right,0px);
-  --bg:#f4f0e6; --surface:#fffdf5; --elevated:#fff; --ink:#111; --muted:#605d55; --shadow:#111;
+  --bg:#f4f0e6; --surface:#fffdf5; --elevated:#fff; --ink:#111; --muted:#605d55; --outline:#111; --outline-strong:#111; --shadow:#111;
   --yellow:#ffd84d; --cyan:#55dde0; --pink:#ff7bac; --purple:#9b7bff; --lime:#b8f25b; --danger:#ff5c5c; --info:#5ca9ff;
+  --yellow-emissive:#d5a700; --cyan-emissive:#008f96; --pink-emissive:#c63b77; --purple-emissive:#7152dc; --lime-emissive:#6d9d20;
   font-family:var(--font-sans); color:var(--ink); background:var(--bg); color-scheme:light;
 }
-:root[data-theme="dark"] { --bg:#111; --surface:#1c1c1c; --elevated:#262626; --ink:#f7f4ea; --muted:#bbb5a7; --shadow:#69645b; color-scheme:dark; }
+:root[data-theme="dark"] { --bg:#0c0e12; --surface:#14171c; --elevated:#1b2027; --ink:#e8e6df; --muted:#9fa3aa; --outline:#3b424d; --outline-strong:#596270; --shadow:#050608; --yellow:#3a3218; --cyan:#15363a; --pink:#402434; --purple:#2e2948; --lime:#273718; --danger:#4a2024; --info:#1b3049; --yellow-emissive:#e8bd47; --cyan-emissive:#5ccbd0; --pink-emissive:#e87aad; --purple-emissive:#a793ff; --lime-emissive:#a1d85a; color-scheme:dark; }
 * { box-sizing:border-box; scrollbar-width:none; }
 *::-webkit-scrollbar { width:0; height:0; }
 html { min-width:320px; height:100%; min-height:100%; overflow-x:hidden; background:var(--bg); }
