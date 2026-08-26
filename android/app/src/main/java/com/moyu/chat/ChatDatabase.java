@@ -784,6 +784,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         String defaultReasoning = ReasoningPolicy.normalizeEffort(p.defaultReasoning);
         if (!ReasoningPolicy.allows(levels, defaultReasoning)) throw new IllegalArgumentException("default reasoning not allowed by model profile");
         String thinkingMode = ReasoningPolicy.normalizeThinkingMode(p.thinkingMode);
+        String continuationMode = ProviderContinuationPolicy.normalize(p.continuationMode);
         int thinkingBudget = Math.max(0, p.thinkingBudgetTokens);
         if (ReasoningPolicy.THINKING_MANUAL.equals(thinkingMode)) {
             if (thinkingBudget < 1024 || thinkingBudget >= output) throw new IllegalArgumentException("manual thinking budget must be >=1024 and < max output tokens");
