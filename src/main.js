@@ -159,6 +159,14 @@ document.addEventListener('change', (event) => {
 
 let draftTimer = 0;
 
+function resizeComposerTextarea(input) {
+  if (!input || input.name !== 'message') return;
+  input.style.height = 'auto';
+  const max = 160;
+  input.style.height = `${Math.min(max, Math.max(44, input.scrollHeight))}px`;
+  input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
+}
+
 document.addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.target;
