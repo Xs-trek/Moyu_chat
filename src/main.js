@@ -217,6 +217,23 @@ document.addEventListener('click', (event) => {
     const webMode = sourceCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
     postIntent('import.session.open', { snapshotId: target.dataset.snapshotId, contextMode, webMode });
   }
+  else if (action === 'import-delete') {
+    const snapshotId = target.dataset.snapshotId;
+    const title = target.dataset.sourceTitle || '此导入会话';
+    if (!snapshotId) return;
+    openConfirmDialog({
+      title: '删除导入源',
+      message: `删除“${title}”的本地清洗副本？如果仍有 Chat 使用它作为来源，Moyu 会拒绝删除。`,
+      confirmText: '删除', danger: true,
+      onConfirm: () => postIntent('import.session.delete', { snapshotId }),
+    });
+  }
+  else if (action === 'verification-feedback') {
+    const localSeq = Number(target.dataset.localSeq);
+    if (target.dataset.sessionId && Number.isInteger(localSeq) && localSeq > 0 && target.dataset.label) {
+      postIntent('verification.feedback', { localSessionId: target.dataset.sessionId, localSeq, label: target.dataset.label });
+    }
+  }
   else if (action === 'refresh-sources') postIntent('branch.sources.refresh', {});
   else if (action === 'branch-remote') {
     const sourceCard = target.closest('.remote-source-card');
