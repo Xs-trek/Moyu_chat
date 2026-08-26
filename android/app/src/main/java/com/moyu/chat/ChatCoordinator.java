@@ -25,6 +25,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final ChatMediaStore mediaStore;
     private final Host host;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    // Blocking Router/Checkpoint/Web preparation must never occupy the UI/intent authority queue.
+    private final ExecutorService preparationWorker = Executors.newFixedThreadPool(2);
     private final ChatTransportRegistry transports = new ChatTransportRegistry();
     private final ContextBuilder contexts;
     private final SnapshotService snapshots;
