@@ -295,7 +295,8 @@ function timelineItem(item, runtimeRunning = false, sessionId = '', showReasonin
       item.role === 'assistant' ? assistantFooter(item, finalized, sessionId) : null,
       finalized && item.role === 'user' ? h('div', { class: 'message-actions' },
         button('编辑', 'edit-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small'),
-        button('回滚', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small')) : null);
+        button('回退', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small'),
+        button('分支', 'branch-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small')) : null);
   }
   if (item.kind === 'error') return h('article', { class: 'error', dataset: { itemKey: timelineKey(item) } }, h('strong', { text: item.summary }), h('code', { text: item.code }));
   return null;
