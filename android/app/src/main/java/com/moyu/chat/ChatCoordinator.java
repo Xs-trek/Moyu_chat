@@ -127,6 +127,8 @@ final class ChatCoordinator implements AutoCloseable {
                 case "nav.open": route = validRoute(required(p, "route")); db.putSetting("route", route); break;
                 case "chat.session.create": createSession(p); break;
                 case "chat.session.open": openSession(required(p, "localSessionId")); break;
+                case "chat.session.model.set": setSessionModel(required(p, "localSessionId"), required(p, "modelProfileId")); break;
+                case "chat.session.reasoning.set": setSessionReasoning(required(p, "localSessionId"), required(p, "reasoningEffort")); break;
                 case "chat.session.send": send(required(p, "localSessionId"), p.optString("text", "")); break;
                 case "chat.session.saveDraft": db.setDraft(required(p, "localSessionId"), p.optString("text", "")); break;
                 case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;
