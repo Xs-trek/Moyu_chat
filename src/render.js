@@ -67,36 +67,67 @@ function home(view) {
   );
 }
 
+function configuredModelChoices(view) {
+  const choices = [];
+  for (const provider of view.providers || []) {
+    if (!provider?.hasCredential) continue;
+    for (const model of provider.models || []) choices.push({ provider, model });
+  }
+  return choices;
+}
+
+function modelChoiceField(view, session) {
+  const options = configuredModelChoices(view);
+  const selected = options.find(({ model }) => model.modelProfileId === session.modelProfileId);
+  const label = selected?.model?.displayName || session.modelName || session.model;
+  return h('div', { class: 'choice-field', dataset: { choiceField: 'model' } },
+    h('button', { type: 'button', class: 'choice-trigger', disabled: !session.canConfigureTurn, dataset: { action: 'toggle-choice', choice: 'model' }, 'aria-expanded': 'false', text: `模型 · ${label}` }),
+    h('div', { class: 'choice-menu', dataset: { choiceMenu: 'model' } }, options.map(({ provider, model }) =>
+      h('button', { type: 'button', class: `choice-option${model.modelProfileId === session.modelProfileId ? ' selected' : ''}`, dataset: { action: 'session-model-set', sessionId: session.localSessionId, modelProfileId: model.modelProfileId },
+        text: `${model.displayName || model.modelId} · ${provider.displayName}` }))));
+}
+
+function reasoningChoiceField(session) {
+  const levels = String(session.reasoningLevels || '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (!levels.length) return h('div', { class: 'choice-field disabled-choice' }, h('button', { type: 'button', class: 'choice-trigger', disabled: true, text: '推理 · 关闭' }));
+  const values = ['default', ...levels.filter((x) => x !== 'default')];
+  const display = (value) => value === 'none' ? '关闭' : value === 'default' ? '默认' : value;
+  return h('div', { class: 'choice-field', dataset: { choiceField: 'reasoning' } },
+    h('button', { type: 'button', class: 'choice-trigger', disabled: !session.canConfigureTurn, dataset: { action: 'toggle-choice', choice: 'reasoning' }, 'aria-expanded': 'false', text: `推理 · ${display(session.reasoningEffort || 'default')}` }),
+    h('div', { class: 'choice-menu', dataset: { choiceMenu: 'reasoning' } }, values.map((value) =>
+      h('button', { type: 'button', class: `choice-option${value === (session.reasoningEffort || 'default') ? ' selected' : ''}`, dataset: { action: 'session-reasoning-set', sessionId: session.localSessionId, reasoningEffort: value }, text: display(value) }))));
+}
+
 function conversation(view) {
   const session = view.activeSession;
   if (!session) return home(view);
   const imageInput = String(session.inputModalities || '').split(',').includes('image');
+  const imageOutput = String(session.outputModalities || '').split(',').includes('image');
+  const busyLabel = session.webPreparingStage === 'web_fetch' ? '读取网页' : session.webPreparingStage === 'web_search' ? '搜索网页' : session.contextPreparing ? '整理上下文' : session.state === 'running' ? '生成中' : '';
   return h('main', { class: 'conversation-layout' },
     h('header', { class: 'conversation-head' },
       button('←', 'nav', { route: 'home' }, 'btn small icon-btn'),
-      h('div', { class: 'conversation-title grow' }, h('strong', { class: 'truncate-safe', text: session.title }), h('small', { class: 'muted truncate-safe', text: `${session.providerName} · ${session.model} · reasoning ${session.reasoningEffort || 'default'}` })),
-      imageInput ? badge('图片输入', 'good') : null,
-      session.origin ? badge(`来自 ${session.origin.sourceTitle}`, 'branch') : null,
-      badge(`上下文 · ${session.contextMode || 'auto'}${session.contextMode === 'auto' && session.effectiveContextMode ? ` → ${session.effectiveContextMode}` : ''}`, 'quiet'),
-      badge(`联网 · ${session.webMode || 'auto'} · ${session.effectiveWebBackend || 'Moyu Web'}`, session.webPreparingStage ? 'warn' : 'quiet'),
-      session.webPreparingStage ? badge(session.webPreparingStage === 'web_fetch' ? '网页抓取中' : '网页搜索中', 'warn') : null,
-      session.taskProfile ? badge(`${session.taskProfile.domain} · ${session.taskProfile.taskType}`, 'quiet') : null,
-      session.hasContextCheckpoint ? badge('Checkpoint', 'branch') : null,
-      button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn small'),
-      button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small'),
-      button('回传', 'handoff', { sessionId: session.localSessionId }, 'btn small'),
-      !session.canInterrupt && !session.contextPreparing ? button('删除', 'delete-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn small danger') : null),
+      h('div', { class: 'conversation-title grow' }, h('strong', { class: 'truncate-safe', text: session.title }), h('small', { class: 'muted truncate-safe', text: busyLabel || `${session.providerName} · ${session.modelName || session.model}` })),
+      busyLabel ? badge(busyLabel, 'good') : null,
+      button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn small icon-action'),
+      button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small icon-action')),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
       h('div', { class: 'timeline' }, timelineProjection(session.messages).map((item) => timelineItem(item, session.state === 'running', session.localSessionId, Boolean(view.ui?.showReasoning))).filter(Boolean)),
       button('↓ 回到底部', 'jump-latest', {}, 'btn small jump-latest is-hidden')),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
       mediaGallery(session.draftMedia, true, session.localSessionId),
+      h('div', { class: 'composer-tools' },
+        modelChoiceField(view, session), reasoningChoiceField(session),
+        h('span', { class: 'grow' }),
+        imageInput ? badge('可读图', 'quiet') : null,
+        imageOutput ? badge('可出图', 'quiet') : null,
+        badge(`联网 ${session.webMode || 'auto'}`, 'quiet')),
       h('div', { class: 'composer-row' },
-        session.canAttachImage ? button('＋ 图片', 'pick-attachment', { sessionId: session.localSessionId }, 'btn attachment-btn') : null,
-        h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或仅发送图片' : '输入消息') : session.contextPreparing ? '正在识别任务 / 整理上下文' : '等待当前回合结束', 'aria-label': '消息' }),
-        session.canInterrupt ? button('中断', 'interrupt', { sessionId: session.localSessionId }, 'btn danger') : null,
-        h('button', { type: 'submit', class: 'btn primary send-btn', disabled: !session.canSend, text: session.contextPreparing ? '整理上下文' : session.state === 'running' ? '发送中' : '发送' })), 
-      h('small', { class: 'composer-hint muted', text: 'Enter 发送 · Shift+Enter 换行' }))
+        h('button', { type: 'button', class: 'btn attachment-btn', disabled: !session.canAttachImage, title: imageInput ? '添加图片' : '当前模型未声明图片输入能力', dataset: { action: 'pick-attachment', sessionId: session.localSessionId }, text: '＋' }),
+        h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或添加图片' : '输入消息') : session.contextPreparing ? '正在整理上下文' : session.webPreparingStage ? '正在联网检索' : '等待当前回合结束', 'aria-label': '消息' }),
+        session.canInterrupt ? button('停止', 'interrupt', { sessionId: session.localSessionId }, 'btn danger') : null,
+        h('button', { type: 'submit', class: 'btn primary send-btn', disabled: !session.canSend, text: session.contextPreparing ? '整理中' : session.webPreparingStage ? '搜索中' : session.state === 'running' ? '生成中' : '发送' })),
+      h('small', { class: 'composer-hint muted', text: 'Enter 发送 · Shift+Enter 换行 · 模型与推理设置只影响后续回复' }))
   );
 }
 
