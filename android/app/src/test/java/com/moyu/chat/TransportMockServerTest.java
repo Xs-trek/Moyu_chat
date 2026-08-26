@@ -342,6 +342,19 @@ public class TransportMockServerTest {
 
     // ---------- Anthropic Messages ----------
 
+    @Test public void messagesHostedWebUsesExplicitThirdPartyWireVersions() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        ChatTurnOptions options = new ChatTurnOptions("web_search_20260209,web_fetch_20250910", "auto");
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "third-party-model",
+                ReasoningPolicy.DEFAULT, prompt("user", "latest"), options, sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        JSONArray tools = body.getJSONArray("tools");
+        assertEquals("web_search_20260209", tools.getJSONObject(0).optString("type"));
+        assertEquals("web_fetch_20250910", tools.getJSONObject(1).optString("type"));
+    }
+
     @Test public void anthropicHostedWebToolsAreBoundedAndExtractSources() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"server_tool_use\",\"name\":\"web_search\"}}\n\n" +
