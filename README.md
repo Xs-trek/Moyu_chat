@@ -43,7 +43,7 @@ Smart verification separates verifier validity from answer verdict. A verifier m
 
 Third-party compatible endpoints are the primary deployment case. OpenAI and Anthropic are protocol-family references, not capability assumptions. `openai-chat-completions`, `openai-responses`, and `anthropic-messages` define request/stream shape only; they do not imply first-party reasoning, thinking, hosted Web, image, or opaque continuation support.
 
-Optional behavior is deployment-scoped and explicit in the Model Profile. Reasoning wire mapping defaults to `none`; provider-private continuation defaults to `none`; Messages thinking is independent from Messages effort support. A capability is sent only when the concrete endpoint/model profile declares it. Missing native Web capability can fall back to bounded Exa Search and SSRF-bounded HTTPS Fetch. Raw fetched/search material is not a timeline row.
+Optional behavior is deployment-scoped and explicit in the Model Profile. Reasoning wire mapping defaults to `none`; provider-private continuation defaults to `none`; Messages thinking is independent from Messages effort support. A capability is sent only when the concrete endpoint/model profile declares it. Messages-compatible hosted Web may use generic `web_search` / `web_fetch` aliases or an explicitly declared supported tool wire version when a third-party endpoint requires one. Missing native Web capability can fall back to bounded Exa Search and SSRF-bounded HTTPS Fetch. Raw fetched/search material is not a timeline row.
 
 Provider definitions select `protocol + baseUrl + authMode`; Model Profiles select model/deployment capabilities. Session/Branch/Snapshot layers do not hardcode vendor URLs or infer capability from vendor/model names.
 
