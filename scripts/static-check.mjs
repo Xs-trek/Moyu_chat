@@ -130,6 +130,7 @@ if (!coordinator.includes('preparationWorker = Executors.newFixedThreadPool(2)')
 if (!coordinator.includes('emitStreamingView(String sessionId)') || !coordinator.includes('sessionId.equals(activeSessionId)') || !coordinator.includes('50_000_000L')) fail('streaming view projection must be throttled and limited to the visible session');
 if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
 if (!mainActivity.includes('openExternalUrl(String url)') || !mainActivity.includes('Intent.ACTION_VIEW') || !mainActivity.includes('"https".equalsIgnoreCase(uri.getScheme())')) fail('external.open must leave the WebView through an HTTPS-only Android VIEW intent');
+if (!mainActivity.includes('openConversationImportPicker(String source)') || !mainActivity.includes('REQUEST_CONVERSATION_IMPORT') || !mainActivity.includes('Intent.ACTION_OPEN_DOCUMENT') || !mainActivity.includes('importConversationFromUri(')) fail('conversation export import must use an explicit Android document picker/native parser boundary');
 if (!mainActivity.includes('Provider-native Web capabilities') || !mainActivity.includes('p.toolCapabilities = toolCapabilities')) fail('model editor must expose explicit provider-native Web capabilities');
 
 const styles = read('src/styles.css');
