@@ -1,5 +1,7 @@
 package com.moyu.chat;
 
+import org.json.JSONObject;
+
 interface ChatTransport {
     interface Sink {
         /** Coarse transport progress such as connected/reasoning/output. */
