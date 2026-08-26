@@ -106,7 +106,14 @@ if (!webService.includes('untrusted reference material') || !webService.includes
 if (!coordinator.includes('input + preparedWeb.promptSuffix') || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('ephemeral Web context/source projection missing');
 
 const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
+const chatRuntime = read('android/app/src/main/java/com/moyu/chat/ChatRuntime.java');
+const turnService = read('android/app/src/main/java/com/moyu/chat/ChatTurnService.java');
 if (!mainActivity.includes('setVerticalScrollBarEnabled(false)') || !mainActivity.includes('setHorizontalScrollBarEnabled(false)')) fail('WebView chrome scrollbars must remain disabled');
+if (!mainActivity.includes('runtime = app.chatRuntime()') || !mainActivity.includes('runtime.attach(this)') || mainActivity.includes('coordinator.close()')) fail('provider turns must be process-scoped instead of owned by Activity/WebView lifetime');
+if (!chatRuntime.includes('setResumed(MainActivity owner, boolean value)') || !chatRuntime.includes('coordinator.refreshView()') || !chatRuntime.includes('setTurnRuntimeActive')) fail('process runtime must detach UI projection while retaining provider-turn authority');
+if (!turnService.includes('startForeground(') || !turnService.includes('FOREGROUND_SERVICE_TYPE_DATA_SYNC') || !turnService.includes('START_NOT_STICKY')) fail('active model turns require a short-lived dataSync foreground service');
+if (!coordinator.includes('preparationWorker = Executors.newFixedThreadPool(2)') || !coordinator.includes('preparationWorker.execute(')) fail('blocking Router/Checkpoint/Web preparation must not occupy the UI intent queue');
+if (!coordinator.includes('emitStreamingView(String sessionId)') || !coordinator.includes('sessionId.equals(activeSessionId)') || !coordinator.includes('50_000_000L')) fail('streaming view projection must be throttled and limited to the visible session');
 if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
 if (!mainActivity.includes('openExternalUrl(String url)') || !mainActivity.includes('Intent.ACTION_VIEW') || !mainActivity.includes('"https".equalsIgnoreCase(uri.getScheme())')) fail('external.open must leave the WebView through an HTTPS-only Android VIEW intent');
 if (!mainActivity.includes('Provider-native Web capabilities') || !mainActivity.includes('p.toolCapabilities = toolCapabilities')) fail('model editor must expose explicit provider-native Web capabilities');
