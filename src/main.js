@@ -108,7 +108,7 @@ window.addEventListener('resize', repositionOpenChoiceMenu, { passive: true });
 
 document.addEventListener('click', (event) => {
   const clickedField = event.target.closest('.choice-field');
-  if (!clickedField) document.querySelectorAll('.choice-field.open').forEach((node) => { node.classList.remove('open'); node.querySelector('.choice-trigger')?.setAttribute('aria-expanded', 'false'); });
+  if (!clickedField) closeChoiceMenus();
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled) return;
   const action = target.dataset.action;
