@@ -463,7 +463,7 @@ final class ChatCoordinator implements AutoCloseable {
                     new String[]{"transport_start_failed", safe(startError)});
             return;
         }
-        activeTurns.put(id, turn); startingSessions.remove(id); emitView();
+        activeTurns.put(id, turn); startingSessions.remove(id); emitStreamingView(id);
     }
 
     private void settleUsage(String id, String usageKey, JSONObject usageState, boolean[] usagePersisted,
