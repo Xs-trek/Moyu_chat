@@ -402,6 +402,10 @@ final class ChatCoordinator implements AutoCloseable {
                     try { live.put("streamStage", webStage); db.replaceTimelineBody(streamKey, live); } catch (Exception ignored) { }
                     emitStreamingView(id);
                 });
+            } catch (Exception webError) {
+                finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                        new String[]{"web_prepare_failed", safe(webError)});
+                return;
             } finally {
                 if (webPreparingStages.remove(id) != null) emitStreamingView(id);
             }
