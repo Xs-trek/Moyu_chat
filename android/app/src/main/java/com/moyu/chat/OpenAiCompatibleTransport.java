@@ -169,12 +169,36 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         return body;
     }
 
+    private static void appendOpenAiContinuation(JSONArray input, JSONObject message) throws Exception {
+        JSONObject state = message.optJSONObject("_providerContinuation");
+        if (state == null || !RESPONSES.equals(state.optString("protocol", ""))) return;
+        JSONArray items = state.optJSONArray("items"); if (items == null) return;
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i); if (item == null) continue;
+            if (!"reasoning".equals(item.optString("type", ""))) continue;
+            input.put(new JSONObject(item.toString()));
+        }
+    }
+
     private static void applyHostedTools(JSONObject body, String protocol, ChatTurnOptions options) throws Exception {
         if (!OpenAiCompatibleTransport.RESPONSES.equals(protocol) || options == null || !options.webEnabled()) return;
         if (!options.supports(ChatTurnOptions.WEB_SEARCH)) return;
         body.put("tools", new JSONArray().put(new JSONObject().put("type", "web_search")));
         body.put("tool_choice", "auto");
-        body.put("include", new JSONArray().put("web_search_call.action.sources"));
+        ensureInclude(body, "web_search_call.action.sources");
+    }
+
+    private static void applyContinuationRequest(JSONObject body, String protocol, CanonicalPrompt prompt) throws Exception {
+        if (!RESPONSES.equals(protocol) || prompt == null || !prompt.allowProviderContinuation) return;
+        // Stateless/manual-history continuation needs replayable encrypted reasoning when the provider supports it.
+        ensureInclude(body, "reasoning.encrypted_content");
+    }
+
+    private static void ensureInclude(JSONObject body, String value) throws Exception {
+        JSONArray include = body.optJSONArray("include");
+        if (include == null) { include = new JSONArray(); body.put("include", include); }
+        for (int i = 0; i < include.length(); i++) if (value.equals(include.optString(i))) return;
+        include.put(value);
     }
 
     private static void appendChatImages(JSONArray content, JSONArray attachments) throws Exception {
