@@ -197,11 +197,16 @@ document.addEventListener('keydown', (event) => {
 
 document.addEventListener('input', (event) => {
   if (event.target.name !== 'message') return;
+  resizeComposerTextarea(event.target);
   const form = event.target.closest('form[data-form="composer"]');
   if (!form) return;
   clearTimeout(draftTimer);
   const sessionId = form.dataset.sessionId;
   draftTimer = setTimeout(() => postIntent('chat.session.saveDraft', { localSessionId: sessionId, text: event.target.value }), 400);
+});
+
+document.addEventListener('focusin', (event) => {
+  if (event.target?.name === 'message') resizeComposerTextarea(event.target);
 });
 
 postIntent('app.ready', { uiVersion: '0.0.2' });
