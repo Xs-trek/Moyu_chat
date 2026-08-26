@@ -58,7 +58,7 @@ document.addEventListener('scroll', (event) => {
 
 function closeChoiceField(field) {
   if (!field) return;
-  field.classList.remove('open');
+  field.classList.remove('open', 'sheet');
   field.querySelector('.choice-trigger')?.setAttribute('aria-expanded', 'false');
   const menu = field.querySelector('.choice-menu');
   if (menu) {
