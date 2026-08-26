@@ -241,6 +241,47 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         return false;
     }
 
+    private static final class AnthropicContinuationCollector {
+        private final ChatTransport.Sink sink;
+        private final Map<Integer, JSONObject> blocks = new HashMap<>();
+        AnthropicContinuationCollector(ChatTransport.Sink sink) { this.sink = sink; }
+
+        void onStart(JSONObject event) {
+            try {
+                int index = event.optInt("index", -1); if (index < 0) return;
+                JSONObject block = event.optJSONObject("content_block"); if (block == null) return;
+                String type = block.optString("type", "");
+                if (!("thinking".equals(type) || "redacted_thinking".equals(type))) return;
+                blocks.put(index, new JSONObject(block.toString()));
+            } catch (Exception ignored) { }
+        }
+
+        void onDelta(JSONObject event) {
+            int index = event.optInt("index", -1); if (index < 0) return;
+            JSONObject block = blocks.get(index); if (block == null) return;
+            JSONObject delta = event.optJSONObject("delta"); if (delta == null) return;
+            String type = delta.optString("type", "");
+            try {
+                if ("thinking_delta".equals(type)) {
+                    block.put("thinking", block.optString("thinking", "") + delta.optString("thinking", ""));
+                } else if ("signature_delta".equals(type)) {
+                    block.put("signature", block.optString("signature", "") + delta.optString("signature", ""));
+                }
+            } catch (Exception ignored) { }
+        }
+
+        void onStop(JSONObject event) {
+            int index = event.optInt("index", -1); if (index < 0) return;
+            JSONObject block = blocks.remove(index); if (block == null) return;
+            String type = block.optString("type", "");
+            if ("thinking".equals(type) && block.optString("signature", "").isEmpty()) return;
+            if ("redacted_thinking".equals(type) && block.optString("data", "").isEmpty()) return;
+            try {
+                sink.onProviderContinuation(new JSONObject().put("protocol", PROTOCOL).put("item", new JSONObject(block.toString())));
+            } catch (Exception ignored) { }
+        }
+    }
+
     private static void collectWebSources(Object value, ChatTransport.Sink sink) {
         if (value instanceof JSONObject) {
             JSONObject object = (JSONObject) value;
