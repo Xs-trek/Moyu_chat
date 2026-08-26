@@ -39,7 +39,7 @@ const db = read('android/app/src/main/java/com/moyu/chat/ChatDatabase.java');
 if (/insertWithOnConflict\("sessions"[\s\S]{0,160}CONFLICT_REPLACE/.test(db)) fail('sessions must never use INSERT OR REPLACE because timeline has ON DELETE CASCADE');
 if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery hook missing');
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
-if (!db.includes('private static final int VERSION = 10')) fail('three-tier context/RAG persistence requires SQLite schema v10');
+if (!db.includes('private static final int VERSION = 12')) fail('current context/capability persistence requires SQLite schema v12');
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 if (!db.includes('CREATE VIRTUAL TABLE knowledge_fts USING fts4') || !db.includes("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'")) fail('lightweight FTS4 knowledge index / auto-to-standard migration missing');
