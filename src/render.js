@@ -109,7 +109,7 @@ function conversation(view) {
     h('header', { class: 'conversation-head' },
       button('←', 'nav', { route: 'home' }, 'btn small icon-btn'),
       h('div', { class: 'conversation-title grow' }, h('strong', { class: 'truncate-safe', text: session.title }), h('small', { class: 'muted truncate-safe', text: busyLabel || `${session.providerName} · ${session.modelName || session.model}` })),
-      busyLabel ? badge(busyLabel, 'good') : null,
+      h('span', { class: `badge good conversation-busy${busyLabel ? '' : ' is-hidden'}`, text: busyLabel || '' }),
       button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn small icon-action'),
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn small icon-action')),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
