@@ -555,6 +555,37 @@ public class TransportMockServerTest {
         assertFalse(body.has("output_config"));
     }
 
+    @Test public void responsesReplaysEveryStoredOutputItemWithoutDuplicatingAssistantText() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
+        JSONArray nativeItems = new JSONArray()
+                .put(new JSONObject().put("id", "rs_1").put("type", "reasoning").put("encrypted_content", "cipher"))
+                .put(new JSONObject().put("id", "ws_1").put("type", "web_search_call")
+                        .put("action", new JSONObject().put("type", "search").put("query", "latest")))
+                .put(new JSONObject().put("id", "msg_1").put("type", "message").put("role", "assistant")
+                        .put("content", new JSONArray().put(new JSONObject().put("type", "output_text").put("text", "visible"))));
+        JSONObject continuation = new JSONObject().put("protocol", OpenAiCompatibleTransport.RESPONSES).put("items", nativeItems);
+        JSONArray messages = new JSONArray()
+                .put(new JSONObject().put("role", "user").put("text", "first"))
+                .put(new JSONObject().put("role", "assistant").put("text", "visible").put("_providerContinuation", continuation))
+                .put(new JSONObject().put("role", "user").put("text", "next"));
+        CanonicalPrompt nativePrompt = new CanonicalPrompt("SYSTEM-INSTRUCTIONS", messages, false, 100, 0, 3, 0,
+                new JSONArray(messages.toString()), true);
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "native-model",
+                ReasoningPolicy.DEFAULT, nativePrompt, sink);
+        sink.awaitTerminal();
+
+        JSONArray input = new JSONObject(bodyOf()).getJSONArray("input");
+        assertEquals(5, input.length());
+        assertEquals("user", input.getJSONObject(0).optString("role"));
+        assertEquals("reasoning", input.getJSONObject(1).optString("type"));
+        assertEquals("cipher", input.getJSONObject(1).optString("encrypted_content"));
+        assertEquals("web_search_call", input.getJSONObject(2).optString("type"));
+        assertEquals("message", input.getJSONObject(3).optString("type"));
+        assertEquals("user", input.getJSONObject(4).optString("role"));
+        assertEquals("next", input.getJSONObject(4).optString("content"));
+    }
+
     @Test public void responsesContinuationItemsCrossTerminalSinkWrapper() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"encrypted_content\":\"cipher\"}}\n\n" +
