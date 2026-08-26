@@ -75,6 +75,10 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 if (!text.isEmpty()) content.put(new JSONObject().put("type", "text").put("text", text));
                 appendImages(content, attachments);
                 messages.put(new JSONObject().put("role", role).put("content", content));
+            } else if ("assistant".equals(role) && prompt.allowProviderContinuation) {
+                JSONArray nativeContent = anthropicAssistantContent(item);
+                if (nativeContent != null) messages.put(new JSONObject().put("role", role).put("content", nativeContent));
+                else messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
             } else {
                 messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
             }
