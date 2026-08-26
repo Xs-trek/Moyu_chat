@@ -478,11 +478,6 @@ export function patchConversation() {
     : contextPreparing ? '正在整理上下文'
     : session.webPreparingStage ? '正在联网检索'
     : '等待当前回合结束';
-  const existingInterrupt = composer?.querySelector('[data-action="interrupt"]');
-  if (!session.canInterrupt && existingInterrupt) existingInterrupt.remove();
-  else if (session.canInterrupt && !existingInterrupt && send) {
-    send.before(h('button', { type: 'button', class: 'composer-send stop', 'aria-label': '停止生成', title: '停止生成', dataset: { action: 'interrupt', sessionId: session.localSessionId }, text: '■' }));
-  }
   if (anchor) requestAnimationFrame(() => restoreTimelineAnchor(anchor, session.localSessionId));
   return true;
 }
