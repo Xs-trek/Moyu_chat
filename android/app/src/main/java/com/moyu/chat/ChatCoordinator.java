@@ -871,13 +871,15 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void attachProviderContinuation(JSONObject seed, ChatDatabase.Session session,
-                                            ChatDatabase.Provider provider, JSONArray items) throws Exception {
+                                            ChatDatabase.Provider provider, JSONArray items,
+                                            String requestDeploymentFingerprint) throws Exception {
         if (seed == null || session == null || provider == null || items == null || items.length() == 0
-                || !ProviderContinuationPolicy.enabled(session.continuationMode)) return;
+                || !ProviderContinuationPolicy.enabled(session.continuationMode)
+                || requestDeploymentFingerprint == null || requestDeploymentFingerprint.trim().isEmpty()) return;
         JSONObject state = new JSONObject().put("protocol", provider.protocol).put("providerId", session.providerId)
                 .put("modelProfileId", session.modelProfileId == null ? "" : session.modelProfileId)
                 .put("model", session.model)
-                .put("deploymentFingerprint", ProviderContinuationIdentity.fingerprint(db, provider, session))
+                .put("deploymentFingerprint", requestDeploymentFingerprint)
                 .put("items", new JSONArray(items.toString()));
         seed.put("providerContinuation", state);
     }
