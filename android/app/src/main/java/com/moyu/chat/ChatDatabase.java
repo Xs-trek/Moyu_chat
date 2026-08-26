@@ -263,9 +263,14 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (id == null || id.trim().isEmpty()) throw new IllegalArgumentException("session id required");
         SQLiteDatabase db = getWritableDatabase();
         String originSnapshotId = null;
+        String originSourceType = null;
         try (Cursor c = db.rawQuery("SELECT origin_snapshot_id FROM sessions WHERE local_id=?", new String[]{id})) {
             if (!c.moveToFirst()) throw new IllegalArgumentException("session not found");
             if (!c.isNull(0)) originSnapshotId = c.getString(0);
+        }
+        if (originSnapshotId != null) {
+            Snapshot origin = getSnapshot(originSnapshotId);
+            originSourceType = origin == null ? null : origin.sourceType;
         }
         db.beginTransaction();
         try {
