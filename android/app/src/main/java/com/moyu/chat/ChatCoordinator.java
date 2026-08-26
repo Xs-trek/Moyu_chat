@@ -878,10 +878,16 @@ final class ChatCoordinator implements AutoCloseable {
             JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : db.listSessions()) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
             if (activeSessionId != null) { ChatDatabase.Session active = db.getSession(activeSessionId); if (active != null) view.put("activeLocalSessionId", activeSessionId).put("activeSession", sessionJson(active, true)); }
             RemoteDataBridge.Status rs = remoteBridge.status(); JSONObject remote = new JSONObject().put("available", rs.available); if (rs.contractVersion > 0) remote.put("contractVersion", rs.contractVersion); if (rs.reason != null) remote.put("reason", rs.reason);
+            JSONArray importedSources = new JSONArray();
+            for (ChatDatabase.Snapshot snapshot : db.listImportedSnapshots()) importedSources.put(new JSONObject()
+                    .put("snapshotId", snapshot.id).put("sourceType", snapshot.sourceType).put("sourceTitle", snapshot.sourceTitle)
+                    .put("sourceRuntime", snapshot.sourceRuntime == null ? JSONObject.NULL : snapshot.sourceRuntime)
+                    .put("createdAt", snapshot.createdAt).put("itemCount", snapshot.itemCount)
+                    .put("sourceItemCount", snapshot.sourceItemCount).put("truncated", snapshot.truncated));
             JSONArray handoffs = new JSONArray(); for (ChatDatabase.Handoff h : db.listHandoffs()) handoffs.put(new JSONObject().put("handoffId", h.id).put("branchSessionId", h.branchSessionId).put("state", h.state).put("createdAt", h.createdAt).put("summary", h.summary));
-            view.put("remoteBridge", remote).put("remoteSources", remoteSources).put("handoffs", handoffs)
+            view.put("remoteBridge", remote).put("remoteSources", remoteSources).put("importedSources", importedSources).put("handoffs", handoffs)
                     .put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
-                            .put("crossChatMemoryEnabled", crossChatMemoryEnabled)
+                            .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("importInProgress", importInProgress.get())
                             .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));
         } catch (Exception error) { host.showMessage("view update failed: " + safe(error)); }
