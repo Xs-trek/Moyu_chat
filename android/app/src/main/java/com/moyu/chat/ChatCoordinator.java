@@ -368,7 +368,7 @@ final class ChatCoordinator implements AutoCloseable {
                 }
             }
         } finally {
-            if (preparing) { preparingSessions.remove(id); emitView(); }
+            if (preparing) { preparingSessions.remove(id); emitStreamingView(id); }
         }
 
         // Web is a separate capability plane. Hidden Router/Checkpoint calls above never receive it.
