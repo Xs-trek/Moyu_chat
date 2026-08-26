@@ -355,6 +355,16 @@ public class TransportMockServerTest {
         assertEquals("web_fetch_20250910", tools.getJSONObject(1).optString("type"));
     }
 
+    @Test public void messagesGenericWebCapabilityNeverGuessesToolSchemaVersion() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "third-party-model",
+                ReasoningPolicy.DEFAULT, prompt("user", "latest"), new ChatTurnOptions("web_search,web_fetch", "on"), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        assertFalse("generic capability must not be converted into a guessed Messages wire version", body.has("tools"));
+    }
+
     @Test public void anthropicHostedWebToolsAreBoundedAndExtractSources() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"server_tool_use\",\"name\":\"web_search\"}}\n\n" +
