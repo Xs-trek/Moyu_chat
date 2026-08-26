@@ -470,6 +470,51 @@ public class TransportMockServerTest {
         assertEquals("xhigh", b3.getJSONObject("output_config").optString("effort"));
     }
 
+    @Test public void thirdPartyMessagesCanEnableThinkingWithoutEffortExtension() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        ChatDatabase.Provider gateway = provider(AnthropicMessagesTransport.PROTOCOL);
+        gateway.reasoningWire = ReasoningPolicy.WIRE_NONE;
+        gateway.thinkingMode = ReasoningPolicy.THINKING_ADAPTIVE;
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(gateway, "test-key", "third-party-model", ReasoningPolicy.DEFAULT, prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        assertEquals("adaptive", body.getJSONObject("thinking").optString("type"));
+        assertFalse("Messages thinking support does not imply output_config.effort support", body.has("output_config"));
+    }
+
+    @Test public void thirdPartyMessagesNoneEffortDoesNotEncodeInvalidNoneValue() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
+        ChatDatabase.Provider gateway = provider(AnthropicMessagesTransport.PROTOCOL);
+        gateway.reasoningWire = ReasoningPolicy.WIRE_ANTHROPIC_EFFORT;
+        gateway.thinkingMode = ReasoningPolicy.THINKING_DISABLED;
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(gateway, "test-key", "third-party-model", ReasoningPolicy.NONE_LEVEL, prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        JSONObject body = new JSONObject(bodyOf());
+        assertEquals("disabled", body.getJSONObject("thinking").optString("type"));
+        assertFalse(body.has("output_config"));
+    }
+
+    @Test public void responsesContinuationIncludeRequiresExplicitPromptCapability() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
+        RecordingSink first = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "third-party-model", prompt("user", "hi"), first);
+        first.awaitTerminal();
+        JSONObject noNative = new JSONObject(bodyOf());
+        assertFalse("Responses protocol alone must not request private continuation", noNative.has("include"));
+
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
+        JSONArray messages = new JSONArray().put(new JSONObject().put("role", "user").put("text", "hi"));
+        CanonicalPrompt nativePrompt = new CanonicalPrompt("SYSTEM-INSTRUCTIONS", messages, false, 10, 0, 1, 0,
+                new JSONArray(messages.toString()), true);
+        RecordingSink second = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "native-deployment", nativePrompt, second);
+        second.awaitTerminal();
+        JSONObject nativeBody = new JSONObject(bodyOf());
+        assertEquals("reasoning.encrypted_content", nativeBody.getJSONArray("include").optString(0));
+    }
+
     @Test public void defaultReasoningLeavesProviderNativeDefaultUntouched() throws Exception {
         server.enqueue(new MockResponse().setBody("data: [DONE]\n\n"));
         ChatDatabase.Provider responses = provider(OpenAiCompatibleTransport.RESPONSES);
