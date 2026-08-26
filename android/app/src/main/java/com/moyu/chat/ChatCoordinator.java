@@ -297,6 +297,7 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("modelProfileId", session.modelProfileId == null ? JSONObject.NULL : session.modelProfileId)
                 .put("model", session.model)
                 .put("modelName", requestModelProfile == null ? session.model : requestModelProfile.displayName)
+                .put("reasoningAvailable", requestModelProfile != null && !ReasoningPolicy.normalizeLevels(requestModelProfile.reasoningLevels).isEmpty())
                 .put("reasoningEffort", session.reasoningEffort == null ? ReasoningPolicy.DEFAULT : session.reasoningEffort);
         db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
         final long requestStartedNanos = System.nanoTime();
