@@ -984,6 +984,8 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("reasoningLevels", modelProfile == null ? "" : ReasoningPolicy.normalizeLevels(modelProfile.reasoningLevels))
                 .put("defaultReasoning", modelProfile == null ? ReasoningPolicy.DEFAULT : ReasoningPolicy.normalizeEffort(modelProfile.defaultReasoning))
                 .put("reasoningEffort", s.reasoningEffort == null ? ReasoningPolicy.DEFAULT : s.reasoningEffort)
+                .put("thinkingMode", ReasoningPolicy.normalizeThinkingMode(s.thinkingMode)).put("thinkingBudgetTokens", Math.max(0, s.thinkingBudgetTokens))
+                .put("continuationMode", ProviderContinuationPolicy.normalize(s.continuationMode))
                 .put("contextMode", ContextMode.normalize(s.contextMode)).put("effectiveContextMode", ContextMode.resolve(s, originSnap).effectiveLabel)
                 .put("inputModalities", ChatDatabase.normalizeModalities(s.inputModalities)).put("outputModalities", ChatDatabase.normalizeModalities(s.outputModalities))
                 .put("nativeWebCapabilities", ChatTurnOptions.normalizeCapabilities(s.toolCapabilities))
