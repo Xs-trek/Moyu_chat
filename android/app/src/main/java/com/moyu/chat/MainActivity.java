@@ -230,6 +230,16 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         parent.addView(input, new LinearLayout.LayoutParams(-1, -2)); return input;
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        ChatRuntime r = runtime; if (r != null) r.setResumed(this, true);
+    }
+
+    @Override protected void onPause() {
+        ChatRuntime r = runtime; if (r != null) r.setResumed(this, false);
+        super.onPause();
+    }
+
     @Override @SuppressWarnings("deprecation") public void onBackPressed() {
         ChatCoordinator c = coordinator;
         if (c == null) { super.onBackPressed(); return; }
