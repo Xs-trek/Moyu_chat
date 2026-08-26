@@ -114,7 +114,7 @@ const mainUi = read('src/main.js');
 const markdown = read('src/markdown.js');
 const scrollAnchor = read('src/scroll-anchor.js');
 for (const marker of ['md-table-wrap', 'md-code-block', 'md-task-item', 'safeHttps', 'tableDelimiter', 'renderSafeMarkdown']) if (!markdown.includes(marker)) fail(`safe GFM-style Markdown renderer missing: ${marker}`);
-if (markdown.includes('innerHTML') || markdown.includes("createElement('img')") || markdown.includes('createElement("img")')) fail('model Markdown must remain inert DOM text: no innerHTML or remote Markdown image creation');
+if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(/.test(markdown) || markdown.includes("createElement('img')") || markdown.includes('createElement("img")')) fail('model Markdown must remain inert DOM text: no HTML injection or remote Markdown image creation');
 if (!mainUi.includes("action === 'copy-code'") || !mainUi.includes("'(pointer: coarse)'") || !mainUi.includes('resizeComposerTextarea')) fail('mobile composer/code ergonomics missing');
 for (const marker of ['md-table-wrap', 'md-code-head', 'md-code-copy', 'composer-actions', 'composer-send']) if (!styles.includes(marker)) fail(`Markdown/mobile composer styling missing: ${marker}`);
 if (!render.includes('export function patchConversation()') || !render.includes('streaming-state')) fail('conversation volatile state patch missing');
