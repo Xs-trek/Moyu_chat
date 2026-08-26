@@ -921,7 +921,9 @@ final class ChatCoordinator implements AutoCloseable {
         boolean preparing = preparingSessions.contains(s.id);
         String webPreparingStage = webPreparingStages.get(s.id);
         boolean webPreparing = webPreparingStage != null;
-        boolean active = activeTurns.containsKey(s.id) || starting || preparing || webPreparing;
+        String postProcessingStage = postProcessingStages.get(s.id);
+        boolean postProcessing = postProcessingStage != null;
+        boolean active = activeTurns.containsKey(s.id) || starting || preparing || webPreparing || postProcessing;
         String visibleState = active ? "running" : ("running".equals(s.state) ? "failed" : s.state);
         JSONObject o = new JSONObject().put("localSessionId", s.id).put("title", s.title).put("providerId", s.providerId).put("providerName", p == null ? s.providerId : p.displayName)
                 .put("modelProfileId", s.modelProfileId == null ? JSONObject.NULL : s.modelProfileId).put("model", s.model)
