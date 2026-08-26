@@ -156,6 +156,17 @@ export interface SessionDetailView extends SessionView {
   webPreparingStage?: 'web_search' | 'web_fetch' | string;
 }
 
+export interface ImportedSourceView {
+  snapshotId: string;
+  sourceType: 'import-chatgpt' | 'import-claude';
+  sourceTitle: string;
+  sourceRuntime?: string;
+  createdAt: string;
+  itemCount: number;
+  sourceItemCount: number;
+  truncated: boolean;
+}
+
 export interface RemoteBridgeView {
   available: boolean;
   contractVersion?: number;
