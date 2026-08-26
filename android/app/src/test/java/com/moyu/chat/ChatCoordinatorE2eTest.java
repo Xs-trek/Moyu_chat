@@ -87,7 +87,7 @@ public class ChatCoordinatorE2eTest {
 
     @After public void tearDown() throws Exception {
         if (coordinator != null) coordinator.close();
-        server.shutdown();
+        try { server.shutdown(); } catch (java.io.IOException ignored) { }
     }
 
     private static MockResponse sse(String body) { return new MockResponse().setBody(body); }
