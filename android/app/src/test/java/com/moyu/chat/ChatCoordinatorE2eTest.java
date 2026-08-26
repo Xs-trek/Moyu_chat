@@ -143,6 +143,17 @@ public class ChatCoordinatorE2eTest {
         return latestView().optString("activeLocalSessionId");
     }
 
+    private String createResponsesSession(String continuationMode) throws Exception {
+        configureProvider(OpenAiCompatibleTransport.RESPONSES);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        assertNotNull(profile);
+        profile.continuationMode = continuationMode;
+        app.database().saveModelProfile(profile);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider").put("contextMode", ContextMode.STANDARD));
+        await("Responses session created", () -> latestView() != null && latestView().optString("activeLocalSessionId", "").length() > 0);
+        return latestView().optString("activeLocalSessionId");
+    }
+
     // ---------- standalone startup + key isolation ----------
 
     @Test public void systemBackUsesInternalRoutesBeforeExitingActivity() throws Exception {
