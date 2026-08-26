@@ -393,12 +393,13 @@ final class ChatCoordinator implements AutoCloseable {
         if (input.trim().isEmpty() && pendingMedia.length() == 0) return;
         if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this session model does not support image input");
         if (activeTurns.containsKey(id)) throw new IllegalStateException("session busy");
-        ChatDatabase.Provider provider = db.getProvider(session.providerId); String key = secrets.get(session.providerId);
-        if (provider == null || key == null) throw new IllegalStateException("provider credential missing");
+        if (requestDeployment == null || requestDeployment.provider == null || requestDeployment.apiKey == null) {
+            throw new IllegalStateException("provider request snapshot missing");
+        }
+        ChatDatabase.Provider provider = requestDeployment.provider;
+        String key = requestDeployment.apiKey;
         ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
-        // Freeze deployment identity alongside the exact endpoint/key snapshot used by this request.
-        // Provider edits may run while streaming; completion must never relabel old opaque state with a newer credential epoch.
-        final String requestDeploymentFingerprint = ProviderContinuationIdentity.fingerprint(db, provider, session);
+        final String requestDeploymentFingerprint = requestDeployment.fingerprint;
 
         // Resolve only stable session policy before durable mutation. Once the user taps Send the
         // message belongs in the transcript and the composer draft must be cleared even if later
