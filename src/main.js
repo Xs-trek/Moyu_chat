@@ -309,7 +309,12 @@ document.addEventListener('input', (event) => {
   if (!form) return;
   clearTimeout(draftTimer);
   const sessionId = form.dataset.sessionId;
-  draftTimer = setTimeout(() => postIntent('chat.session.saveDraft', { localSessionId: sessionId, text: event.target.value }), 400);
+  const generation = draftGeneration(sessionId);
+  const text = event.target.value;
+  draftTimer = setTimeout(() => {
+    if (draftGeneration(sessionId) !== generation) return;
+    postIntent('chat.session.saveDraft', { localSessionId: sessionId, text });
+  }, 400);
 });
 
 document.addEventListener('focusin', (event) => {
