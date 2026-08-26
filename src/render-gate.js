@@ -5,10 +5,13 @@ function isEditable(node) {
 
 function hasTextSelection() {
   const selection = window.getSelection?.();
-  return Boolean(selection && !selection.isCollapsed && String(selection).length > 0);
+  return Boolean(selection && !selection.isCollapsed && String(selection).trim().length > 0);
 }
 
-/** Keeps destructive full-page renders away from native-feeling pointer/edit/IME interactions. */
+/**
+ * Keeps destructive full-page renders away from text-selection / edit / IME interactions.
+ * Ordinary taps never acquire the pointer lease, so buttons/navigation have no selection grace delay.
+ */
 export function createRenderGate(renderer) {
   let pending = false;
   let scheduled = false;
@@ -33,10 +36,18 @@ export function createRenderGate(renderer) {
 
   return {
     request() { pending = true; schedule(); },
-    pointerDown() { clearTimeout(pointerReleaseTimer); pointerActive = true; },
-    pointerUp() {
+    pointerDown(selectable = true) {
       clearTimeout(pointerReleaseTimer);
-      pointerReleaseTimer = setTimeout(() => { pointerActive = false; schedule(); }, 180);
+      pointerActive = Boolean(selectable);
+    },
+    pointerUp(graceMs = 160) {
+      clearTimeout(pointerReleaseTimer);
+      if (!pointerActive || graceMs <= 0) {
+        pointerActive = false;
+        schedule();
+        return;
+      }
+      pointerReleaseTimer = setTimeout(() => { pointerActive = false; schedule(); }, graceMs);
     },
     compositionStart() { composing = true; },
     compositionEnd() { composing = false; schedule(); },
