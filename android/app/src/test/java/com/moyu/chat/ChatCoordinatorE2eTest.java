@@ -362,6 +362,8 @@ public class ChatCoordinatorE2eTest {
         JSONObject live = rows.getJSONObject(1);
         assertEquals("mock-model", live.optString("model"));
         assertEquals("mock-model", live.optString("modelName"));
+        assertEquals("minimal", live.optString("contextMode"));
+        assertEquals("minimal", live.optString("effectiveContextMode"));
         assertEquals("default", live.optString("reasoningEffort"));
         assertFalse(live.optBoolean("reasoningAvailable", true));
     }
