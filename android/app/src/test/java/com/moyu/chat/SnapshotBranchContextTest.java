@@ -181,6 +181,28 @@ public class SnapshotBranchContextTest {
         assertEquals("cancelled", frozen.optString("terminalCode"));
     }
 
+    @Test public void optionalCommittedContextNeverMakesBaselineTurnFail() throws Exception {
+        ChatDatabase.Session s = db.createSession("p1", "model", null, null);
+        for (int i = 1; i <= 60; i++) {
+            db.appendTimeline(s.id, "u-opt-" + i, message("user", "historic user " + i + " padding padding padding"));
+            db.appendTimeline(s.id, "a-opt-" + i, message("assistant", "historic assistant " + i + " padding padding padding"));
+        }
+        db.appendTimeline(s.id, "u-current", message("user", "CURRENT committed request"));
+        s = db.getSession(s.id);
+        CanonicalPrompt baseline = contexts.buildCommitted(s, 2_048, 0, 512, "");
+        assertTrue("setup must exercise truncated-policy selection", baseline.truncated);
+
+        for (int chars = 1; chars <= 4_000; chars += 37) {
+            StringBuilder suffix = new StringBuilder("\n[OPTIONAL]");
+            while (suffix.length() < chars) suffix.append('x');
+            CanonicalPrompt prompt = contexts.buildCommitted(s, 2_048, 0, 512, suffix.toString());
+            assertFalse("optional Web/RAG material must not evict the committed current request",
+                    prompt.messages.length() == 0);
+            assertTrue(prompt.messages.getJSONObject(prompt.messages.length() - 1).optString("text")
+                    .contains("CURRENT committed request"));
+        }
+    }
+
     @Test public void currentInputAloneOverBudgetFailsInsteadOfSilentDrop() throws Exception {
         ChatDatabase.Session s = sessionWithTurns(1);
         StringBuilder huge = new StringBuilder();
