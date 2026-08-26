@@ -42,10 +42,27 @@ document.addEventListener('scroll', (event) => {
 }, true);
 
 document.addEventListener('click', (event) => {
+  const clickedField = event.target.closest('.choice-field');
+  if (!clickedField) document.querySelectorAll('.choice-field.open').forEach((node) => { node.classList.remove('open'); node.querySelector('.choice-trigger')?.setAttribute('aria-expanded', 'false'); });
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled) return;
   const action = target.dataset.action;
-  if (action === 'nav') postIntent('nav.open', { route: target.dataset.route });
+  if (action === 'toggle-choice') {
+    const field = target.closest('.choice-field');
+    if (!field) return;
+    const opening = !field.classList.contains('open');
+    document.querySelectorAll('.choice-field.open').forEach((node) => { node.classList.remove('open'); node.querySelector('.choice-trigger')?.setAttribute('aria-expanded', 'false'); });
+    if (opening) { field.classList.add('open'); target.setAttribute('aria-expanded', 'true'); }
+  }
+  else if (action === 'session-model-set') {
+    target.closest('.choice-field')?.classList.remove('open');
+    postIntent('chat.session.model.set', { localSessionId: target.dataset.sessionId, modelProfileId: target.dataset.modelProfileId });
+  }
+  else if (action === 'session-reasoning-set') {
+    target.closest('.choice-field')?.classList.remove('open');
+    postIntent('chat.session.reasoning.set', { localSessionId: target.dataset.sessionId, reasoningEffort: target.dataset.reasoningEffort });
+  }
+  else if (action === 'nav') postIntent('nav.open', { route: target.dataset.route });
   else if (action === 'theme') postIntent('appearance.set', { theme: target.dataset.theme });
   else if (action === 'toggle-reasoning') postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' });
   else if (action === 'open-session') postIntent('chat.session.open', { localSessionId: target.dataset.sessionId });
