@@ -42,6 +42,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, String> webPreparingStages = new ConcurrentHashMap<>();
     private final Map<String, String> postProcessingStages = new ConcurrentHashMap<>();
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
+    private final AtomicBoolean importInProgress = new AtomicBoolean(false);
 
     private volatile boolean closed;
     private volatile boolean uiReady;
