@@ -11,6 +11,8 @@ import java.util.Collections;
 final class ContextBudgetManager {
     static final int DEFAULT_CONTEXT_TOKENS = 32_000;
     static final int DEFAULT_OUTPUT_TOKENS = 4_096;
+    static final int PROACTIVE_COMPACT_TRIGGER_PERCENT = 50;
+    static final int POST_COMPACT_TARGET_PERCENT = 30;
     private static final int MAX_SAFETY_TOKENS = 1_024;
     private static final int MIN_INPUT_BUDGET = 512;
     private static final int MESSAGE_OVERHEAD_TOKENS = 12;
@@ -33,11 +35,29 @@ final class ContextBudgetManager {
         return select(instructions, chronological, contextTokens, 0, outputTokens);
     }
 
-    /**
-     * Select complete user-led turns newest-first. A turn begins at a user message and includes the
-     * following assistant messages until the next user. Orphan leading assistants are never sent.
-     */
     Result select(String instructions, JSONArray chronological, int contextTokens, int inputTokens, int outputTokens) {
+        return selectWithinBudget(instructions, chronological, effectiveInputBudget(contextTokens, inputTokens, outputTokens));
+    }
+
+    /** Select against a percentage of the effective input window. Mandatory floor still applies. */
+    Result selectPercent(String instructions, JSONArray chronological, int contextTokens, int inputTokens,
+                         int outputTokens, int percent) {
+        int full = effectiveInputBudget(contextTokens, inputTokens, outputTokens);
+        int bounded = Math.max(1, Math.min(100, percent));
+        int target = Math.max(MIN_INPUT_BUDGET, (int) Math.floor(full * (bounded / 100.0d)));
+        return selectWithinBudget(instructions, chronological, target);
+    }
+
+    /** True when the supplied raw active context has crossed a percentage of the usable input window. */
+    boolean exceedsPercent(String instructions, JSONArray chronological, int contextTokens, int inputTokens,
+                           int outputTokens, int percent) {
+        int full = effectiveInputBudget(contextTokens, inputTokens, outputTokens);
+        int bounded = Math.max(1, Math.min(100, percent));
+        int threshold = Math.max(MIN_INPUT_BUDGET, (int) Math.floor(full * (bounded / 100.0d)));
+        return estimateInput(instructions, chronological) > threshold;
+    }
+
+    int effectiveInputBudget(int contextTokens, int inputTokens, int outputTokens) {
         int total = contextTokens > 0 ? contextTokens : DEFAULT_CONTEXT_TOKENS;
         int output = outputTokens > 0 ? outputTokens : DEFAULT_OUTPUT_TOKENS;
         int safety = Math.min(MAX_SAFETY_TOKENS, Math.max(256, total / 16));
@@ -45,7 +65,23 @@ final class ContextBudgetManager {
         int declaredInput = inputTokens > 0 ? inputTokens : totalInput;
         int budget = Math.min(totalInput, declaredInput) - safety;
         if (budget < MIN_INPUT_BUDGET) throw new IllegalArgumentException("context/output budget leaves no usable input window");
+        return budget;
+    }
 
+    int estimateInput(String instructions, JSONArray chronological) {
+        int used = estimate(instructions) + MESSAGE_OVERHEAD_TOKENS;
+        if (chronological == null) return used;
+        for (int i = 0; i < chronological.length(); i++) {
+            JSONObject item = chronological.optJSONObject(i); if (item != null) used += messageCost(item);
+        }
+        return used;
+    }
+
+    /**
+     * Select complete user-led turns newest-first. A turn begins at a user message and includes the
+     * following assistant messages until the next user. Orphan leading assistants are never sent.
+     */
+    private Result selectWithinBudget(String instructions, JSONArray chronological, int budget) {
         int used = estimate(instructions) + MESSAGE_OVERHEAD_TOKENS;
         if (used >= budget) throw new IllegalArgumentException("Moyu instructions exceed the configured input budget");
 
