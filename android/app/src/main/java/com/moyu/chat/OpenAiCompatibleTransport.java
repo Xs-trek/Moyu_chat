@@ -358,6 +358,13 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         sink.onWebSource(url, title == null || title.trim().isEmpty() ? url : title.trim());
     }
 
+    private static void emitProviderContinuationItem(JSONObject item, ChatTransport.Sink sink) {
+        if (item == null || !"reasoning".equals(item.optString("type", ""))) return;
+        try {
+            sink.onProviderContinuation(new JSONObject().put("protocol", RESPONSES).put("item", new JSONObject(item.toString())));
+        } catch (Exception ignored) { }
+    }
+
     private static void emitImageItem(JSONObject item, ChatTransport.Sink sink, Set<String> emittedImages) {
         if (item == null || !"image_generation_call".equals(item.optString("type"))) return;
         String result = item.optString("result", ""); if (result.isEmpty()) return;
