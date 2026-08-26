@@ -80,9 +80,9 @@ public class LocalKnowledgeStoreTest {
         provider.id = "p"; provider.displayName = "P"; provider.baseUrl = "https://example.test/v1";
         provider.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; provider.model = "m";
         provider.contextTokens = 32000; provider.maxOutputTokens = 4096; db.saveProvider(provider);
-        ChatDatabase.ModelProfile profile = new ChatDatabase.ModelProfile();
-        profile.id = "p:m"; profile.providerId = "p"; profile.modelId = "m"; profile.displayName = "M";
-        profile.contextTokens = 32000; profile.maxOutputTokens = 4096; db.saveModelProfile(profile); return profile;
+        ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id);
+        if (profile == null) throw new IllegalStateException("legacy model profile was not created");
+        return profile;
     }
 
     private int countScope(String scope) {
