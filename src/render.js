@@ -293,8 +293,8 @@ function timelineItem(item, runtimeRunning = false, sessionId = '', showReasonin
       item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: streamStageLabel(item.streamStage) }) : null,
       item.role === 'assistant' ? assistantFooter(item, finalized, sessionId) : null,
       finalized && item.role === 'user' ? h('div', { class: 'message-actions' },
-        button('编辑', 'edit-message', { sessionId, localSeq: item.localSeq }, 'btn small'),
-        button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
+        button('编辑', 'edit-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small'),
+        button('回滚', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small')) : null);
   }
   if (item.kind === 'error') return h('article', { class: 'error', dataset: { itemKey: timelineKey(item) } }, h('strong', { text: item.summary }), h('code', { text: item.code }));
   return null;
