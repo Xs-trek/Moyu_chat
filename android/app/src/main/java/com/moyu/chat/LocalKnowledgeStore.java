@@ -13,22 +13,24 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Lightweight, local-only retrieval over user-explicit snapshot knowledge. It deliberately does not
- * search unrelated Chat sessions; cross-chat memory is a separate product/privacy decision.
- */
+/** Lightweight local FTS retrieval. Retrieved text is always non-authoritative request data. */
 final class LocalKnowledgeStore {
     static final class Hit {
+        final String scopeId;
+        final String sourceId;
+        final String sourceTitle;
         final int ordinal;
         final String role;
         final String text;
         final int lexicalScore;
-        Hit(int ordinal, String role, String text, int lexicalScore) {
+        Hit(String scopeId, String sourceId, String sourceTitle, int ordinal, String role, String text, int lexicalScore) {
+            this.scopeId = scopeId; this.sourceId = sourceId; this.sourceTitle = sourceTitle;
             this.ordinal = ordinal; this.role = role; this.text = text; this.lexicalScore = lexicalScore;
         }
     }
 
-    private static final int MAX_CANDIDATES = 32;
+    private static final int MAX_CANDIDATES = 48;
+    private static final String INDEX_MARKER_PREFIX = "knowledgeIndex:";
     private final ChatDatabase db;
 
     LocalKnowledgeStore(ChatDatabase db) { this.db = db; }
@@ -40,31 +42,75 @@ final class LocalKnowledgeStore {
         if (match.isEmpty()) return out;
         try {
             ensureSnapshotIndexed(snapshotId);
-            List<String> queryTerms = KnowledgeLexicon.terms(query);
-            String scope = scope(snapshotId);
-            try (Cursor c = db.getReadableDatabase().rawQuery(
-                    "SELECT ordinal,role,text,terms FROM knowledge_fts WHERE scope_id=? AND terms MATCH ? LIMIT " + MAX_CANDIDATES,
-                    new String[]{scope, match})) {
-                while (c.moveToNext()) {
-                    String terms = c.getString(3) == null ? "" : c.getString(3);
-                    Set<String> indexed = new HashSet<>();
-                    for (String term : terms.split(" ")) if (!term.isEmpty()) indexed.add(term);
-                    int score = 0;
-                    for (String term : queryTerms) if (indexed.contains(term)) score++;
-                    if (score > 0) out.add(new Hit(c.getInt(0), c.getString(1), c.getString(2), score));
-                }
-            }
-            out.sort(Comparator.comparingInt((Hit hit) -> hit.lexicalScore).reversed().thenComparingInt(hit -> -hit.ordinal));
-            if (out.size() > limit) return new ArrayList<>(out.subList(0, limit));
-            return out;
+            ChatDatabase.Snapshot snapshot = db.getSnapshot(snapshotId);
+            String title = snapshot == null ? "Snapshot" : snapshot.sourceTitle;
+            collect(out, "scope_id=? AND terms MATCH ?", new String[]{snapshotScope(snapshotId), match},
+                    snapshotId, title, KnowledgeLexicon.terms(query));
+            return rank(out, limit);
         } catch (Exception ignored) {
-            // Retrieval is an optional context aid. A missing FTS module/index must never break Chat.
             return new ArrayList<>();
         }
     }
 
+    /** Cross-chat memory search. The caller must separately enforce the global memory switch/mode capability. */
+    List<Hit> searchChats(String excludeSessionId, String query, int limit) {
+        ArrayList<Hit> out = new ArrayList<>();
+        if (limit <= 0) return out;
+        String match = KnowledgeLexicon.matchQuery(query);
+        if (match.isEmpty()) return out;
+        try {
+            for (ChatDatabase.Session session : db.listSessions()) {
+                if (session == null || session.id == null || session.id.equals(excludeSessionId)) continue;
+                ensureSessionIndexed(session);
+            }
+            List<String> queryTerms = KnowledgeLexicon.terms(query);
+            String excluded = chatScope(excludeSessionId == null ? "" : excludeSessionId);
+            try (Cursor c = db.getReadableDatabase().rawQuery(
+                    "SELECT scope_id,ordinal,role,text,terms FROM knowledge_fts WHERE scope_id LIKE 'chat:%' AND scope_id<>? AND terms MATCH ? LIMIT " + MAX_CANDIDATES,
+                    new String[]{excluded, match})) {
+                while (c.moveToNext()) {
+                    String scope = c.getString(0);
+                    String sourceId = scope.startsWith("chat:") ? scope.substring(5) : scope;
+                    ChatDatabase.Session source = db.getSession(sourceId);
+                    if (source == null) continue; // stale index from a deleted session is never surfaced.
+                    int score = lexicalScore(c.getString(4), queryTerms);
+                    if (score > 0) out.add(new Hit(scope, sourceId, source.title, c.getInt(1), c.getString(2), c.getString(3), score));
+                }
+            }
+            return rank(out, limit);
+        } catch (Exception ignored) {
+            // Memory/RAG is optional. FTS corruption/module absence must not break ordinary Chat.
+            return new ArrayList<>();
+        }
+    }
+
+    private void collect(List<Hit> out, String where, String[] args, String sourceId, String sourceTitle,
+                         List<String> queryTerms) {
+        try (Cursor c = db.getReadableDatabase().rawQuery(
+                "SELECT scope_id,ordinal,role,text,terms FROM knowledge_fts WHERE " + where + " LIMIT " + MAX_CANDIDATES, args)) {
+            while (c.moveToNext()) {
+                int score = lexicalScore(c.getString(4), queryTerms);
+                if (score > 0) out.add(new Hit(c.getString(0), sourceId, sourceTitle, c.getInt(1), c.getString(2), c.getString(3), score));
+            }
+        }
+    }
+
+    private static int lexicalScore(String terms, List<String> queryTerms) {
+        Set<String> indexed = new HashSet<>();
+        if (terms != null) for (String term : terms.split(" ")) if (!term.isEmpty()) indexed.add(term);
+        int score = 0;
+        for (String term : queryTerms) if (indexed.contains(term)) score++;
+        return score;
+    }
+
+    private static List<Hit> rank(ArrayList<Hit> out, int limit) {
+        out.sort(Comparator.comparingInt((Hit hit) -> hit.lexicalScore).reversed().thenComparingInt(hit -> -hit.ordinal));
+        if (out.size() > limit) return new ArrayList<>(out.subList(0, limit));
+        return out;
+    }
+
     private void ensureSnapshotIndexed(String snapshotId) {
-        String scope = scope(snapshotId);
+        String scope = snapshotScope(snapshotId);
         SQLiteDatabase writable = db.getWritableDatabase();
         try (Cursor c = writable.rawQuery("SELECT 1 FROM knowledge_fts WHERE scope_id=? LIMIT 1", new String[]{scope})) {
             if (c.moveToFirst()) return;
@@ -73,23 +119,45 @@ final class LocalKnowledgeStore {
         writable.beginTransaction();
         try {
             writable.delete("knowledge_fts", "scope_id=?", new String[]{scope});
-            for (int i = 0; i < items.length(); i++) {
-                JSONObject item = items.optJSONObject(i); if (item == null) continue;
-                if (!"message".equals(item.optString("kind", "message"))) continue;
-                String role = item.optString("role", "");
-                if (!("user".equals(role) || "assistant".equals(role))) continue;
-                String text = item.optString("text", "").trim();
-                if (text.isEmpty()) continue;
-                String terms = KnowledgeLexicon.indexTerms(text);
-                if (terms.isEmpty()) continue;
-                ContentValues row = new ContentValues();
-                row.put("scope_id", scope); row.put("item_ref", snapshotId + ":" + i); row.put("ordinal", String.valueOf(i));
-                row.put("role", role); row.put("text", text); row.put("terms", terms);
-                writable.insert("knowledge_fts", null, row);
-            }
+            for (int i = 0; i < items.length(); i++) indexMessage(writable, scope, snapshotId + ":" + i, i, items.optJSONObject(i));
             writable.setTransactionSuccessful();
         } finally { writable.endTransaction(); }
     }
 
-    private static String scope(String snapshotId) { return "snapshot:" + snapshotId; }
+    private void ensureSessionIndexed(ChatDatabase.Session session) {
+        String markerKey = INDEX_MARKER_PREFIX + session.id;
+        String marker = db.setting(markerKey, "");
+        if (session.updatedAt != null && session.updatedAt.equals(marker)) return;
+        String scope = chatScope(session.id);
+        JSONArray items = db.timeline(session.id);
+        SQLiteDatabase writable = db.getWritableDatabase();
+        writable.beginTransaction();
+        try {
+            writable.delete("knowledge_fts", "scope_id=?", new String[]{scope});
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.optJSONObject(i);
+                int seq = item == null ? i : item.optInt("localSeq", i);
+                indexMessage(writable, scope, session.id + ":" + seq, seq, item);
+            }
+            writable.setTransactionSuccessful();
+        } finally { writable.endTransaction(); }
+        db.putSetting(markerKey, session.updatedAt == null ? "" : session.updatedAt);
+    }
+
+    private static void indexMessage(SQLiteDatabase writable, String scope, String itemRef, int ordinal, JSONObject item) {
+        if (item == null || !"message".equals(item.optString("kind", "message")) || item.optBoolean("streaming", false)) return;
+        String role = item.optString("role", "");
+        if (!("user".equals(role) || "assistant".equals(role))) return;
+        String text = item.optString("text", "").trim();
+        if (text.isEmpty()) return;
+        String terms = KnowledgeLexicon.indexTerms(text);
+        if (terms.isEmpty()) return;
+        ContentValues row = new ContentValues();
+        row.put("scope_id", scope); row.put("item_ref", itemRef); row.put("ordinal", String.valueOf(ordinal));
+        row.put("role", role); row.put("text", text); row.put("terms", terms);
+        writable.insert("knowledge_fts", null, row);
+    }
+
+    private static String snapshotScope(String snapshotId) { return "snapshot:" + snapshotId; }
+    private static String chatScope(String sessionId) { return "chat:" + (sessionId == null ? "" : sessionId); }
 }
