@@ -89,6 +89,24 @@ final class ContextBuilder {
                 new JSONArray(durableProjected.toString()));
     }
 
+    private static final class PolicySelection {
+        final String instructions;
+        final ContextBudgetManager.Result result;
+        PolicySelection(String instructions, ContextBudgetManager.Result result) { this.instructions = instructions; this.result = result; }
+    }
+
+    private PolicySelection selectWithPolicy(ChatDatabase.Session session, ChatDatabase.Snapshot snapshot, boolean truncated,
+                                             JSONArray projected, int contextTokens, int inputTokens, int outputTokens) {
+        String full = promptPolicy.instructions(session, snapshot, truncated);
+        try {
+            return new PolicySelection(full, budgets.select(full, projected, contextTokens, inputTokens, outputTokens));
+        } catch (IllegalArgumentException fullFailure) {
+            if (ContextMode.MINIMAL.equals(ContextMode.normalize(session == null ? null : session.contextMode))) throw fullFailure;
+            String compact = promptPolicy.compactInstructions(session, snapshot, truncated);
+            return new PolicySelection(compact, budgets.select(compact, projected, contextTokens, inputTokens, outputTokens));
+        }
+    }
+
     private String retrievalSuffix(ChatDatabase.Snapshot snapshot, String query, JSONArray alreadySelected) {
         List<LocalKnowledgeStore.Hit> hits = knowledge.searchSnapshot(snapshot.id, query, MAX_RETRIEVED_ITEMS * 2);
         if (hits.isEmpty()) return "";
