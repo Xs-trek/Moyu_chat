@@ -20,7 +20,7 @@ public class SmartVerifierServiceTest {
                 check("completion_honesty","pass","minor","user:current") + "," +
                 check("uncertainty_honesty","pass","minor","context:recent") + "," +
                 check("material_factual_support","fail","major","context:recent") + "]}";
-        SmartVerifierService.Result result = SmartVerifierService.parse(raw, evidence(), true, "");
+        SmartVerifierService.Result result = SmartVerifierService.parse(raw, evidence());
         assertEquals(SmartVerifierService.STATUS_VALID, result.status);
         assertEquals("model verdict is advisory; harness checks own the verdict", SmartVerifierService.VERDICT_FAIL, result.verdict);
     }
@@ -32,22 +32,22 @@ public class SmartVerifierServiceTest {
                 check("completion_honesty","pass","minor","user:current") + "," +
                 check("uncertainty_honesty","pass","minor","context:recent") + "," +
                 check("material_factual_support","pass","minor","context:recent") + "]}";
-        SmartVerifierService.Result result = SmartVerifierService.parse(raw, evidence(), true, "");
+        SmartVerifierService.Result result = SmartVerifierService.parse(raw, evidence());
         assertEquals(SmartVerifierService.STATUS_INVALID, result.status);
         assertEquals("fail_without_evidence", result.invalidReason);
     }
 
-    @Test public void incompleteHarnessCoverageCannotPassWholeAnswer() {
-        String raw = "{\"verdict\":\"pass\",\"selfConfidence\":0.9,\"checks\":[" +
-                check("constraint_adherence","pass","minor","user:current") + "," +
-                check("evidence_integrity","pass","minor","context:recent") + "," +
-                check("completion_honesty","pass","minor","user:current") + "," +
-                check("uncertainty_honesty","pass","minor","context:recent") + "," +
-                check("material_factual_support","pass","minor","context:recent") + "]}";
-        SmartVerifierService.Result result = SmartVerifierService.parse(raw, evidence(), false, "candidate_truncated");
-        assertEquals(SmartVerifierService.STATUS_VALID, result.status);
-        assertEquals(SmartVerifierService.VERDICT_PARTIAL, result.verdict);
-        assertFalse(result.coverageComplete);
+    @Test public void incompleteHarnessCoverageForcesAbstainEvenIfChecksPass() {
+        JSONArray checks = new JSONArray();
+        for (String rule : new String[]{"constraint_adherence","evidence_integrity","completion_honesty","uncertainty_honesty","material_factual_support"}) {
+            checks.put(new org.json.JSONObject().put("rule", rule).put("result", "pass").put("severity", "minor")
+                    .put("evidenceIds", new JSONArray().put("user:current")).put("note", "ok"));
+        }
+        SmartVerifierService.Result result = new SmartVerifierService.Result(
+                SmartVerifierService.STATUS_VALID, SmartVerifierService.VERDICT_PASS, 0.9d, checks, "", false,
+                "candidate_truncated_for_verification");
+        SmartVerifierCalibration.Decision decision = SmartVerifierCalibration.decide(null, "test", result);
+        assertEquals(SmartVerifierCalibration.ACTION_ABSTAIN, decision.action);
     }
 
     private static String check(String rule, String result, String severity, String evidenceId) {
