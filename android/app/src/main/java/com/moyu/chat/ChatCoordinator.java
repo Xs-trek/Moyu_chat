@@ -333,7 +333,9 @@ final class ChatCoordinator implements AutoCloseable {
         if (webOptions.webEnabled()) {
             try {
                 preparedWeb = webService.prepare(input, webOptions, stage -> {
-                    webPreparingStages.put(id, stage == null ? "web_search" : stage);
+                    String webStage = stage == null || stage.trim().isEmpty() ? "web_search" : stage.trim();
+                    webPreparingStages.put(id, webStage);
+                    try { live.put("streamStage", webStage); db.replaceTimelineBody(streamKey, live); } catch (Exception ignored) { }
                     emitView();
                 });
             } finally {
