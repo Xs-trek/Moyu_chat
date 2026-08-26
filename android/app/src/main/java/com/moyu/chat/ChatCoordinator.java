@@ -7,12 +7,14 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Native-only domain coordinator. UI knows intents/view models; provider keys never cross the bridge. */
 final class ChatCoordinator implements AutoCloseable {
