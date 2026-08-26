@@ -383,7 +383,7 @@ final class ChatCoordinator implements AutoCloseable {
                     session.contextCheckpoint = update.checkpoint.toJson().toString();
                     session.checkpointCoveredItems = update.coveredItems;
                     db.saveSession(session);
-                    prompt = contexts.build(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, input, pendingMedia);
+                    prompt = contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens, "");
                 }
             }
         } catch (Exception preparationError) {
