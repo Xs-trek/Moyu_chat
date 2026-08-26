@@ -135,10 +135,17 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_IMAGE) return;
-        String sessionId = pendingImageSessionId; pendingImageSessionId = null;
-        if (resultCode != RESULT_OK || data == null || data.getData() == null || sessionId == null) return;
-        ChatCoordinator c = coordinator; if (c != null) c.attachImageFromUri(sessionId, data.getData(), getContentResolver());
+        if (requestCode == REQUEST_IMAGE) {
+            String sessionId = pendingImageSessionId; pendingImageSessionId = null;
+            if (resultCode != RESULT_OK || data == null || data.getData() == null || sessionId == null) return;
+            ChatCoordinator c = coordinator; if (c != null) c.attachImageFromUri(sessionId, data.getData(), getContentResolver());
+            return;
+        }
+        if (requestCode == REQUEST_CONVERSATION_IMPORT) {
+            String source = pendingConversationImportSource; pendingConversationImportSource = null;
+            if (resultCode != RESULT_OK || data == null || data.getData() == null || source == null) return;
+            ChatCoordinator c = coordinator; if (c != null) c.importConversationFromUri(source, data.getData(), getContentResolver());
+        }
     }
 
     @Override public void openProviderEditor(ChatDatabase.Provider existing) {
