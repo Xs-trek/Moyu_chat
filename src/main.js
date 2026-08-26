@@ -68,6 +68,7 @@ function closeChoiceField(field) {
     menu.style.width = '';
     menu.style.maxHeight = '';
   }
+  if (!document.querySelector('.choice-field.open.sheet')) document.querySelector('[data-choice-scrim]')?.remove();
 }
 
 function closeChoiceMenus(except = null) {
