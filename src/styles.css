@@ -7,6 +7,8 @@
   --border:3px solid var(--outline-strong); --border-thin:2px solid var(--outline);
   --radius-sm:4px; --radius-md:8px; --radius-lg:12px;
   --shadow-sm:3px 3px 0 var(--shadow); --shadow:5px 5px 0 var(--shadow); --shadow-lg:7px 7px 0 var(--shadow);
+  --elevation-flat:none; --elevation-control:var(--shadow-sm); --elevation-card:var(--shadow-sm); --elevation-popover:var(--shadow-sm); --elevation-emphasis:var(--shadow); --elevation-dialog:var(--shadow);
+  --motion-fast:120ms; --motion:200ms;
   --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px); --safe-left:env(safe-area-inset-left,0px); --safe-right:env(safe-area-inset-right,0px);
   --bg:#f4f0e6; --surface:#fffdf5; --elevated:#fff; --ink:#111; --muted:#605d55; --outline:#111; --outline-strong:#111; --shadow:#111;
   --yellow:#ffd84d; --cyan:#55dde0; --pink:#ff7bac; --purple:#9b7bff; --lime:#b8f25b; --danger:#ff5c5c; --info:#5ca9ff;
