@@ -146,7 +146,8 @@ if (!mainUi.includes("postIntent('chat.session.delete'") || !render.includes("'d
 if (mainUi.includes('window.confirm(')) fail('WebView actions must not depend on browser JS dialogs; use app-owned confirmation UI');
 if (!render.includes('openConfirmDialog') || !styles.includes('modal-backdrop')) fail('app-owned confirmation surface missing');
 if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'")) fail('history edit/rollback UI intents missing');
-if (!coordinator.includes('editMessageBranch(') || !coordinator.includes('rollbackMessageBranch(')) fail('history edit/rollback must create durable local branches');
+if (!coordinator.includes('editMessageInPlace(') || !coordinator.includes('rollbackMessageInPlace(') || !db.includes('truncateTimelineFrom(')) fail('edit/rollback must rewind the current local session in place');
+if (!mainUi.includes("action === 'branch-message'") || !coordinator.includes('createLocalBranch(')) fail('branching must remain a separate explicit user action');
 if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.includes('reasoning-block')) fail('provider-emitted reasoning must have an explicit display toggle');
 if (!mainUi.includes("postIntent('context.mode.default.set'") || !render.includes('上下文 · 自动') || !render.includes('上下文 · 极简') || !render.includes('上下文 · Moyu 智能')) fail('context modes must be explicitly selectable when creating sessions');
 if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('联网 · 关闭') || !render.includes('联网 · 自动') || !render.includes('联网 · 开启')) fail('Web modes must be explicitly selectable for new chats/imports/settings');
