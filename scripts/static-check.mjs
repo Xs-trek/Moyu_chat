@@ -140,6 +140,7 @@ if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('�
 if (!mainUi.includes("postIntent('external.open'") || !render.includes("'open-source'")) fail('Web source links must cross the native external.open boundary');
 if (!render.includes('renderSafeMarkdown') || !render.includes('assistant-footer') || !render.includes("'copy-message'") || !render.includes("'jump-latest'")) fail('safe Markdown/assistant footer/copy/jump-latest UX missing');
 if (!render.includes('choice-field') || !mainUi.includes("postIntent('chat.session.model.set'") || !mainUi.includes("postIntent('chat.session.reasoning.set'")) fail('conversation model/reasoning custom selector missing');
+if (!render.includes('contextModeBadge') || !render.includes("minimal: '极简'") || !render.includes("auto: '自动'") || !render.includes("smart: '智能'")) fail('assistant cards must visibly distinguish context modes');
 if (!render.includes("['模型'") || !render.includes("['深度'") || !render.includes("['入/出'") || !render.includes("['总耗'") || !styles.includes('grid-template-columns:repeat(4')) fail('assistant turn facts must use the Moyu UI 2x4 metric layout');
 if (!render.includes('当前模型未声明图片输入能力') || !mainActivity.includes('初始输入模态') || !mainActivity.includes('初始输出模态')) fail('image capability must be visible/configurable instead of silently absent');
 if (!render.includes('contextPreparing') || !render.includes('整理上下文')) fail('hidden preprocessing must be visible as a bounded UI state');
