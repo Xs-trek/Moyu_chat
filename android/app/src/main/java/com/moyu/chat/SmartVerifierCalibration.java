@@ -122,14 +122,16 @@ final class SmartVerifierCalibration {
             evidenceCoverage = evidenced / (double) checks;
         }
         JSONArray x = new JSONArray();
-        x.put(1d); // intercept
-        x.put(result != null && SmartVerifierService.VERDICT_FAIL.equals(result.verdict) ? 1d : 0d);
-        x.put(result != null && SmartVerifierService.VERDICT_PARTIAL.equals(result.verdict) ? 1d : 0d);
-        x.put(failRatio);
-        x.put(unknownRatio);
-        x.put(severeFailRatio);
-        x.put(result == null ? 1d : 1d - clamp(result.selfConfidence));
-        x.put(1d - evidenceCoverage);
+        // Use the Object overload: Android org.json declares checked JSONException for put(double)
+        // even though all values below are finite by construction.
+        x.put(Double.valueOf(1d)); // intercept
+        x.put(Double.valueOf(result != null && SmartVerifierService.VERDICT_FAIL.equals(result.verdict) ? 1d : 0d));
+        x.put(Double.valueOf(result != null && SmartVerifierService.VERDICT_PARTIAL.equals(result.verdict) ? 1d : 0d));
+        x.put(Double.valueOf(failRatio));
+        x.put(Double.valueOf(unknownRatio));
+        x.put(Double.valueOf(severeFailRatio));
+        x.put(Double.valueOf(result == null ? 1d : 1d - clamp(result.selfConfidence)));
+        x.put(Double.valueOf(1d - evidenceCoverage));
         return x;
     }
 
