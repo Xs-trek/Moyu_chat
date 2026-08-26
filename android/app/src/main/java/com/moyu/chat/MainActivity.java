@@ -157,7 +157,17 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                     if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
                     p.model = model.getText().toString().trim();
                     p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(inputLimit.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
-                    coordinator.saveProvider(p, key.getText().toString()); dialog.dismiss();
+                    coordinator.saveProvider(p, key.getText().toString());
+                    if (isNew) {
+                        ChatDatabase.ModelProfile initial = new ChatDatabase.ModelProfile();
+                        initial.id = p.id + ":default"; initial.providerId = p.id; initial.modelId = p.model; initial.displayName = p.model;
+                        initial.contextTokens = p.contextTokens; initial.inputTokens = p.inputTokens; initial.maxOutputTokens = p.maxOutputTokens;
+                        initial.inputModalities = initialInputModalities.getText().toString().trim(); initial.outputModalities = initialOutputModalities.getText().toString().trim();
+                        initial.toolCapabilities = initialToolCapabilities.getText().toString().trim();
+                        initial.reasoningLevels = initialReasoningLevels.getText().toString().trim(); initial.defaultReasoning = initialReasoning.getText().toString().trim();
+                        coordinator.saveModelProfile(initial);
+                    }
+                    dialog.dismiss();
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
             }));
             dialog.show();
