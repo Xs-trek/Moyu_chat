@@ -90,6 +90,12 @@ function positionChoiceMenu(field) {
 
   if (mobileSheet) {
     field.classList.add('sheet');
+    if (!document.querySelector('[data-choice-scrim]')) {
+      const scrim = document.createElement('div');
+      scrim.className = 'choice-scrim';
+      scrim.dataset.choiceScrim = '1';
+      document.body.append(scrim);
+    }
     const width = Math.max(280, viewportWidth - margin * 2);
     const maxHeight = Math.min(420, Math.max(180, viewportHeight * 0.58));
     menu.style.left = `${Math.round(viewportLeft + margin)}px`;
