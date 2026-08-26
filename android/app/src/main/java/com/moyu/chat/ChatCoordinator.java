@@ -160,6 +160,7 @@ final class ChatCoordinator implements AutoCloseable {
                             startingSessions.remove(sessionId);
                             preparingSessions.remove(sessionId);
                             webPreparingStages.remove(sessionId);
+                            postProcessingStages.remove(sessionId);
                             host.setTurnRuntimeActive(sessionId, false);
                             result(asyncRequestId, false, safe(error));
                         } finally {
