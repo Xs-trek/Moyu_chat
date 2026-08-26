@@ -57,14 +57,22 @@ function shell(view, body) {
   );
 }
 
+function pageHeader(title, description, action = null) {
+  return h('section', { class: 'page-head' },
+    h('div', { class: 'grow' }, h('h1', { text: title }), description ? h('p', { class: 'muted', text: description }) : null),
+    action);
+}
+
 function home(view) {
-  return h('main', { class: 'page' },
-    h('section', { class: 'hero card' }, h('div', { class: 'grow' }, h('small', { text: 'LOCAL CHAT' }), h('h1', { text: '不依赖 PC 的 Moyu 补充会话' }), h('p', { text: '会话、分支与 Provider 均由本机维护。Remote 只作为可选的只读来源。' })), button('＋ 新建 Chat', 'new-chat', {}, 'btn primary')),
-    h('section', { class: 'section-head' }, h('h2', { text: '最近会话' })),
-    view.sessions.length ? h('section', { class: 'stack' }, view.sessions.map((session) => h('article', { class: 'card session-card' },
-      h('div', { class: 'row' }, h('strong', { class: 'truncate-safe', text: session.title }), badge(session.state)),
+  return h('main', { class: 'page page-home' },
+    h('section', { class: 'home-start' },
+      h('div', { class: 'grow' }, h('strong', { text: '本地 Chat' }), h('small', { class: 'muted', text: '本机保存会话；Remote 只在你显式分支或回传时参与。' })),
+      button('＋ 新建', 'new-chat', {}, 'btn primary')),
+    h('section', { class: 'section-head compact' }, h('h2', { text: '最近会话' })),
+    view.sessions.length ? h('section', { class: 'stack session-list' }, view.sessions.map((session) => h('article', { class: 'card session-card' },
+      h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: session.title }), badge(session.state, session.state === 'running' ? 'good' : 'quiet')),
       h('p', { class: 'muted truncate-safe', text: session.preview || '暂无内容' }),
-      h('div', { class: 'row session-meta' }, h('small', { class: 'grow truncate-safe', text: `${session.providerName} · ${session.model} · ${fmt(session.updatedAt)}` }), session.origin ? badge(`分支 · ${session.origin.sourceTitle}`, 'branch') : null, session.state !== 'running' ? button('删除', 'delete-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn small danger') : null, button('打开', 'open-session', { sessionId: session.localSessionId }, 'btn small'))))) : h('section', { class: 'empty', text: '还没有本地 Chat，会话可在没有 Remote 的情况下创建。' })
+      h('div', { class: 'row session-meta' }, h('small', { class: 'grow truncate-safe', text: `${session.providerName} · ${session.modelName || session.model} · ${fmt(session.updatedAt)}` }), session.origin ? badge(`分支 · ${session.origin.sourceTitle}`, 'branch') : null, session.state !== 'running' ? button('删除', 'delete-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn ghost small danger') : null, button('打开', 'open-session', { sessionId: session.localSessionId }, 'btn ghost small'))))) : h('section', { class: 'empty empty-state' }, h('strong', { text: '还没有本地会话' }), h('p', { text: '配置 Provider 后即可在没有 PC / Remote 的情况下直接聊天。' }), button('新建 Chat', 'new-chat', {}, 'btn primary'))
   );
 }
 
