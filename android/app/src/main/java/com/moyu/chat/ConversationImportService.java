@@ -351,7 +351,7 @@ final class ConversationImportService {
         }
         String stableId = !sourceId.isEmpty() ? sourceId : !currentLeaf.isEmpty() ? currentLeaf : digest(title + "\n" + createdAt + "\n" + messages.size());
         return new ImportedConversation(stableId, cleanTitle(title, "Claude 导入会话"),
-                emptyInstant(createdAt), emptyInstant(updatedAt), items, path.size(), skipped);
+                emptyInstant(createdAt), emptyInstant(updatedAt), items, items.length(), skipped);
     }
 
     private void readClaudeMessages(JsonReader reader, List<ClaudeMessage> out) throws Exception {
