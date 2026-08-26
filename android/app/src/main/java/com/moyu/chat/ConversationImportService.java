@@ -85,8 +85,27 @@ final class ConversationImportService {
         }
     }
 
+    static final class PartialImportException extends Exception {
+        final String userSummary;
+        PartialImportException(String userSummary, Throwable cause) { super(userSummary, cause); this.userSummary = userSummary; }
+    }
+
     private static final class ImportSkip extends Exception {
         ImportSkip(String message) { super(message); }
+    }
+
+    /** Counts only parsed conversations JSON bytes, including decompressed ZIP entries. */
+    private static final class BoundedJsonInputStream extends java.io.FilterInputStream {
+        private final Report report;
+        BoundedJsonInputStream(InputStream input, Report report) { super(input); this.report = report; }
+        private void consumed(int count) throws IOException {
+            if (count <= 0) return;
+            report.jsonBytes += count;
+            if (report.jsonBytes > MAX_JSON_BYTES) throw new IOException("conversations JSON exceeds 256 MiB safety limit");
+        }
+        @Override public int read() throws IOException { int value = super.read(); if (value >= 0) consumed(1); return value; }
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException { int count = super.read(buffer, offset, length); consumed(count); return count; }
+        @Override public void close() { /* caller owns the source/ZipInputStream */ }
     }
 
     private static final class MessageNode {
