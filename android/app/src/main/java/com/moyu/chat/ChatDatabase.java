@@ -275,7 +275,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             if (db.delete("sessions", "local_id=?", new String[]{id}) != 1) throw new IllegalStateException("session delete failed");
-            if (originSnapshotId != null) {
+            if (originSnapshotId != null && !isReusableImportSource(originSourceType)) {
                 boolean referenced;
                 try (Cursor c = db.rawQuery("SELECT 1 FROM sessions WHERE origin_snapshot_id=? LIMIT 1", new String[]{originSnapshotId})) {
                     referenced = c.moveToFirst();
