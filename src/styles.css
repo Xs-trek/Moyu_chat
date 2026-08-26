@@ -41,7 +41,9 @@ code { font-family:var(--font-mono); overflow-wrap:anywhere; word-break:break-wo
 .hero { display:flex; align-items:flex-end; justify-content:space-between; gap:var(--space-5); background:var(--yellow); color:#111; }
 .hero h1 { margin:.25rem 0; font-size:clamp(1.7rem,7vw,2.8rem); line-height:1.02; letter-spacing:-.04em; }
 .hero p { margin-bottom:0; }
-.card,.empty,.bubble,.conversation-head,.composer,.model-card { background:var(--surface); border:var(--border); border-radius:var(--radius-md); box-shadow:var(--shadow); padding:var(--space-4); min-width:0; }
+.card,.empty,.model-card { background:var(--surface); border:var(--border-thin); border-radius:var(--radius-md); box-shadow:var(--elevation-card); padding:var(--space-4); min-width:0; }
+.hero { border:var(--border); box-shadow:var(--elevation-emphasis); }
+.bubble,.conversation-head,.composer { background:var(--surface); border:var(--border-thin); border-radius:var(--radius-md); box-shadow:var(--elevation-flat); padding:var(--space-4); min-width:0; }
 .stack { display:grid; gap:var(--space-3); min-width:0; }
 .section-head { justify-content:space-between; margin:var(--space-6) 0 var(--space-3); align-items:flex-end; }
 .section-head h1,.section-head h2 { margin:0; }
