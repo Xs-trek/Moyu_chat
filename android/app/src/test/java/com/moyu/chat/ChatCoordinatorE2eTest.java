@@ -343,6 +343,13 @@ public class ChatCoordinatorE2eTest {
         coordinator.saveProvider(provider, SECRET);
         await("provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
 
+        // Create and complete the first turn before another profile exists so the baseline model is deterministic.
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first model"));
+        await("first model turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+        RecordedRequest firstRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(firstRequest);
+        assertEquals("mock-model", new JSONObject(firstRequest.getBody().readUtf8()).optString("model"));
+
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
         second.id = "mock-model-b-profile"; second.providerId = provider.id; second.modelId = "mock-model-b"; second.displayName = "Mock Model B";
         second.contextTokens = 64_000; second.inputTokens = 0; second.maxOutputTokens = 4_096;
@@ -354,11 +361,6 @@ public class ChatCoordinatorE2eTest {
             JSONObject providerView = view == null || view.optJSONArray("providers") == null ? null : view.optJSONArray("providers").optJSONObject(0);
             return providerView != null && providerView.optJSONArray("models") != null && providerView.optJSONArray("models").length() == 2;
         });
-
-        String sessionId = createSession();
-        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first model"));
-        await("first model turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
-        server.takeRequest(5, TimeUnit.SECONDS);
 
         post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", second.id));
         await("model switched", () -> second.id.equals(activeSession(latestView()).optString("modelProfileId")));
