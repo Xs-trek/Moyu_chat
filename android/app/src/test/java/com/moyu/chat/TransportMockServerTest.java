@@ -45,8 +45,14 @@ public class TransportMockServerTest {
         volatile String imageMime, imageBase64, imageFileName;
         final StringBuffer toolActivity = new StringBuffer();
         final StringBuffer webSources = new StringBuffer();
+        final JSONArray continuationItems = new JSONArray();
         final CountDownLatch terminal = new CountDownLatch(1);
         @Override public void onTextDelta(String delta) { text.append(delta); }
+        @Override public void onProviderContinuation(JSONObject state) {
+            if (state == null) return;
+            JSONObject item = state.optJSONObject("item");
+            if (item != null) try { continuationItems.put(new JSONObject(item.toString())); } catch (Exception ignored) { }
+        }
         @Override public void onImage(String mimeType, String base64, String fileName) { imageMime = mimeType; imageBase64 = base64; imageFileName = fileName; }
         @Override public void onToolActivity(String tool, String state) { if (toolActivity.length() > 0) toolActivity.append('|'); toolActivity.append(tool).append(':').append(state); }
         @Override public void onWebSource(String url, String title) { if (webSources.length() > 0) webSources.append('|'); webSources.append(url).append('#').append(title); }
