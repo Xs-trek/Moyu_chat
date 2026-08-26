@@ -147,6 +147,8 @@ function streamStageLabel(stage) {
   if (stage === 'connected') return '已连接 · 等待模型';
   if (stage === 'reasoning') return '推理中';
   if (stage === 'output') return '输出中';
+  if (stage === 'verifying') return '校验回答';
+  if (stage === 'repairing') return '修正回答';
   return '连接模型';
 }
 
