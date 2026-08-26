@@ -77,7 +77,8 @@ final class ChatTurnOptions {
         for (String item : normalized.split(",")) {
             if (item.isEmpty()) continue;
             if (OpenAiCompatibleTransport.RESPONSES.equals(protocol) && WEB_SEARCH.equals(item)) out.add(item);
-            else if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) out.add(item);
+            else if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)
+                    && (ANTHROPIC_SEARCH_WIRES.contains(item) || ANTHROPIC_FETCH_WIRES.contains(item))) out.add(item);
         }
         return String.join(",", out);
     }

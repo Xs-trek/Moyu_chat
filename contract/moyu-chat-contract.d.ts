@@ -126,6 +126,20 @@ export interface VerificationCheckView {
   note: string;
 }
 
+export interface VerificationAttemptView {
+  status: 'valid' | 'invalid' | 'unavailable';
+  verdict?: 'pass' | 'fail' | 'partial';
+  selfConfidence?: number;
+  checks?: VerificationCheckView[];
+  coverageComplete: boolean;
+  coverageReason?: string;
+  invalidReason?: string;
+  policyVersion?: string;
+  risk?: number;
+  action?: 'accept' | 'repair' | 'abstain';
+  features?: number[];
+}
+
 export interface VerificationView {
   status: 'valid' | 'invalid' | 'unavailable';
   verdict?: 'pass' | 'fail' | 'partial';
