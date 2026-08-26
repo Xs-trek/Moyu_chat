@@ -72,6 +72,7 @@ final class ModelPreflight {
         ChatDatabase.Provider out = new ChatDatabase.Provider();
         out.id = p.id; out.displayName = p.displayName; out.protocol = p.protocol; out.baseUrl = p.baseUrl;
         out.authMode = p.authMode; out.reasoningWire = p.reasoningWire; out.model = p.model;
+        out.thinkingMode = p.thinkingMode; out.thinkingBudgetTokens = p.thinkingBudgetTokens;
         out.contextTokens = p.contextTokens; out.inputTokens = p.inputTokens; out.maxOutputTokens = p.maxOutputTokens;
         return out;
     }
