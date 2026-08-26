@@ -366,8 +366,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     private static void emitProviderContinuationItem(JSONObject item, ChatTransport.Sink sink) {
-        if (item == null || !"reasoning".equals(item.optString("type", ""))) return;
+        if (item == null || item.optString("type", "").trim().isEmpty()) return;
         try {
+            // Manual Responses history must replay every response output item, not only reasoning.
             sink.onProviderContinuation(new JSONObject().put("protocol", RESPONSES).put("item", new JSONObject(item.toString())));
         } catch (Exception ignored) { }
     }
