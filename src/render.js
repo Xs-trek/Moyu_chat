@@ -309,7 +309,10 @@ function patchMessageNode(node, item, runtimeRunning, sessionId, showReasoning) 
   node.className = desired.className;
   const body = node.querySelector('.message');
   const desiredBody = desired.querySelector('.message');
-  if (!body && desiredBody) node.querySelector('.bubble-head')?.after(desiredBody);
+  if (!body && desiredBody) {
+    const reasoningBlock = node.querySelector('.reasoning-block');
+    (reasoningBlock || node.querySelector('.bubble-head'))?.after(desiredBody);
+  }
   else if (body && !desiredBody) body.remove();
   else if (body && desiredBody) {
     const sameMode = body.dataset.messageBody === desiredBody.dataset.messageBody;
