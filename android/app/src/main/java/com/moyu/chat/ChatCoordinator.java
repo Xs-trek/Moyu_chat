@@ -65,7 +65,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.theme = validTheme(db.setting("theme", "system"));
         this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
         String legacySmart = db.setting("smartContextEnabled", "true");
-        this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", "false".equals(legacySmart) ? ContextMode.MINIMAL : ContextMode.AUTO));
+        this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", "false".equals(legacySmart) ? ContextMode.MINIMAL : ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
     }
 
