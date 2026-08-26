@@ -25,6 +25,7 @@ function walk(path, suffix, visit) {
 }
 
 const forbiddenUi = [/\bfetch\s*\(/, /new\s+WebSocket\s*\(/, /localStorage/, /indexedDB/, /api[_-]?key/i, /authorization/i];
+for (const file of ['src/main.js','src/render.js','src/markdown.js','src/scroll-anchor.js','src/render-gate.js','src/state.js','src/bridge.js']) assertJsSyntax(file);
 walk(uiRoot, '.js', (file, text) => {
   for (const pattern of forbiddenUi) if (pattern.test(text)) fail(`${file}: forbidden WebView surface ${pattern}`);
 });
