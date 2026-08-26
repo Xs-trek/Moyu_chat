@@ -196,7 +196,7 @@ function messageBody(item) {
     body.append(renderSafeMarkdown(item.text));
     return body;
   }
-  return h('pre', { class: 'message', dataset: { messageBody: 'plain' }, text: item.text });
+  return h('pre', { class: 'message', dataset: { messageBody: 'plain', selectionScope: 'message' }, text: item.text });
 }
 
 function sourceList(sources = []) {
