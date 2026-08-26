@@ -239,7 +239,10 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         if ("message_delta".equals(type)) {
             JSONObject usage = event.optJSONObject("usage"); if (usage != null) sink.onUsage(null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null); return false;
         }
-        if ("message_stop".equals(type)) { sink.onCompleted(); return true; }
+        if ("message_stop".equals(type)) {
+            if (continuation != null) continuation.flush();
+            sink.onCompleted(); return true;
+        }
         if ("error".equals(type)) {
             JSONObject error = event.optJSONObject("error"); String code = error == null ? "provider_error" : error.optString("type", "provider_error");
             sink.onError(code, error == null ? "Provider error" : error.optString("message", "Provider error"), "overloaded_error".equals(code)); return true;
