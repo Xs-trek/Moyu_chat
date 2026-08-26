@@ -254,6 +254,38 @@ public class ChatCoordinatorE2eTest {
         assertEquals(0, app.database().draftMedia(sessionId).length());
     }
 
+    @Test public void providerImageOutputPersistsAsAssistantAttachment() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String event = new JSONObject().put("choices", new JSONArray().put(new JSONObject()
+                        .put("delta", new JSONObject().put("content", new JSONArray().put(new JSONObject()
+                                .put("type", "image_url").put("image_url", new JSONObject().put("url", "data:image/gif;base64," + TINY_GIF)))))
+                        .put("finish_reason", "stop"))).toString();
+                return sse("data: " + event + "\n\ndata: [DONE]\n\n");
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        assertNotNull(profile); profile.outputModalities = "text,image"; app.database().saveModelProfile(profile);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "return image"));
+        await("image-output turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+        JSONArray timeline = app.database().timeline(sessionId);
+        JSONObject assistant = null;
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) assistant = row;
+        }
+        assertNotNull(assistant);
+        JSONArray attachments = assistant.optJSONArray("attachments");
+        assertNotNull(attachments); assertEquals(1, attachments.length());
+        JSONObject image = attachments.getJSONObject(0);
+        assertEquals("image", image.optString("kind"));
+        assertEquals("image/gif", image.optString("mimeType"));
+        assertTrue(app.mediaStore().exists(image.optString("mediaId")));
+        assertFalse("assistant image base64 must stay out of SQLite", scanDatabaseFor(TINY_GIF));
+    }
+
     @Test public void deleteSessionRemovesLocalStateAndUnreferencedMedia() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();
