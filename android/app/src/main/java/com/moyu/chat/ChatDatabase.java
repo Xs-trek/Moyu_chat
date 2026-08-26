@@ -317,6 +317,28 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
+    /** Return one finalized assistant verification object and persist one explicit calibration label. */
+    public synchronized JSONObject verificationForFeedback(String sessionId, int localSeq, String label) {
+        if (sessionId == null || localSeq < 1) throw new IllegalArgumentException("invalid verification target");
+        SQLiteDatabase db = getWritableDatabase();
+        try (Cursor c = db.rawQuery("SELECT item_key,body FROM timeline WHERE session_id=? AND local_seq=? LIMIT 1",
+                new String[]{sessionId, String.valueOf(localSeq)})) {
+            if (!c.moveToFirst()) throw new IllegalArgumentException("assistant message not found");
+            JSONObject body = new JSONObject(c.getString(1));
+            if (!"message".equals(body.optString("kind")) || !"assistant".equals(body.optString("role")) || body.optBoolean("streaming", false)) {
+                throw new IllegalArgumentException("verification feedback requires a finalized assistant message");
+            }
+            JSONObject verification = body.optJSONObject("verification");
+            if (verification == null) throw new IllegalArgumentException("this answer has no Smart verification record");
+            if (verification.has("feedbackLabel")) throw new IllegalStateException("verification feedback already recorded");
+            verification.put("feedbackLabel", label).put("feedbackRecordedAt", Instant.now().toString());
+            body.put("verification", verification);
+            ContentValues row = new ContentValues(); row.put("body", body.toString());
+            if (db.update("timeline", row, "item_key=?", new String[]{c.getString(0)}) != 1) throw new IllegalStateException("verification feedback update failed");
+            return new JSONObject(verification.toString());
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
+    }
+
     /** Media GC authority: every durable JSON location that can legitimately retain a media descriptor. */
     public synchronized java.util.Set<String> referencedMediaIds() {
         java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
