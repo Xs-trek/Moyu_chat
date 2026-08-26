@@ -331,6 +331,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             JSONObject verification = body.optJSONObject("verification");
             if (verification == null) throw new IllegalArgumentException("this answer has no Smart verification record");
             if (verification.has("feedbackLabel")) throw new IllegalStateException("verification feedback already recorded");
+            if (!SmartVerifierCalibration.recordFeedback(this, verification, label)) throw new IllegalArgumentException("feedback label is not valid for this verifier verdict");
             verification.put("feedbackLabel", label).put("feedbackRecordedAt", Instant.now().toString());
             body.put("verification", verification);
             ContentValues row = new ContentValues(); row.put("body", body.toString());
