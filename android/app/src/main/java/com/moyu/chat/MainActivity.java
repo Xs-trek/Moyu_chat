@@ -191,6 +191,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                         initial.toolCapabilities = initialToolCapabilities.getText().toString().trim();
                         initial.reasoningLevels = initialReasoningLevels.getText().toString().trim(); initial.defaultReasoning = initialReasoning.getText().toString().trim();
                         initial.thinkingMode = initialThinkingMode.getText().toString().trim(); initial.thinkingBudgetTokens = Integer.parseInt(initialThinkingBudget.getText().toString().trim());
+                        initial.continuationMode = initialContinuationMode.getText().toString().trim();
                         coordinator.saveModelProfile(initial);
                     }
                     dialog.dismiss();
