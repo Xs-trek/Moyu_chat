@@ -33,7 +33,7 @@ trigger = 50% of effective input window
 target  = approximately 30%
 ```
 
-The target is best-effort and never forces deletion of mandatory current input or durable history.
+The target is best-effort and never forces deletion of mandatory current input or durable history. Large inherited snapshots remain fully durable and available to Context/RAG; only the WebView display projection is bounded to a recent whole-turn tail so import size cannot directly become DOM size.
 
 ## Verification
 
