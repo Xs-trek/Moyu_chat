@@ -40,6 +40,8 @@ export type MoyuChatIntent =
   | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
   | UiIntent<'import.file.pick', { source: ImportSource }>
   | UiIntent<'import.session.open', { snapshotId: string; contextMode?: ContextMode; webMode?: WebMode }>
+  | UiIntent<'import.session.delete', { snapshotId: string }>
+  | UiIntent<'verification.feedback', { localSessionId: string; localSeq: number; label: 'accurate' | 'false_alarm' | 'missed_error' }>
   | UiIntent<'branch.sources.refresh', Record<string, never>>
   | UiIntent<'branch.create.remote', { sourceId: string; throughSeq?: number; contextMode?: ContextMode; webMode?: WebMode }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
