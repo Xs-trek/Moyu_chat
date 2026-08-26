@@ -349,7 +349,11 @@ public class ChatCoordinatorE2eTest {
         second.inputModalities = "text,image"; second.outputModalities = "text";
         second.reasoningLevels = "none,low,high"; second.defaultReasoning = "none";
         coordinator.saveModelProfile(second);
-        await("second model available", () -> latestView().optJSONArray("providers").getJSONObject(0).optJSONArray("models").length() == 2);
+        await("second model available", () -> {
+            JSONObject view = latestView();
+            JSONObject providerView = view == null || view.optJSONArray("providers") == null ? null : view.optJSONArray("providers").optJSONObject(0);
+            return providerView != null && providerView.optJSONArray("models") != null && providerView.optJSONArray("models").length() == 2;
+        });
 
         String sessionId = createSession();
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first model"));
