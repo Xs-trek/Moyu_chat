@@ -265,7 +265,7 @@ function timelineItem(item, runtimeRunning = false, sessionId = '', showReasonin
     const reasoning = item.role === 'assistant' ? String(item.reasoning || '') : '';
     return h('article', { class: `bubble ${item.role}`, dataset: { itemKey: timelineKey(item), streaming: item.streaming ? '1' : '0', reasoningVisible: showReasoning ? '1' : '0' } },
       h('div', { class: 'bubble-head' }, h('strong', { text: item.role === 'user' ? '你' : item.role === 'assistant' ? (item.modelName || 'Moyu Chat') : '系统' }), item.inherited ? badge('历史', 'quiet') : null, h('small', { text: fmt(item.createdAt) })),
-      reasoning && showReasoning ? h('details', { class: 'reasoning-block', open: Boolean(item.streaming && runtimeRunning) }, h('summary', { text: '模型推理' }), h('pre', { class: 'reasoning-text', text: reasoning })) : null,
+      reasoning && showReasoning ? h('details', { class: 'reasoning-block', open: Boolean(item.streaming && runtimeRunning) }, h('summary', { text: '模型推理' }), h('pre', { class: 'reasoning-text', dataset: { selectionScope: 'reasoning' }, text: reasoning })) : null,
       messageBody(item),
       mediaGallery(item.attachments),
       item.streaming && runtimeRunning ? h('span', { class: 'badge good streaming-state', text: streamStageLabel(item.streamStage) }) : null,
