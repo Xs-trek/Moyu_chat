@@ -116,8 +116,12 @@ document.addEventListener('click', (event) => {
     const field = target.closest('.choice-field');
     if (!field) return;
     const opening = !field.classList.contains('open');
-    document.querySelectorAll('.choice-field.open').forEach((node) => { node.classList.remove('open'); node.querySelector('.choice-trigger')?.setAttribute('aria-expanded', 'false'); });
-    if (opening) { field.classList.add('open'); target.setAttribute('aria-expanded', 'true'); }
+    closeChoiceMenus(field);
+    if (opening) {
+      field.classList.add('open');
+      target.setAttribute('aria-expanded', 'true');
+      requestAnimationFrame(() => positionChoiceMenu(field));
+    } else closeChoiceField(field);
   }
   else if (action === 'session-model-set') {
     target.closest('.choice-field')?.classList.remove('open');
