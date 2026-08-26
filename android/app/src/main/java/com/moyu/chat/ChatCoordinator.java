@@ -47,6 +47,7 @@ final class ChatCoordinator implements AutoCloseable {
     private volatile String activeSessionId;
     private String theme;
     private boolean showReasoning;
+    private boolean crossChatMemoryEnabled;
     private String defaultContextMode;
     private String defaultWebMode;
     private JSONArray remoteSources = new JSONArray();
