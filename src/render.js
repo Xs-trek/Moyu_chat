@@ -401,7 +401,7 @@ function imports(view) {
 }
 
 function handoffs(view) {
-  return h('main', { class: 'page' }, h('h1', { text: '回传草稿' }), h('p', { class: 'muted', text: '回传不是同步。只有用户显式提交后，Remote 才能收到 handoff package。' }),
+  return h('main', { class: 'page' }, pageHeader('回传草稿', '回传不是同步。只有你显式提交后，Remote 才能收到 handoff package。'),
     view.handoffs.length ? h('section', { class: 'stack' }, view.handoffs.map((item) => h('article', { class: 'card' }, h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: item.summary }), badge(item.state)), h('small', { text: fmt(item.createdAt) }), item.state === 'draft' ? button('提交给 Remote', 'submit-handoff', { handoffId: item.handoffId }, 'btn primary small') : null))) : h('section', { class: 'empty', text: '暂无回传草稿。' }));
 }
 
