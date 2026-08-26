@@ -89,22 +89,26 @@ function modelChoiceField(view, session) {
   const options = configuredModelChoices(view);
   const selected = options.find(({ model }) => model.modelProfileId === session.modelProfileId);
   const label = selected?.model?.displayName || session.modelName || session.model;
-  return h('div', { class: 'choice-field', dataset: { choiceField: 'model' } },
+  return h('div', { class: 'choice-field model-choice', dataset: { choiceField: 'model' } },
     h('button', { type: 'button', class: 'choice-trigger', disabled: !session.canConfigureTurn, dataset: { action: 'toggle-choice', choice: 'model' }, 'aria-expanded': 'false', text: `模型 · ${label}` }),
-    h('div', { class: 'choice-menu', dataset: { choiceMenu: 'model' } }, options.map(({ provider, model }) =>
-      h('button', { type: 'button', class: `choice-option${model.modelProfileId === session.modelProfileId ? ' selected' : ''}`, dataset: { action: 'session-model-set', sessionId: session.localSessionId, modelProfileId: model.modelProfileId },
-        text: `${model.displayName || model.modelId} · ${provider.displayName}` }))));
+    h('div', { class: 'choice-menu', dataset: { choiceMenu: 'model' } },
+      h('div', { class: 'choice-menu-title', text: '选择模型' }),
+      options.map(({ provider, model }) =>
+        h('button', { type: 'button', class: `choice-option${model.modelProfileId === session.modelProfileId ? ' selected' : ''}`, dataset: { action: 'session-model-set', sessionId: session.localSessionId, modelProfileId: model.modelProfileId },
+          text: `${model.displayName || model.modelId} · ${provider.displayName}` }))));
 }
 
 function reasoningChoiceField(session) {
   const levels = String(session.reasoningLevels || '').split(',').map((x) => x.trim()).filter(Boolean);
-  if (!levels.length) return h('div', { class: 'choice-field disabled-choice' }, h('button', { type: 'button', class: 'choice-trigger', disabled: true, text: '推理 · 关闭' }));
+  if (!levels.length) return h('div', { class: 'choice-field reasoning-choice disabled-choice' }, h('button', { type: 'button', class: 'choice-trigger', disabled: true, text: '推理 · 关闭' }));
   const values = ['default', ...levels.filter((x) => x !== 'default')];
   const display = (value) => value === 'none' ? '关闭' : value === 'default' ? '默认' : value;
-  return h('div', { class: 'choice-field', dataset: { choiceField: 'reasoning' } },
+  return h('div', { class: 'choice-field reasoning-choice', dataset: { choiceField: 'reasoning' } },
     h('button', { type: 'button', class: 'choice-trigger', disabled: !session.canConfigureTurn, dataset: { action: 'toggle-choice', choice: 'reasoning' }, 'aria-expanded': 'false', text: `推理 · ${display(session.reasoningEffort || 'default')}` }),
-    h('div', { class: 'choice-menu', dataset: { choiceMenu: 'reasoning' } }, values.map((value) =>
-      h('button', { type: 'button', class: `choice-option${value === (session.reasoningEffort || 'default') ? ' selected' : ''}`, dataset: { action: 'session-reasoning-set', sessionId: session.localSessionId, reasoningEffort: value }, text: display(value) }))));
+    h('div', { class: 'choice-menu', dataset: { choiceMenu: 'reasoning' } },
+      h('div', { class: 'choice-menu-title', text: '推理深度' }),
+      values.map((value) =>
+        h('button', { type: 'button', class: `choice-option${value === (session.reasoningEffort || 'default') ? ' selected' : ''}`, dataset: { action: 'session-reasoning-set', sessionId: session.localSessionId, reasoningEffort: value }, text: display(value) }))));
 }
 
 function conversation(view) {
