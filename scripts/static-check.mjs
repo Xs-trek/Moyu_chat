@@ -9,6 +9,13 @@ let failed = false;
 
 function fail(message) { console.error(`FAIL: ${message}`); failed = true; }
 function read(relative) { return readFileSync(join(projectRoot, relative), 'utf8'); }
+function assertJsSyntax(relative) {
+  const source = read(relative)
+    .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
+    .replace(/\bexport\s+(?=(?:async\s+)?function\b|class\b|const\b|let\b|var\b)/g, '');
+  try { new Function(source); }
+  catch (error) { fail(`${relative}: JavaScript syntax error: ${error.message}`); }
+}
 function walk(path, suffix, visit) {
   for (const name of readdirSync(path)) {
     const full = join(path, name);
