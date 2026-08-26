@@ -113,6 +113,7 @@ if (!contextBuilder.includes('assistant produced image output')) fail('assistant
 
 const openAiTransport = read('android/app/src/main/java/com/moyu/chat/OpenAiCompatibleTransport.java');
 const anthropicTransport = read('android/app/src/main/java/com/moyu/chat/AnthropicMessagesTransport.java');
+if (anthropicTransport.includes('wireType(ChatTurnOptions.WEB_SEARCH,') || anthropicTransport.includes('wireType(ChatTurnOptions.WEB_FETCH,') || anthropicTransport.includes('"web_search_20260318"') || anthropicTransport.includes('"web_fetch_20260318"')) fail('Messages transport must never guess a hosted-Web schema/version from a generic capability');
 for (const [name, transport] of [['OpenAI', openAiTransport], ['Anthropic', anthropicTransport]]) {
   if (transport.includes('.readTimeout(0,')) fail(`${name} streaming transport must not wait forever for provider bytes`);
   if (!transport.includes('stream_stalled') || !transport.includes('stream_timeout')) fail(`${name} streaming transport lacks bounded stall/timeout terminal mapping`);
