@@ -70,6 +70,7 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     void postIntent(String raw) { if (raw == null || raw.length() > 1024 * 1024) return; worker.execute(() -> handle(raw)); }
+    void refreshView() { worker.execute(this::emitView); }
 
     void saveProvider(ChatDatabase.Provider provider, String apiKey) {
         worker.execute(() -> {
