@@ -410,7 +410,10 @@ export function patchConversation() {
   const view = getState().view;
   const session = view?.activeSession;
   const scroll = document.querySelector('.timeline-scroll');
-  if (!session || view.route !== 'conversation' || !scroll || scroll.dataset.sessionId !== session.localSessionId) return false;
+  const layout = document.querySelector('.conversation-layout');
+  if (!session || view.route !== 'conversation' || !scroll || scroll.dataset.sessionId !== session.localSessionId || !layout) return false;
+  const expectedConfig = JSON.stringify({ modelProfileId: session.modelProfileId, reasoningEffort: session.reasoningEffort, inputModalities: session.inputModalities, outputModalities: session.outputModalities, webMode: session.webMode, webPreparingStage: session.webPreparingStage || '', contextPreparing: Boolean(session.contextPreparing), state: session.state });
+  if (layout.dataset.configSignature !== expectedConfig) return false;
   window.__moyuChatView = view;
   const running = session.state === 'running';
   const contextPreparing = Boolean(session.contextPreparing);
