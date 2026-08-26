@@ -95,14 +95,20 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         if (state == null || !PROTOCOL.equals(state.optString("protocol", ""))) return null;
         JSONArray items = state.optJSONArray("items"); if (items == null || items.length() == 0) return null;
         JSONArray content = new JSONArray();
+        boolean hasTextBlock = false;
         for (int i = 0; i < items.length(); i++) {
             JSONObject block = items.optJSONObject(i); if (block == null) continue;
             String type = block.optString("type", "");
-            if (!("thinking".equals(type) || "redacted_thinking".equals(type))) continue;
+            if (!("text".equals(type) || "thinking".equals(type) || "redacted_thinking".equals(type)
+                    || "server_tool_use".equals(type) || "web_search_tool_result".equals(type)
+                    || "web_fetch_tool_result".equals(type))) continue;
             content.put(new JSONObject(block.toString()));
+            if ("text".equals(type)) hasTextBlock = true;
         }
+        // Older continuation rows may contain only thinking blocks. Keep provider-neutral visible text
+        // as the fallback, but never duplicate it when the native block stream already retained text.
         String text = message.optString("text", "");
-        if (!text.isEmpty()) content.put(new JSONObject().put("type", "text").put("text", text));
+        if (!hasTextBlock && !text.isEmpty()) content.put(new JSONObject().put("type", "text").put("text", text));
         return content.length() == 0 ? null : content;
     }
 
