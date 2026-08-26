@@ -18,6 +18,7 @@ export type MoyuChatIntent =
   | UiIntent<'view.reload', Record<string, never>>
   | UiIntent<'appearance.set', { theme: Theme }>
   | UiIntent<'chat.reasoning.visibility.set', { show: boolean }>
+  | UiIntent<'memory.global.set', { enabled: boolean }>
   | UiIntent<'context.mode.default.set', { mode: ContextMode }>
   | UiIntent<'web.mode.default.set', { mode: WebMode }>
   | UiIntent<'external.open', { url: string }>
