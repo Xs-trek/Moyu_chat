@@ -70,6 +70,9 @@ export interface ModelProfileView {
   maxOutputTokens: number;
   reasoningLevels: string;
   defaultReasoning: string;
+  thinkingMode: 'provider-default' | 'adaptive' | 'disabled' | 'manual';
+  thinkingBudgetTokens: number;
+  continuationMode: 'none' | 'native';
   inputModalities: string;
   outputModalities: string;
   toolCapabilities: string;
