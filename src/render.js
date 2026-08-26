@@ -282,10 +282,11 @@ function assistantFooter(item, finalized, sessionId) {
       badge(verificationLabel, verification.action === 'accept' ? 'good' : verification.action === 'repair' ? 'warn' : 'quiet'),
       verification.coverageReason ? h('small', { class: 'muted', text: verification.coverageReason }) : null,
       h('span', { class: 'grow' }),
-      feedbackRecorded ? badge('反馈已记录', 'quiet') : canAct ? [
+      feedbackRecorded ? badge('反馈已记录', 'quiet') : feedbackEligible ? [
         button('校验正确', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'accurate' }, 'btn ghost small'),
-        button('误判', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'false_alarm' }, 'btn ghost small'),
-        button('漏错', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'missed_error' }, 'btn ghost small')
+        verificationVerdict === 'fail'
+          ? button('误判', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'false_alarm' }, 'btn ghost small')
+          : button('漏错', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'missed_error' }, 'btn ghost small')
       ] : null) : null,
     h('div', { class: 'reply-meta' }, facts.map(([label, value]) => metric(label, value))),
     canAct ? h('div', { class: 'message-actions' },
