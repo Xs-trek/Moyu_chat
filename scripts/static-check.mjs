@@ -50,6 +50,7 @@ if (!coordinator.includes('web.mode.default.set') || !coordinator.includes('defa
 if (!coordinator.includes('chat.session.model.set') || !coordinator.includes('chat.session.reasoning.set') || !coordinator.includes('setSessionModel(') || !coordinator.includes('setSessionReasoning(')) fail('in-session model/reasoning controls missing');
 if (coordinator.indexOf('db.beginTurn(') < 0 || coordinator.indexOf('webService.prepare(') < 0 || coordinator.indexOf('db.beginTurn(') > coordinator.indexOf('webService.prepare(')) fail('accepted user turn must become visible before Web retrieval starts');
 if (!coordinator.includes('.put("modelName"') || !coordinator.includes('.put("reasoningEffort"') || !coordinator.includes('.put("reasoningAvailable"')) fail('assistant turns must freeze model/reasoning metadata');
+if (!coordinator.includes('.put("contextMode", ContextMode.normalize(session.contextMode))') || !coordinator.includes('.put("effectiveContextMode", contextPolicy.effectiveLabel)')) fail('assistant turns must freeze context mode metadata');
 const chatTransport = read('android/app/src/main/java/com/moyu/chat/ChatTransport.java');
 const modelPreflight = read('android/app/src/main/java/com/moyu/chat/ModelPreflight.java');
 if (!chatTransport.includes('Preflight callers use the legacy overload and therefore NONE') || !modelPreflight.includes('transport.stream(provider, apiKey, model, ReasoningPolicy.DEFAULT, prompt, sink)')) fail('hidden preprocessing must use the legacy no-Web transport overload');
