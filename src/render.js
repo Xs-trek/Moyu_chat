@@ -118,18 +118,15 @@ function conversation(view) {
       button('↓ 回到底部', 'jump-latest', {}, 'btn small jump-latest is-hidden')),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
       mediaGallery(session.draftMedia, true, session.localSessionId),
-      h('div', { class: 'composer-tools' },
-        modelChoiceField(view, session), reasoningChoiceField(session),
+      h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或添加图片' : '输入消息') : session.contextPreparing ? '正在整理上下文' : session.webPreparingStage ? '正在联网检索' : '等待当前回合结束', 'aria-label': '消息' }),
+      h('div', { class: 'composer-actions' },
+        h('button', { type: 'button', class: 'composer-icon attachment-btn', disabled: !session.canAttachImage, title: imageInput ? '添加图片' : '当前模型未声明图片输入能力', 'aria-label': imageInput ? '添加图片' : '当前模型不支持图片输入', dataset: { action: 'pick-attachment', sessionId: session.localSessionId }, text: '＋' }),
+        h('span', { class: 'composer-scope muted', text: session.webMode === 'off' ? 'Web 关' : session.webMode === 'on' ? 'Web 开' : 'Web 自动' }),
         h('span', { class: 'grow' }),
-        imageInput ? badge('可读图', 'quiet') : null,
-        imageOutput ? badge('可出图', 'quiet') : null,
-        badge(`联网 ${session.webMode || 'auto'}`, 'quiet')),
-      h('div', { class: 'composer-row' },
-        h('button', { type: 'button', class: 'btn attachment-btn', disabled: !session.canAttachImage, title: imageInput ? '添加图片' : '当前模型未声明图片输入能力', dataset: { action: 'pick-attachment', sessionId: session.localSessionId }, text: '＋' }),
-        h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或添加图片' : '输入消息') : session.contextPreparing ? '正在整理上下文' : session.webPreparingStage ? '正在联网检索' : '等待当前回合结束', 'aria-label': '消息' }),
-        session.canInterrupt ? button('停止', 'interrupt', { sessionId: session.localSessionId }, 'btn danger') : null,
-        h('button', { type: 'submit', class: 'btn primary send-btn', disabled: !session.canSend, text: session.contextPreparing ? '整理中' : session.webPreparingStage ? '搜索中' : session.state === 'running' ? '生成中' : '发送' })),
-      h('small', { class: 'composer-hint muted', text: 'Enter 发送 · Shift+Enter 换行 · 模型与推理设置只影响后续回复' }))
+        modelChoiceField(view, session), reasoningChoiceField(session),
+        session.canInterrupt ? h('button', { type: 'button', class: 'composer-send stop', 'aria-label': '停止生成', title: '停止生成', dataset: { action: 'interrupt', sessionId: session.localSessionId }, text: '■' }) : null,
+        h('button', { type: 'submit', class: 'composer-send send-btn', disabled: !session.canSend, 'aria-label': '发送消息', title: '发送', text: '↑' })),
+      h('small', { class: 'composer-hint muted', text: '模型与推理设置只影响下一条回复' }))
   );
 }
 
