@@ -253,6 +253,8 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     private static final class AnthropicContinuationCollector {
         private final ChatTransport.Sink sink;
         private final Map<Integer, JSONObject> blocks = new HashMap<>();
+        private final Map<Integer, StringBuilder> inputJson = new HashMap<>();
+        private final java.util.TreeMap<Integer, JSONObject> completed = new java.util.TreeMap<>();
         AnthropicContinuationCollector(ChatTransport.Sink sink) { this.sink = sink; }
 
         void onStart(JSONObject event) {
@@ -260,8 +262,11 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 int index = event.optInt("index", -1); if (index < 0) return;
                 JSONObject block = event.optJSONObject("content_block"); if (block == null) return;
                 String type = block.optString("type", "");
-                if (!("thinking".equals(type) || "redacted_thinking".equals(type))) return;
+                if (!("text".equals(type) || "thinking".equals(type) || "redacted_thinking".equals(type)
+                        || "server_tool_use".equals(type) || "web_search_tool_result".equals(type)
+                        || "web_fetch_tool_result".equals(type))) return;
                 blocks.put(index, new JSONObject(block.toString()));
+                if ("server_tool_use".equals(type)) inputJson.put(index, new StringBuilder());
             } catch (Exception ignored) { }
         }
 
@@ -275,6 +280,18 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                     block.put("thinking", block.optString("thinking", "") + delta.optString("thinking", ""));
                 } else if ("signature_delta".equals(type)) {
                     block.put("signature", block.optString("signature", "") + delta.optString("signature", ""));
+                } else if ("text_delta".equals(type)) {
+                    block.put("text", block.optString("text", "") + delta.optString("text", ""));
+                } else if ("citations_delta".equals(type)) {
+                    JSONObject citation = delta.optJSONObject("citation");
+                    if (citation != null) {
+                        JSONArray citations = block.optJSONArray("citations");
+                        if (citations == null) { citations = new JSONArray(); block.put("citations", citations); }
+                        citations.put(new JSONObject(citation.toString()));
+                    }
+                } else if ("input_json_delta".equals(type)) {
+                    StringBuilder partial = inputJson.get(index);
+                    if (partial != null) partial.append(delta.optString("partial_json", ""));
                 }
             } catch (Exception ignored) { }
         }
@@ -283,11 +300,40 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             int index = event.optInt("index", -1); if (index < 0) return;
             JSONObject block = blocks.remove(index); if (block == null) return;
             String type = block.optString("type", "");
-            if ("thinking".equals(type) && block.optString("signature", "").isEmpty()) return;
-            if ("redacted_thinking".equals(type) && block.optString("data", "").isEmpty()) return;
             try {
-                sink.onProviderContinuation(new JSONObject().put("protocol", PROTOCOL).put("item", new JSONObject(block.toString())));
+                if ("server_tool_use".equals(type)) {
+                    StringBuilder partial = inputJson.remove(index);
+                    if (partial != null && partial.length() > 0) block.put("input", new JSONObject(partial.toString()));
+                    if (block.optString("id", "").isEmpty() || block.optString("name", "").isEmpty()) return;
+                }
+                if ("thinking".equals(type) && block.optString("signature", "").isEmpty()) return;
+                if ("redacted_thinking".equals(type) && block.optString("data", "").isEmpty()) return;
+                if (("web_search_tool_result".equals(type) || "web_fetch_tool_result".equals(type))
+                        && block.optString("tool_use_id", "").isEmpty()) return;
+                if ("text".equals(type) && block.optString("text", "").isEmpty() && block.optJSONArray("citations") == null) return;
+                completed.put(index, new JSONObject(block.toString()));
+            } catch (Exception ignored) {
+                inputJson.remove(index); // invalid/incomplete streamed tool input is never replayed.
+            }
+        }
+
+        void flush() {
+            try {
+                java.util.Set<String> serverToolIds = new java.util.HashSet<>();
+                for (JSONObject block : completed.values()) {
+                    if ("server_tool_use".equals(block.optString("type", ""))) {
+                        String id = block.optString("id", ""); if (!id.isEmpty()) serverToolIds.add(id);
+                    }
+                }
+                for (JSONObject block : completed.values()) {
+                    String type = block.optString("type", "");
+                    if (("web_search_tool_result".equals(type) || "web_fetch_tool_result".equals(type))
+                            && !serverToolIds.contains(block.optString("tool_use_id", ""))) continue;
+                    sink.onProviderContinuation(new JSONObject().put("protocol", PROTOCOL)
+                            .put("item", new JSONObject(block.toString())));
+                }
             } catch (Exception ignored) { }
+            completed.clear(); blocks.clear(); inputJson.clear();
         }
     }
 
