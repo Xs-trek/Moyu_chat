@@ -646,10 +646,11 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.Provider p = db.getProvider(s.providerId);
         ChatDatabase.ModelProfile modelProfile = s.modelProfileId == null ? null : db.getModelProfile(s.modelProfileId);
         ChatDatabase.Snapshot originSnap = s.originSnapshotId == null ? null : db.getSnapshot(s.originSnapshotId);
+        boolean starting = startingSessions.contains(s.id);
         boolean preparing = preparingSessions.contains(s.id);
         String webPreparingStage = webPreparingStages.get(s.id);
         boolean webPreparing = webPreparingStage != null;
-        boolean active = activeTurns.containsKey(s.id) || preparing || webPreparing;
+        boolean active = activeTurns.containsKey(s.id) || starting || preparing || webPreparing;
         String visibleState = active ? "running" : ("running".equals(s.state) ? "failed" : s.state);
         JSONObject o = new JSONObject().put("localSessionId", s.id).put("title", s.title).put("providerId", s.providerId).put("providerName", p == null ? s.providerId : p.displayName)
                 .put("modelProfileId", s.modelProfileId == null ? JSONObject.NULL : s.modelProfileId).put("model", s.model)
