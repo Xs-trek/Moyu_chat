@@ -121,7 +121,7 @@ export interface SessionView {
   defaultReasoning: string;
   reasoningEffort: string;
   contextMode: ContextMode;
-  effectiveContextMode: 'minimal' | 'smart' | 'auto-minimal' | 'auto-smart';
+  effectiveContextMode: 'minimal' | 'standard' | 'smart';
   inputModalities: string;
   outputModalities: string;
   nativeWebCapabilities: string;
