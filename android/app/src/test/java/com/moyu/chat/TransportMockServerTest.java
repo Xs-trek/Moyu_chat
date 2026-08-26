@@ -413,16 +413,21 @@ public class TransportMockServerTest {
         RecordingSink sink = new RecordingSink();
         anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "native-model", prompt("user", "hi"), sink);
         sink.awaitTerminal();
-        assertEquals(4, sink.continuationItems.length());
+        assertEquals(6, sink.continuationItems.length());
         assertEquals("thinking", sink.continuationItems.getJSONObject(0).optString("type"));
         assertEquals("sig", sink.continuationItems.getJSONObject(0).optString("signature"));
         assertEquals("server_tool_use", sink.continuationItems.getJSONObject(1).optString("type"));
         assertEquals("latest", sink.continuationItems.getJSONObject(1).getJSONObject("input").optString("query"));
-        JSONObject result = sink.continuationItems.getJSONObject(2);
-        assertEquals("web_search_tool_result", result.optString("type"));
-        assertEquals("enc", result.getJSONArray("content").getJSONObject(0).optString("encrypted_content"));
-        assertEquals("text", sink.continuationItems.getJSONObject(3).optString("type"));
-        assertEquals("answer", sink.continuationItems.getJSONObject(3).optString("text"));
+        JSONObject searchResult = sink.continuationItems.getJSONObject(2);
+        assertEquals("web_search_tool_result", searchResult.optString("type"));
+        assertEquals("enc", searchResult.getJSONArray("content").getJSONObject(0).optString("encrypted_content"));
+        assertEquals("server_tool_use", sink.continuationItems.getJSONObject(3).optString("type"));
+        assertEquals("web_fetch", sink.continuationItems.getJSONObject(3).optString("name"));
+        JSONObject fetchResult = sink.continuationItems.getJSONObject(4);
+        assertEquals("web_fetch_tool_result", fetchResult.optString("type"));
+        assertEquals("fetch-enc", fetchResult.getJSONArray("content").getJSONObject(0).optString("encrypted_content"));
+        assertEquals("text", sink.continuationItems.getJSONObject(5).optString("type"));
+        assertEquals("answer", sink.continuationItems.getJSONObject(5).optString("text"));
     }
 
     @Test public void anthropicReplaysSignedThinkingAndEncryptedHostedWebResult() throws Exception {
