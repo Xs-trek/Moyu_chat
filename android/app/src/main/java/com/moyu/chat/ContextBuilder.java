@@ -75,7 +75,7 @@ final class ContextBuilder {
         if (targetCovered <= covered) return null;
         CanonicalPrompt baseline = new CanonicalPrompt(target.instructions, target.result.messages, true,
                 target.result.estimatedTokens, 0, durable.length(), targetCovered,
-                new JSONArray(durable.toString()), mode.providerContinuationEnabled);
+                new JSONArray(durable.toString()), allowContinuation);
         return new CompactionPlan(baseline, targetCovered);
     }
 
