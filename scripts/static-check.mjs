@@ -47,6 +47,9 @@ if (!coordinator.includes('if (activeTurns.containsKey(id)) throw new IllegalSta
 if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
 if (!coordinator.includes('context.mode.default.set') || !coordinator.includes('defaultContextMode')) fail('v0.0.2 default context-mode authority missing');
 if (!coordinator.includes('web.mode.default.set') || !coordinator.includes('defaultWebMode') || !coordinator.includes('MoyuWebService')) fail('v0.0.2 Web-mode authority/orchestration missing');
+if (!coordinator.includes('chat.session.model.set') || !coordinator.includes('chat.session.reasoning.set') || !coordinator.includes('setSessionModel(') || !coordinator.includes('setSessionReasoning(')) fail('in-session model/reasoning controls missing');
+if (coordinator.indexOf('db.beginTurn(') < 0 || coordinator.indexOf('webService.prepare(') < 0 || coordinator.indexOf('db.beginTurn(') > coordinator.indexOf('webService.prepare(')) fail('accepted user turn must become visible before Web retrieval starts');
+if (!coordinator.includes('.put("modelName"') || !coordinator.includes('.put("reasoningEffort"') || !coordinator.includes('.put("reasoningAvailable"')) fail('assistant turns must freeze model/reasoning metadata');
 const chatTransport = read('android/app/src/main/java/com/moyu/chat/ChatTransport.java');
 const modelPreflight = read('android/app/src/main/java/com/moyu/chat/ModelPreflight.java');
 if (!chatTransport.includes('Preflight callers use the legacy overload and therefore NONE') || !modelPreflight.includes('transport.stream(provider, apiKey, model, ReasoningPolicy.DEFAULT, prompt, sink)')) fail('hidden preprocessing must use the legacy no-Web transport overload');
