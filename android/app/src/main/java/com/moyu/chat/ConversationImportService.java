@@ -71,6 +71,7 @@ final class ConversationImportService {
         int skippedConversations;
         int skippedMessages;
         int jsonEntries;
+        long jsonBytes;
         String lastSkipReason = "";
 
         String summary(String source) {
