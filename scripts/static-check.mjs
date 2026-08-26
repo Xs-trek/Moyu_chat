@@ -42,6 +42,13 @@ if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapsh
 if (!db.includes('private static final int VERSION = 10')) fail('three-tier context/RAG persistence requires SQLite schema v10');
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
+if (!db.includes('CREATE VIRTUAL TABLE knowledge_fts USING fts4') || !db.includes("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'")) fail('lightweight FTS4 knowledge index / auto-to-standard migration missing');
+const contextMode = read('android/app/src/main/java/com/moyu/chat/ContextMode.java');
+const promptPolicy = read('android/app/src/main/java/com/moyu/chat/PromptPolicy.java');
+const knowledgeStore = read('android/app/src/main/java/com/moyu/chat/LocalKnowledgeStore.java');
+if (!contextMode.includes('STANDARD = "standard"') || !contextMode.includes('retrievalEnabled') || !contextMode.includes('evidencePolicyEnabled')) fail('three-tier Harness policy missing');
+if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
+if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('does not') || !knowledgeStore.includes('unrelated Chat sessions')) fail('snapshot-scoped local retrieval boundary missing');
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
 if (!coordinator.includes('contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row without duplicating the pending input');
