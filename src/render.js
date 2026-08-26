@@ -435,7 +435,7 @@ function imports(view) {
     imported.length ? h('section', { class: 'stack' }, imported.map((source) => h('article', { class: 'card import-source-card' },
       h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: source.sourceTitle }), badge(source.sourceType === 'import-claude' ? 'Claude' : 'ChatGPT'), source.truncated ? badge('已截断', 'warn') : null),
       h('small', { class: 'muted', text: `${source.itemCount} 条可见消息 · ${fmt(source.createdAt)}` }),
-      h('div', { class: 'row' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('作为 Chat 打开', 'import-open', { snapshotId: source.snapshotId }, 'btn primary small'))
+      h('div', { class: 'row' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('删除导入源', 'import-delete', { snapshotId: source.snapshotId, sourceTitle: source.sourceTitle }, 'btn ghost small danger'), button('作为 Chat 打开', 'import-open', { snapshotId: source.snapshotId }, 'btn primary small'))
     ))) : h('section', { class: 'empty', text: '还没有导入的 ChatGPT / Claude 会话。' }),
     h('section', { class: 'section-head compact' }, h('h2', { text: 'Remote 分支' }), h('span', { class: 'grow' }), button('刷新来源', 'refresh-sources', {}, 'btn ghost small')),
     !view.remoteBridge.available ? h('section', { class: 'empty', text: 'RemoteDataBridge 当前不可用。文件导入与 Local Chat 不受影响。' }) :
