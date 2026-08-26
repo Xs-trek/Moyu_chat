@@ -1,7 +1,9 @@
 package com.moyu.chat;
 
 import android.content.ContentResolver;
+import android.database.Cursor;
 import android.net.Uri;
+import android.provider.OpenableColumns;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
