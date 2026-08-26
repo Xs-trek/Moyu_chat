@@ -987,7 +987,7 @@ final class ChatCoordinator implements AutoCloseable {
         java.util.Collections.reverse(keptReverse);
         JSONArray out = new JSONArray();
         for (java.util.ArrayList<JSONObject> turn : keptReverse) for (JSONObject item : turn) out.put(item);
-        return new DisplayTimeline(out, Math.max(0, visible - count + structurallyOmitted));
+        return new DisplayTimeline(out, Math.max(0, visible - count));
     }
 
     private DisplayTimeline displayTimeline(ChatDatabase.Session s) throws Exception {
