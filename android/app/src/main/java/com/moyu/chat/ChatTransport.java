@@ -6,6 +6,8 @@ interface ChatTransport {
         default void onStage(String stage) { }
         /** Provider-emitted reasoning/thinking text, kept separate from visible answer text. */
         default void onReasoningDelta(String delta) { }
+        /** Replayable provider-private reasoning/thinking object. Never expose this object to WebView/Snapshot. */
+        default void onProviderContinuation(JSONObject state) { }
         void onTextDelta(String delta);
         default void onImage(String mimeType, String base64, String fileName) { }
         /** Hosted provider tool lifecycle; currently web_search / web_fetch. */
