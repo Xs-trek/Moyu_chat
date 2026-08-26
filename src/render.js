@@ -266,8 +266,8 @@ function assistantFooter(item, finalized, sessionId) {
     backend ? h('div', { class: 'assistant-web muted', text: `联网 · ${backend}` }) : null,
     h('div', { class: 'reply-meta' }, facts.map(([label, value]) => metric(label, value))),
     canAct ? h('div', { class: 'message-actions' },
-      button('复制', 'copy-message', { sessionId, localSeq: item.localSeq }, 'btn small'),
-      button('回滚到此处', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn small')) : null);
+      button('复制', 'copy-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small'),
+      button('回滚', 'rollback-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small')) : null);
 }
 
 function contextModeBadge(item) {
