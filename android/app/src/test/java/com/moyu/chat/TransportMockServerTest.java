@@ -402,9 +402,13 @@ public class TransportMockServerTest {
                 "data: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
                 "data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"web_search_tool_result\",\"tool_use_id\":\"srvtoolu_1\",\"content\":[{\"type\":\"web_search_result\",\"url\":\"https://example.com\",\"title\":\"E\",\"encrypted_content\":\"enc\"}]}}\n\n" +
                 "data: {\"type\":\"content_block_stop\",\"index\":2}\n\n" +
-                "data: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
-                "data: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n" +
+                "data: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_2\",\"name\":\"web_fetch\",\"input\":{\"url\":\"https://example.com/doc\"}}}\n\n" +
                 "data: {\"type\":\"content_block_stop\",\"index\":3}\n\n" +
+                "data: {\"type\":\"content_block_start\",\"index\":4,\"content_block\":{\"type\":\"web_fetch_tool_result\",\"tool_use_id\":\"srvtoolu_2\",\"content\":[{\"type\":\"web_fetch_result\",\"url\":\"https://example.com/doc\",\"encrypted_content\":\"fetch-enc\"}]}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":4}\n\n" +
+                "data: {\"type\":\"content_block_start\",\"index\":5,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":5,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":5}\n\n" +
                 "data: {\"type\":\"message_stop\"}\n\n"));
         RecordingSink sink = new RecordingSink();
         anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "native-model", prompt("user", "hi"), sink);
