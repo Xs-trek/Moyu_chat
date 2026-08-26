@@ -154,6 +154,7 @@ export interface SessionDetailView extends SessionView {
   canConfigureTurn: boolean;
   contextPreparing?: boolean;
   webPreparingStage?: 'web_search' | 'web_fetch' | string;
+  postProcessingStage?: 'verifying' | 'repairing' | string;
 }
 
 export interface ImportedSourceView {
