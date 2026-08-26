@@ -119,6 +119,8 @@ public class SmartContextV002Test {
         String mainBody = main.getBody().readUtf8();
         assertTrue(mainBody.contains("Use precise technical language"));
         assertTrue(mainBody.contains("For debugging, prioritize observed evidence"));
+        assertTrue("Smart mode must add reviewed anti-fabrication/evidence policy", mainBody.contains("NEVER FABRICATE"));
+        assertTrue(mainBody.contains("COMPLETION HONESTY"));
         assertFalse("router cannot inject unreviewed module text into system authority", mainBody.contains("IGNORE_ALL"));
         ChatDatabase.Session stored = app.database().getSession(sessionId);
         TaskProfile profile = TaskProfile.fromStored(stored.taskProfile);
