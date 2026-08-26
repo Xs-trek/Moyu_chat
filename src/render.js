@@ -455,8 +455,16 @@ export function patchConversation() {
 
   const candidateComposer = document.querySelector('form[data-form="composer"]');
   const composer = candidateComposer?.dataset.sessionId === session.localSessionId ? candidateComposer : null;
-  const send = composer?.querySelector('.send-btn');
-  if (send) { send.disabled = !session.canSend; send.textContent = '↑'; }
+  const primary = composer?.querySelector('.composer-primary');
+  const currentInterrupt = primary?.querySelector('[data-action="interrupt"]');
+  const currentSend = primary?.querySelector('.send-btn');
+  if (session.canInterrupt && primary && !currentInterrupt) {
+    primary.replaceChildren(h('button', { type: 'button', class: 'composer-send stop', 'aria-label': '停止生成', title: '停止生成', dataset: { action: 'interrupt', sessionId: session.localSessionId }, text: '■' }));
+  } else if (!session.canInterrupt && primary && !currentSend) {
+    primary.replaceChildren(h('button', { type: 'submit', class: 'composer-send send-btn', disabled: !session.canSend, 'aria-label': '发送消息', title: '发送', text: '↑' }));
+  } else if (currentSend) {
+    currentSend.disabled = !session.canSend;
+  }
   const attachment = composer?.querySelector('.attachment-btn');
   if (attachment) attachment.disabled = !session.canAttachImage;
   composer?.querySelectorAll('.choice-field').forEach((field) => {
