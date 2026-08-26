@@ -644,7 +644,17 @@ final class ChatCoordinator implements AutoCloseable {
         return "Moyu Web · Exa + Fetch";
     }
 
-    private void emitView() {
+    private void emitStreamingView(String sessionId) {
+        if (sessionId == null || !sessionId.equals(activeSessionId)) return;
+        long now = System.nanoTime();
+        Long previous = lastStreamViewNanos.get(sessionId);
+        // 20 fps is sufficient for text streaming and avoids saturating WebView/JS with full projections.
+        if (previous != null && now - previous < 50_000_000L) return;
+        lastStreamViewNanos.put(sessionId, now);
+        emitView();
+    }
+
+    private synchronized void emitView() {
         if (closed || !uiReady) return;
         try {
             JSONObject view = new JSONObject().put("route", route).put("now", Instant.now().toString()).put("appearance", new JSONObject().put("theme", theme).put("resolvedTheme", "dark".equals(theme) ? "dark" : "light"));
