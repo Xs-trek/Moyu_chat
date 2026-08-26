@@ -528,6 +528,101 @@ final class ChatCoordinator implements AutoCloseable {
         activeTurns.put(id, turn); startingSessions.remove(id); emitStreamingView(id);
     }
 
+    private void completeSmartTurn(String id, String streamKey, JSONObject seed, ChatDatabase.Session session,
+                                   ChatDatabase.Provider provider, String apiKey, ChatTransport transport,
+                                   CanonicalPrompt mainPrompt, String currentUserText, String candidate,
+                                   String candidateReasoning, JSONArray candidateMedia,
+                                   LinkedHashMap<String, JSONObject> webSources, String webBackend,
+                                   JSONArray providerContinuationItems, String webContext) {
+        String finalText = candidate == null ? "" : candidate;
+        String finalReasoning = candidateReasoning == null ? "" : candidateReasoning;
+        boolean repairAttempted = false;
+        boolean repaired = false;
+        boolean repairLimitReached = false;
+        String calibrationKey = SmartVerifierCalibration.calibrationKey(session.providerId, session.model);
+        JSONArray evidence = SmartVerifierService.evidence(currentUserText, mainPrompt, sourceArray(webSources), webContext);
+        JSONArray attempts = new JSONArray();
+        SmartVerifierService.Result verification = smartVerifier.verify(transport, provider, apiKey, session,
+                mainPrompt, currentUserText, finalText, evidence);
+        SmartVerifierCalibration.Decision decision = SmartVerifierCalibration.decide(db, calibrationKey, verification);
+        attempts.put(verificationAttemptJson(verification, decision));
+        String terminalAction = decision.action;
+
+        if (SmartVerifierCalibration.ACTION_REPAIR.equals(decision.action)
+                && SmartVerifierService.STATUS_VALID.equals(verification.status)) {
+            repairAttempted = true;
+            setPostProcessingStage(id, streamKey, seed, "repairing");
+            String repairedText = smartVerifier.repair(transport, provider, apiKey, session,
+                    currentUserText, finalText, verification, evidence);
+            if (repairedText != null && !repairedText.trim().isEmpty()) {
+                repaired = true;
+                finalText = repairedText;
+                // The visible answer now comes from the repair call. First-pass visible reasoning and
+                // native continuation no longer describe that answer and must not be presented/replayed.
+                finalReasoning = "";
+                setPostProcessingStage(id, streamKey, seed, "verifying");
+                verification = smartVerifier.verify(transport, provider, apiKey, session,
+                        mainPrompt, currentUserText, finalText, evidence);
+                decision = SmartVerifierCalibration.decide(db, calibrationKey, verification);
+                attempts.put(verificationAttemptJson(verification, decision));
+                if (SmartVerifierCalibration.ACTION_REPAIR.equals(decision.action)) {
+                    repairLimitReached = true;
+                    terminalAction = SmartVerifierCalibration.ACTION_ABSTAIN;
+                } else terminalAction = decision.action;
+            } else {
+                terminalAction = SmartVerifierCalibration.ACTION_ABSTAIN;
+            }
+        }
+
+        try {
+            JSONObject meta = verification.toJson()
+                    .put("risk", decision.risk)
+                    .put("recommendedAction", decision.action)
+                    .put("action", terminalAction)
+                    .put("calibrationKey", calibrationKey)
+                    .put("features", new JSONArray(decision.features.toString()))
+                    .put("calibrationLabels", decision.calibrationLabels)
+                    .put("learnedCalibration", decision.learnedBlend)
+                    .put("repairAttempted", repairAttempted)
+                    .put("repaired", repaired)
+                    .put("repairLimitReached", repairLimitReached)
+                    .put("attempts", attempts);
+            seed.put("verification", meta);
+            if (!repaired) attachProviderContinuation(seed, session, provider, providerContinuationItems);
+        } catch (Exception ignored) { }
+        finishTurn(id, streamKey, seed, finalText, finalReasoning, candidateMedia, webSources, webBackend, null);
+    }
+
+    private void setPostProcessingStage(String id, String streamKey, JSONObject seed, String stage) {
+        postProcessingStages.put(id, stage);
+        try { seed.put("streamStage", stage); db.replaceTimelineBody(streamKey, seed); } catch (Exception ignored) { }
+        emitStreamingView(id);
+    }
+
+    private static JSONObject verificationAttemptJson(SmartVerifierService.Result result,
+                                                       SmartVerifierCalibration.Decision decision) {
+        try {
+            return result.toJson().put("risk", decision.risk).put("action", decision.action)
+                    .put("features", new JSONArray(decision.features.toString()));
+        } catch (Exception ignored) { return new JSONObject(); }
+    }
+
+    private static JSONArray copyArray(JSONArray source) {
+        try { return source == null ? new JSONArray() : new JSONArray(source.toString()); }
+        catch (Exception ignored) { return new JSONArray(); }
+    }
+
+    private static LinkedHashMap<String, JSONObject> copySources(Map<String, JSONObject> source) {
+        LinkedHashMap<String, JSONObject> out = new LinkedHashMap<>();
+        if (source == null) return out;
+        for (Map.Entry<String, JSONObject> entry : source.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null) continue;
+            try { out.put(entry.getKey(), new JSONObject(entry.getValue().toString())); }
+            catch (Exception ignored) { }
+        }
+        return out;
+    }
+
     private void settleUsage(String id, String usageKey, JSONObject usageState, boolean[] usagePersisted,
                              long requestStartedNanos, long firstOutputNanos) {
         try {
