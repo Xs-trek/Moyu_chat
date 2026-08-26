@@ -139,10 +139,18 @@ final class ConversationImportService {
         BufferedInputStream buffered = sourceStream instanceof BufferedInputStream
                 ? (BufferedInputStream) sourceStream : new BufferedInputStream(sourceStream, 64 * 1024);
         boolean zip = isZip(displayName, buffered);
-        if (zip) importZip(normalizedSource, buffered, consumer, report);
-        else importJsonArray(normalizedSource, buffered, consumer, report);
-        if (report.jsonEntries == 0) throw new IllegalArgumentException("未找到官方 conversations JSON 数据");
-        return report;
+        try {
+            if (zip) importZip(normalizedSource, buffered, consumer, report);
+            else importJsonArray(normalizedSource, buffered, consumer, report);
+            if (report.jsonEntries == 0) throw new IllegalArgumentException("未找到官方 conversations JSON 数据");
+            return report;
+        } catch (Exception error) {
+            if (report.importedConversations > 0) {
+                String summary = report.summary(normalizedSource) + "；随后停止：" + safeReason(error.getMessage());
+                throw new PartialImportException(summary, error);
+            }
+            throw error;
+        }
     }
 
     private void importZip(String source, InputStream input, Consumer consumer, Report report) throws Exception {
