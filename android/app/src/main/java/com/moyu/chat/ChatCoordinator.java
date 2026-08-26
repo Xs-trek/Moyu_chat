@@ -669,7 +669,7 @@ final class ChatCoordinator implements AutoCloseable {
             o.put("messages", displayTimeline(s)).put("composerDraft", s.draft == null ? "" : s.draft)
                     .put("draftMedia", db.draftMedia(s.id)).put("canAttachImage", ChatDatabase.supportsModality(s.inputModalities, "image") && !active)
                     .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", activeTurns.containsKey(s.id))
-                    .put("contextPreparing", preparing);
+                    .put("canConfigureTurn", !active).put("contextPreparing", preparing);
             if (webPreparing) o.put("webPreparingStage", webPreparingStage);
         }
         return o;
