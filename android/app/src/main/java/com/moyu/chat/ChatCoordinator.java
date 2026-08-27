@@ -386,14 +386,15 @@ final class ChatCoordinator implements AutoCloseable {
         });
     }
 
-    private RequestDeployment freezeRequestDeployment(String sessionId) {
+    private TurnConfig freezeTurnConfig(String sessionId) {
         ChatDatabase.Session session = db.getSession(sessionId);
         if (session == null) throw new IllegalArgumentException("session not found");
         ChatDatabase.Provider provider = db.getProvider(session.providerId);
         String key = secrets.get(session.providerId);
         if (provider == null || key == null) throw new IllegalStateException("provider credential missing");
         if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("provider protocol unsupported");
-        return new RequestDeployment(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session));
+        ChatDatabase.ModelProfile profile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
+        return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile);
     }
 
     private boolean sessionBusy(String id) {
