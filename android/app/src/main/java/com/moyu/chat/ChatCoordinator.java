@@ -450,7 +450,8 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private boolean sessionBusy(String id) {
-        return activeTurns.containsKey(id) || startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id);
+        return turnControls.containsKey(id) || activeTurns.containsKey(id) || startingSessions.contains(id)
+                || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id);
     }
 
     private void saveDraft(String id, String text) {
