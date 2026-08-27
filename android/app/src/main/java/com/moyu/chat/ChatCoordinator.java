@@ -852,6 +852,11 @@ final class ChatCoordinator implements AutoCloseable {
                 setPostProcessingStage(id, streamKey, seed, "verifying");
                 verification = smartVerifier.verify(transport, provider, apiKey, session,
                         mainPrompt, currentUserText, finalText, evidence);
+                if (turnControl != null && turnControl.isCancelled()) {
+                    finishTurn(id, streamKey, seed, finalText, finalReasoning, candidateMedia, webSources, webBackend,
+                            new String[]{"cancelled", "Generation stopped"});
+                    return;
+                }
                 decision = SmartVerifierCalibration.decide(db, calibrationKey, verification);
                 attempts.put(verificationAttemptJson(verification, decision));
                 if (SmartVerifierCalibration.ACTION_REPAIR.equals(decision.action)) {
