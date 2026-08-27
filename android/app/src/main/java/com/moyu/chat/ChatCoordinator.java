@@ -202,6 +202,10 @@ final class ChatCoordinator implements AutoCloseable {
                     final String message = p.optString("text", "");
                     if (sessionBusy(sessionId)) throw new IllegalStateException("session busy");
                     if (message.trim().isEmpty() && db.draftMedia(sessionId).length() == 0) break;
+                    // Send is self-contained with respect to the visible turn setting. A preceding
+                    // reasoning.set bridge message is still persisted normally, but Send must not rely
+                    // on cross-bridge scheduling order to know what the user selected for this turn.
+                    if (p.has("reasoningEffort")) setSessionReasoning(sessionId, p.optString("reasoningEffort", ReasoningPolicy.DEFAULT));
                     final String asyncRequestId = requestId;
                     // All user-selected wire/session capabilities plus provider config/secret/credential epoch
                     // are frozen while this serialized intent worker owns the turn. UI navigation or profile
