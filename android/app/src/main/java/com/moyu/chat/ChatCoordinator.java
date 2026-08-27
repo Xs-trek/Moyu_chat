@@ -1009,6 +1009,29 @@ final class ChatCoordinator implements AutoCloseable {
         return "Moyu Web · Exa + Fetch";
     }
 
+    /** High-frequency data-plane projection: never rebuild providers/session lists/history for a token delta. */
+    private synchronized void emitStreamingPatch(String sessionId, JSONObject liveItem) {
+        if (closed || !uiReady || sessionId == null || !sessionId.equals(activeSessionId) || !"conversation".equals(route) || liveItem == null) return;
+        try {
+            boolean active = sessionBusy(sessionId);
+            JSONObject sessionPatch = new JSONObject()
+                    .put("state", active ? "running" : nonEmpty(db.getSession(sessionId) == null ? null : db.getSession(sessionId).state, "failed"))
+                    .put("canSend", !active)
+                    .put("canInterrupt", activeTurns.containsKey(sessionId))
+                    .put("canConfigureTurn", !active)
+                    .put("contextPreparing", preparingSessions.contains(sessionId));
+            String webStage = webPreparingStages.get(sessionId);
+            if (webStage != null) sessionPatch.put("webPreparingStage", webStage); else sessionPatch.put("webPreparingStage", JSONObject.NULL);
+            String postStage = postProcessingStages.get(sessionId);
+            if (postStage != null) sessionPatch.put("postProcessingStage", postStage); else sessionPatch.put("postProcessingStage", JSONObject.NULL);
+            JSONObject item = new JSONObject(liveItem.toString());
+            item.remove("providerContinuation");
+            JSONObject patch = new JSONObject().put("scope", "conversation.stream").put("localSessionId", sessionId)
+                    .put("session", sessionPatch).put("item", item);
+            host.dispatch(new JSONObject().put("version", 1).put("type", "view.patch").put("revision", ++revision).put("patch", patch));
+        } catch (Exception error) { host.showMessage("stream patch failed: " + safe(error)); }
+    }
+
     private void emitStreamingView(String sessionId) {
         if (sessionId == null || !sessionId.equals(activeSessionId)) return;
         long now = System.nanoTime();
