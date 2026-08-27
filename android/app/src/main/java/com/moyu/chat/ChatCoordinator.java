@@ -760,9 +760,16 @@ final class ChatCoordinator implements AutoCloseable {
                 final JSONArray continuation = copyArray(providerContinuationItems);
                 final LinkedHashMap<String, JSONObject> candidateSources = copySources(webSources);
                 final String candidateWebBackend = webBackend[0];
-                preparationWorker.execute(() -> completeSmartTurn(id, streamKey, live, session, provider, key, transport,
-                        mainPrompt, input, candidate, candidateReasoning, candidateMedia, candidateSources,
-                        candidateWebBackend, continuation, webPrepared.promptSuffix, turnConfig));
+                preparationWorker.execute(() -> {
+                    turnControl.bindCurrentThread();
+                    try {
+                        completeSmartTurn(id, streamKey, live, session, provider, key, transport,
+                                mainPrompt, input, candidate, candidateReasoning, candidateMedia, candidateSources,
+                                candidateWebBackend, continuation, webPrepared.promptSuffix, turnConfig, turnControl);
+                    } finally {
+                        turnControl.clearCurrentThread();
+                    }
+                });
             }); }
             @Override public void onError(String code, String summary, boolean retryable) {
                 streamTerminal.set(true);
