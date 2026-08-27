@@ -39,6 +39,21 @@ export function patchView(patch, revision) {
   return true;
 }
 
+/** Apply an immediate local turn-setting selection; the native full view remains authoritative. */
+export function setOptimisticReasoningEffort(sessionId, reasoningEffort) {
+  const view = state.view;
+  const current = view?.activeSession;
+  if (!view || !current || current.localSessionId !== sessionId) return false;
+  const nextSession = { ...current, reasoningEffort };
+  const sessions = Array.isArray(view.sessions)
+    ? view.sessions.map((entry) => entry?.localSessionId === sessionId ? { ...entry, reasoningEffort } : entry)
+    : view.sessions;
+  const nextView = { ...view, activeSession: nextSession, sessions };
+  state = { ...state, view: nextView };
+  emit({ scope: 'stream' });
+  return true;
+}
+
 export function setNotice(notice) {
   state = { ...state, notice };
   emit({ scope: 'toast' });
