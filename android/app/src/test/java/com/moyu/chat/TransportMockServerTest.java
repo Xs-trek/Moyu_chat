@@ -650,13 +650,25 @@ public class TransportMockServerTest {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"encrypted_content\":\"cipher\"}}\n\n" +
                 "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}}\n\n" +
-                "data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
+                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"rs_1\",\"type\":\"reasoning\",\"encrypted_content\":\"cipher\"},{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}}\n\n"));
         RecordingSink sink = new RecordingSink();
         openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "native-model", prompt("user", "hi"), sink);
         sink.awaitTerminal();
-        assertEquals("continuation callbacks must survive TerminalSink", 2, sink.continuationItems.length());
+        assertEquals("completed.output fallback must not duplicate output_item.done callbacks", 2, sink.continuationItems.length());
         assertEquals("reasoning", sink.continuationItems.getJSONObject(0).optString("type"));
         assertEquals("cipher", sink.continuationItems.getJSONObject(0).optString("encrypted_content"));
+        assertEquals("message", sink.continuationItems.getJSONObject(1).optString("type"));
+    }
+
+    @Test public void responsesCompletedOutputBackfillsMissingOutputItemDoneEvents() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"rs_completed\",\"type\":\"reasoning\",\"encrypted_content\":\"completed-cipher\"},{\"id\":\"msg_completed\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "native-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertEquals(2, sink.continuationItems.length());
+        assertEquals("reasoning", sink.continuationItems.getJSONObject(0).optString("type"));
+        assertEquals("completed-cipher", sink.continuationItems.getJSONObject(0).optString("encrypted_content"));
         assertEquals("message", sink.continuationItems.getJSONObject(1).optString("type"));
     }
 
