@@ -34,8 +34,10 @@ export function bindHost(onView) {
       onView(envelope.view, revision);
       return;
     }
-    if (envelope.type === 'view.patch') {
-      postIntent('view.reload', {});
+    if (envelope.type === 'view.patch' && envelope.patch) {
+      const revision = Number(envelope.revision) || 0;
+      if (revision > 0 && revision <= getState().revision) return;
+      if (!patchView(envelope.patch, revision)) postIntent('view.reload', {});
       return;
     }
     if (envelope.type === 'intent.result' && envelope.requestId) {
