@@ -33,6 +33,16 @@ import okhttp3.Response;
  */
 final class MoyuWebService implements AutoCloseable {
     interface StageSink { void onStage(String stage); }
+    interface CallScope {
+        boolean isCancelled();
+        void bind(okhttp3.Call call);
+        void clear(okhttp3.Call call);
+    }
+    private static final CallScope NO_CANCEL = new CallScope() {
+        @Override public boolean isCancelled() { return false; }
+        @Override public void bind(okhttp3.Call call) { }
+        @Override public void clear(okhttp3.Call call) { }
+    };
 
     static final String EXA_ENDPOINT = "https://mcp.exa.ai/mcp";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
