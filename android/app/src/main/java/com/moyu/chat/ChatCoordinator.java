@@ -670,7 +670,7 @@ final class ChatCoordinator implements AutoCloseable {
                 worker.execute(() -> {
                 settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
                 if (!contextPolicy.verifierEnabled) {
-                    try { attachProviderContinuation(live, session, provider, providerContinuationItems, requestDeploymentFingerprint); } catch (Exception ignored) { }
+                    try { attachProviderContinuation(live, turnConfig, providerContinuationItems); } catch (Exception ignored) { }
                     finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], null);
                     return;
                 }
