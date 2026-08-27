@@ -609,7 +609,7 @@ final class ChatCoordinator implements AutoCloseable {
             }
             @Override public void onReasoningDelta(String delta) {
                 if (delta == null || delta.isEmpty() || streamTerminal.get()) return;
-                streamStage[0] = "reasoning";
+                streamStage.set("reasoning");
                 reasoningOut.append(delta);
                 markProjectionDirty();
             }
