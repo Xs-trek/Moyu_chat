@@ -914,6 +914,7 @@ final class ChatCoordinator implements AutoCloseable {
             host.showMessage("turn finalization failed: " + safe(finalizeError));
         } finally {
             activeTurns.remove(id);
+            turnControls.remove(id);
             startingSessions.remove(id);
             preparingSessions.remove(id);
             webPreparingStages.remove(id);
