@@ -569,7 +569,7 @@ final class ChatCoordinator implements AutoCloseable {
         boolean[] usagePersisted = new boolean[]{false};
         ChatTransport.Sink sink = new ChatTransport.Sink() {
             private JSONObject liveProjection() throws Exception {
-                JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage[0]);
+                JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage.get());
                 if (reasoningOut.length() > 0) next.put("reasoning", reasoningOut.toString());
                 if (outputMedia.length() > 0) next.put("attachments", outputMedia);
                 if (!webSources.isEmpty()) next.put("sources", sourceArray(webSources)); else next.remove("sources");
