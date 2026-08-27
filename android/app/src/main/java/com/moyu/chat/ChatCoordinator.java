@@ -442,8 +442,7 @@ final class ChatCoordinator implements AutoCloseable {
         boolean checkpointAllowed = contextPolicy.checkpointEnabled;
         boolean mayPrepare = needsRouter || checkpointAllowed;
 
-        ChatDatabase.ModelProfile requestModelProfile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
-        // Request behavior comes from session-frozen deployment capability, not the mutable profile.
+        // Request behavior comes from the immutable TurnConfig, not mutable UI/session/profile state.
         provider.thinkingMode = turnConfig.thinkingMode;
         provider.thinkingBudgetTokens = turnConfig.thinkingBudgetTokens;
         final boolean allowProviderContinuation = contextPolicy.providerContinuationEnabled
