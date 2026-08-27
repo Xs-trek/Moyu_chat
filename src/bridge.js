@@ -1,4 +1,4 @@
-import { getState } from './state.js';
+import { getState, patchView } from './state.js';
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const pending = new Map();
