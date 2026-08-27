@@ -28,7 +28,7 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.open', { localSessionId: string }>
   | UiIntent<'chat.session.model.set', { localSessionId: string; modelProfileId: string }>
   | UiIntent<'chat.session.reasoning.set', { localSessionId: string; reasoningEffort: string }>
-  | UiIntent<'chat.session.send', { localSessionId: string; text: string }>
+  | UiIntent<'chat.session.send', { localSessionId: string; text: string; reasoningEffort?: string }>
   | UiIntent<'chat.session.saveDraft', { localSessionId: string; text: string }>
   | UiIntent<'chat.attachment.pick', { localSessionId: string }>
   | UiIntent<'chat.attachment.remove', { localSessionId: string; mediaId: string }>
