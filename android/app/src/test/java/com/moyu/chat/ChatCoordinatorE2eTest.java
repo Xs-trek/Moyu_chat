@@ -824,7 +824,12 @@ public class ChatCoordinatorE2eTest {
         assertEquals("high", new JSONObject(request.getBody().readUtf8()).optString("reasoning_effort"));
         await("at least one bounded stream patch", () -> {
             synchronized (host.envelopes) {
-                for (int i = baselineEnvelopeCount; i < host.envelopes.size(); i++) if ("view.patch".equals(host.envelopes.get(i).optString("type"))) return true;
+                for (int i = baselineEnvelopeCount; i < host.envelopes.size(); i++) {
+                    JSONObject envelope = host.envelopes.get(i);
+                    if (!"view.patch".equals(envelope.optString("type"))) continue;
+                    JSONObject item = envelope.optJSONObject("patch") == null ? null : envelope.optJSONObject("patch").optJSONObject("item");
+                    if (item != null && item.optInt("localSeq", 0) > 0) return true;
+                }
             }
             return false;
         });
