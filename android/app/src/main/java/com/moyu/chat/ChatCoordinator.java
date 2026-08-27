@@ -575,8 +575,43 @@ final class ChatCoordinator implements AutoCloseable {
                 if (!webBackend[0].isEmpty()) next.put("webBackend", webBackend[0]); else next.remove("webBackend");
                 return next;
             }
-            @Override public void onStage(String stage) { worker.execute(() -> { try { if (stage == null || stage.trim().isEmpty()) return; streamStage[0] = stage.trim(); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception ignored) { } }); }
-            @Override public void onReasoningDelta(String delta) { if (delta == null || delta.isEmpty()) return; worker.execute(() -> { try { streamStage[0] = "reasoning"; reasoningOut.append(delta); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception ignored) { } }); }
+            private void markProjectionDirty() {
+                streamProjectionRevision.incrementAndGet();
+                scheduleProjectionFlush();
+            }
+            private void scheduleProjectionFlush() {
+                if (streamTerminal.get() || closed || !streamProjectionScheduled.compareAndSet(false, true)) return;
+                try {
+                    streamProjectionScheduler.schedule(() -> {
+                        final long targetRevision = streamProjectionRevision.get();
+                        worker.execute(() -> {
+                            try {
+                                if (!streamTerminal.get()) {
+                                    db.replaceTimelineBody(streamKey, liveProjection());
+                                    emitStreamingView(id);
+                                }
+                            } catch (Exception ignored) { }
+                            finally {
+                                streamProjectionScheduled.set(false);
+                                if (!streamTerminal.get() && streamProjectionRevision.get() != targetRevision) scheduleProjectionFlush();
+                            }
+                        });
+                    }, STREAM_PROJECTION_INTERVAL_MS, TimeUnit.MILLISECONDS);
+                } catch (java.util.concurrent.RejectedExecutionException ignored) {
+                    streamProjectionScheduled.set(false);
+                }
+            }
+            @Override public void onStage(String stage) {
+                if (stage == null || stage.trim().isEmpty() || streamTerminal.get()) return;
+                streamStage[0] = stage.trim();
+                markProjectionDirty();
+            }
+            @Override public void onReasoningDelta(String delta) {
+                if (delta == null || delta.isEmpty() || streamTerminal.get()) return;
+                streamStage[0] = "reasoning";
+                reasoningOut.append(delta);
+                markProjectionDirty();
+            }
             @Override public void onProviderContinuation(JSONObject state) { if (state == null || !allowProviderContinuation) return; worker.execute(() -> { try {
                 if (!provider.protocol.equals(state.optString("protocol", "")) || providerContinuationOverflow[0]) return;
                 JSONObject item = state.optJSONObject("item"); if (item == null) return;
