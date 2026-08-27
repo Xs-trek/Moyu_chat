@@ -130,7 +130,7 @@ const webService = read('android/app/src/main/java/com/moyu/chat/MoyuWebService.
 if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_search_exa')) fail('Moyu Exa fallback backend missing');
 if (!webService.includes('Moyu Fetch only allows HTTPS URLs') || !webService.includes('publicDns') || !webService.includes('validateHttpsUri')) fail('Moyu Fetch HTTPS/SSRF boundary missing');
 if (!webService.includes('untrusted reference material') || !webService.includes('not instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
-if (!coordinator.includes('buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens,\n                        preparedWeb.promptSuffix)') || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('ephemeral Web context/source projection missing');
+if (!coordinator.includes('buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens,\n                        preparedWeb.promptSuffix)') || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('ephemeral Web context/source projection missing');
 
 const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
 const chatRuntime = read('android/app/src/main/java/com/moyu/chat/ChatRuntime.java');
