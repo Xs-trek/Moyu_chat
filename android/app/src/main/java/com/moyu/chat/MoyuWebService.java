@@ -175,13 +175,18 @@ final class MoyuWebService implements AutoCloseable {
         Request request = new Request.Builder().url(exaEndpoint)
                 .header("Accept", "application/json, text/event-stream")
                 .post(RequestBody.create(JSON, body.toString())).build();
-        try (Response response = searchHttp.newCall(request).execute()) {
+        okhttp3.Call call = searchHttp.newCall(request);
+        callScope.bind(call);
+        if (callScope.isCancelled()) call.cancel();
+        try (Response response = call.execute()) {
             if (!response.isSuccessful()) throw new IllegalStateException("Exa HTTP " + response.code());
             if (response.body() == null) throw new IllegalStateException("Exa returned an empty response");
             String raw = new String(readBounded(response.body().byteStream(), MAX_HTTP_BYTES), StandardCharsets.UTF_8);
             String parsed = parseMcpText(raw);
             if (parsed == null) throw new IllegalStateException("Exa response did not contain tool text");
             return parsed;
+        } finally {
+            callScope.clear(call);
         }
     }
 
