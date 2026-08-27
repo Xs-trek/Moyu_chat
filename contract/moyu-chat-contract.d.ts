@@ -212,6 +212,16 @@ export interface SessionDetailView extends SessionView {
   postProcessingStage?: 'verifying' | 'repairing' | string;
 }
 
+export interface ConversationStreamPatch {
+  scope: 'conversation.stream';
+  localSessionId: string;
+  session: Partial<Pick<SessionDetailView, 'state' | 'canSend' | 'canInterrupt' | 'canConfigureTurn' | 'contextPreparing'>> & {
+    webPreparingStage?: string | null;
+    postProcessingStage?: string | null;
+  };
+  item: Extract<TimelineItem, { kind: 'message' }>;
+}
+
 export interface ImportedSourceView {
   snapshotId: string;
   sourceType: 'import-chatgpt' | 'import-claude';
