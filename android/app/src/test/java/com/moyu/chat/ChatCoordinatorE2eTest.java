@@ -712,6 +712,25 @@ public class ChatCoordinatorE2eTest {
         assertNull(host.editorProvider);
     }
 
+    @Test public void rejectedForegroundLeaseDoesNotAcceptTurnAndRestoresExactDraft() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        host.runtimeLeaseAllowed = false;
+        String submitted = "  preserve exact input \n after rejected lease  ";
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", submitted));
+        await("foreground lease rejection restores draft", () -> submitted.equals(app.database().getSession(sessionId).draft));
+
+        ChatDatabase.Session session = app.database().getSession(sessionId);
+        assertEquals("turn must remain unaccepted when no foreground runtime can be acquired", "idle", session.state);
+        assertEquals("rejected turn must not create user/live timeline rows", 0, app.database().timeline(sessionId).length());
+        assertNull("rejected turn must never reach the provider", server.takeRequest(400, TimeUnit.MILLISECONDS));
+        await("view shows restored draft", () -> {
+            JSONObject active = activeSession(latestView());
+            return active != null && submitted.equals(active.optString("composerDraft")) && active.optBoolean("canSend");
+        });
+    }
+
     @Test public void submittedTextStaysOutOfComposerWhenContextPreparationFails() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();
