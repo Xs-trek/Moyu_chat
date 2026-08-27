@@ -203,14 +203,16 @@ final class ChatCoordinator implements AutoCloseable {
                     if (sessionBusy(sessionId)) throw new IllegalStateException("session busy");
                     if (message.trim().isEmpty() && db.draftMedia(sessionId).length() == 0) break;
                     final String asyncRequestId = requestId;
-                    // The composer is cleared at Send acceptance, not at provider success. This prevents
-                    // preflight/provider-start failures from resurrecting the submitted text from SQLite.
-                    db.setDraft(sessionId, "");
                     // All user-selected wire/session capabilities plus provider config/secret/credential epoch
                     // are frozen while this serialized intent worker owns the turn. UI navigation or profile
                     // edits cannot relabel an already accepted request.
                     final TurnConfig turnConfig = freezeTurnConfig(sessionId);
-                    if (!host.setTurnRuntimeActive(sessionId, true)) throw new IllegalStateException("unable to acquire foreground generation runtime");
+                    if (!host.setTurnRuntimeActive(sessionId, true)) {
+                        db.setDraft(sessionId, message); // the turn was not accepted; restore the exact submitted text.
+                        throw new IllegalStateException("unable to acquire foreground generation runtime");
+                    }
+                    // The composer is cleared only after the runtime lease makes this an accepted turn.
+                    db.setDraft(sessionId, "");
                     startingSessions.add(sessionId);
                     preparationWorker.execute(() -> {
                         try {
