@@ -749,7 +749,8 @@ final class ChatCoordinator implements AutoCloseable {
                     finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], null);
                     return;
                 }
-                activeTurns.remove(id);
+                ChatTransport.Turn completedTurn = activeTurns.remove(id);
+                turnControl.clearTransport(completedTurn);
                 postProcessingStages.put(id, "verifying");
                 try { live.put("streamStage", "verifying"); db.replaceTimelineBody(streamKey, live); } catch (Exception ignored) { }
                 emitStreamingView(id);
