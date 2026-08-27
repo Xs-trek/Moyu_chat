@@ -924,7 +924,13 @@ final class ChatCoordinator implements AutoCloseable {
         }
     }
 
-    private void interrupt(String id) { ChatTransport.Turn turn = activeTurns.get(id); if (turn != null) turn.cancel(); }
+    private void interrupt(String id) {
+        TurnControl control = turnControls.get(id);
+        if (control != null) control.cancel();
+        ChatTransport.Turn turn = activeTurns.get(id);
+        if (turn != null) try { turn.cancel(); } catch (Exception ignored) { }
+        emitStreamingView(id);
+    }
 
     private void refreshSources() throws Exception { RemoteDataBridge.Status status = remoteBridge.status(); remoteSources = status.available ? remoteBridge.listSources() : new JSONArray(); }
 
