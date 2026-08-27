@@ -661,7 +661,9 @@ final class ChatCoordinator implements AutoCloseable {
                 if (reasoningTokens != null) usageState.put("reasoningTokens", Math.max(0, reasoningTokens));
                 if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState); else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; }
             } catch (Exception ignored) { } }); }
-            @Override public void onCompleted() { worker.execute(() -> {
+            @Override public void onCompleted() {
+                streamTerminal.set(true);
+                worker.execute(() -> {
                 settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
                 if (!contextPolicy.verifierEnabled) {
                     try { attachProviderContinuation(live, session, provider, providerContinuationItems, requestDeploymentFingerprint); } catch (Exception ignored) { }
