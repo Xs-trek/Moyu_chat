@@ -423,15 +423,13 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("session not found");
         JSONArray pendingMedia = db.draftMedia(id);
         if (input.trim().isEmpty() && pendingMedia.length() == 0) return;
-        if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this session model does not support image input");
+        if (turnConfig == null || turnConfig.provider == null || turnConfig.apiKey == null) throw new IllegalStateException("turn configuration missing");
+        if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(turnConfig.inputModalities, "image")) throw new IllegalStateException("this session model does not support image input");
         if (activeTurns.containsKey(id)) throw new IllegalStateException("session busy");
-        if (requestDeployment == null || requestDeployment.provider == null || requestDeployment.apiKey == null) {
-            throw new IllegalStateException("provider request snapshot missing");
-        }
-        ChatDatabase.Provider provider = requestDeployment.provider;
-        String key = requestDeployment.apiKey;
+        ChatDatabase.Provider provider = turnConfig.provider;
+        String key = turnConfig.apiKey;
         ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
-        final String requestDeploymentFingerprint = requestDeployment.fingerprint;
+        final String requestDeploymentFingerprint = turnConfig.deploymentFingerprint;
 
         // Resolve only stable session policy before durable mutation. Once the user taps Send the
         // message belongs in the transcript and the composer draft must be cleared even if later
