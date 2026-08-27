@@ -551,9 +551,12 @@ final class ChatCoordinator implements AutoCloseable {
         db.replaceTimelineBody(streamKey, live);
         emitStreamingView(id);
         final long[] firstOutputNanos = new long[]{0L};
-        StringBuilder textOut = new StringBuilder();
-        StringBuilder reasoningOut = new StringBuilder();
+        StringBuffer textOut = new StringBuffer();
+        StringBuffer reasoningOut = new StringBuffer();
         String[] streamStage = new String[]{"connecting"};
+        AtomicBoolean streamProjectionScheduled = new AtomicBoolean(false);
+        AtomicBoolean streamTerminal = new AtomicBoolean(false);
+        AtomicLong streamProjectionRevision = new AtomicLong(0L);
         JSONArray outputMedia = new JSONArray();
         JSONArray providerContinuationItems = new JSONArray();
         java.util.Set<String> providerContinuationKeys = new java.util.HashSet<>();
