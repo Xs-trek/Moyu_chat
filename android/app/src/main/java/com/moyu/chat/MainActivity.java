@@ -107,6 +107,17 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         private WebResourceResponse blocked() { return new WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", new LinkedHashMap<>(), new ByteArrayInputStream(new byte[0])); }
     }
 
+    private void recoverWebView(WebView crashed) {
+        if (crashed == null || webView != crashed) return;
+        try { crashed.removeJavascriptInterface("MoyuHost"); } catch (Exception ignored) { }
+        try {
+            if (crashed.getParent() instanceof ViewGroup) ((ViewGroup) crashed.getParent()).removeView(crashed);
+        } catch (Exception ignored) { }
+        try { crashed.destroy(); } catch (Exception ignored) { }
+        webView = null;
+        createWebView();
+    }
+
     private static String mime(String path) { if (path.endsWith(".html")) return "text/html"; if (path.endsWith(".js")) return "application/javascript"; if (path.endsWith(".css")) return "text/css"; return "application/octet-stream"; }
 
     @Override public void dispatch(JSONObject envelope) { String script = "window.dispatchEvent(new CustomEvent('moyu:view',{detail:JSON.parse(" + JSONObject.quote(envelope.toString()) + ")}));"; runOnUiThread(() -> { if (webView != null) webView.evaluateJavascript(script, null); }); }
