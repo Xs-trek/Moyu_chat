@@ -263,6 +263,7 @@ final class ChatCoordinator implements AutoCloseable {
                     // The composer is cleared only after the runtime lease makes this an accepted turn.
                     db.setDraft(sessionId, "");
                     startingSessions.add(sessionId);
+                    emitView(); // accepted turn is immediately visible and immediately interruptible.
                     try {
                         preparationWorker.execute(() -> {
                             turnControl.bindCurrentThread();
