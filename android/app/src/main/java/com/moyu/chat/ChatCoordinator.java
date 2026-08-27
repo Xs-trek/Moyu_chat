@@ -1078,7 +1078,7 @@ final class ChatCoordinator implements AutoCloseable {
             JSONObject sessionPatch = new JSONObject()
                     .put("state", active ? "running" : nonEmpty(db.getSession(sessionId) == null ? null : db.getSession(sessionId).state, "failed"))
                     .put("canSend", !active)
-                    .put("canInterrupt", activeTurns.containsKey(sessionId))
+                    .put("canInterrupt", turnControls.containsKey(sessionId))
                     .put("canConfigureTurn", !active)
                     .put("contextPreparing", preparingSessions.contains(sessionId));
             String webStage = webPreparingStages.get(sessionId);
