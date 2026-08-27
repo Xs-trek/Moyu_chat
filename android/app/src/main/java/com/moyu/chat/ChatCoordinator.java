@@ -810,6 +810,11 @@ final class ChatCoordinator implements AutoCloseable {
                                    TurnConfig turnConfig, TurnControl turnControl) {
         String finalText = candidate == null ? "" : candidate;
         String finalReasoning = candidateReasoning == null ? "" : candidateReasoning;
+        if (turnControl != null && turnControl.isCancelled()) {
+            finishTurn(id, streamKey, seed, finalText, finalReasoning, candidateMedia, webSources, webBackend,
+                    new String[]{"cancelled", "Generation stopped"});
+            return;
+        }
         boolean repairAttempted = false;
         boolean repaired = false;
         boolean repairLimitReached = false;
