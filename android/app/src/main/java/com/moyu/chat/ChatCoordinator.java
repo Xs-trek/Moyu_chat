@@ -632,7 +632,7 @@ final class ChatCoordinator implements AutoCloseable {
             @Override public void onTextDelta(String delta) {
                 if (delta == null || delta.isEmpty() || streamTerminal.get()) return;
                 if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime();
-                streamStage[0] = "output";
+                streamStage.set("output");
                 textOut.append(delta);
                 markProjectionDirty();
             }
