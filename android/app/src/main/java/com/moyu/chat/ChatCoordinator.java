@@ -975,16 +975,14 @@ final class ChatCoordinator implements AutoCloseable {
         return "";
     }
 
-    private void attachProviderContinuation(JSONObject seed, ChatDatabase.Session session,
-                                            ChatDatabase.Provider provider, JSONArray items,
-                                            String requestDeploymentFingerprint) throws Exception {
-        if (seed == null || session == null || provider == null || items == null || items.length() == 0
-                || !ProviderContinuationPolicy.enabled(session.continuationMode)
-                || requestDeploymentFingerprint == null || requestDeploymentFingerprint.trim().isEmpty()) return;
-        JSONObject state = new JSONObject().put("protocol", provider.protocol).put("providerId", session.providerId)
-                .put("modelProfileId", session.modelProfileId == null ? "" : session.modelProfileId)
-                .put("model", session.model)
-                .put("deploymentFingerprint", requestDeploymentFingerprint)
+    private void attachProviderContinuation(JSONObject seed, TurnConfig turnConfig, JSONArray items) throws Exception {
+        if (seed == null || turnConfig == null || turnConfig.provider == null || items == null || items.length() == 0
+                || !ProviderContinuationPolicy.enabled(turnConfig.continuationMode)
+                || turnConfig.deploymentFingerprint == null || turnConfig.deploymentFingerprint.trim().isEmpty()) return;
+        JSONObject state = new JSONObject().put("protocol", turnConfig.provider.protocol).put("providerId", turnConfig.providerId)
+                .put("modelProfileId", turnConfig.modelProfileId == null ? "" : turnConfig.modelProfileId)
+                .put("model", turnConfig.model)
+                .put("deploymentFingerprint", turnConfig.deploymentFingerprint)
                 .put("items", new JSONArray(items.toString()));
         seed.put("providerContinuation", state);
     }
