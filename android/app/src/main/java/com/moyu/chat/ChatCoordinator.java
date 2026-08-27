@@ -45,6 +45,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final ChatMediaStore mediaStore;
     private final Host host;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    // High-frequency provider deltas are coalesced before they reach the intent/DB authority queue.
+    private final ScheduledExecutorService streamProjectionScheduler = Executors.newSingleThreadScheduledExecutor();
     // Blocking Router/Checkpoint/Web preparation must never occupy the UI/intent authority queue.
     private final ExecutorService preparationWorker = Executors.newFixedThreadPool(2);
     private final ChatTransportRegistry transports = new ChatTransportRegistry();
