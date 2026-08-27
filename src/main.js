@@ -153,7 +153,12 @@ document.addEventListener('click', (event) => {
   }
   else if (action === 'session-reasoning-set') {
     closeChoiceField(target.closest('.choice-field'));
-    postIntent('chat.session.reasoning.set', { localSessionId: target.dataset.sessionId, reasoningEffort: target.dataset.reasoningEffort });
+    const sessionId = target.dataset.sessionId;
+    const reasoningEffort = target.dataset.reasoningEffort;
+    // Reflect the user's turn setting immediately. Native persistence remains authoritative, while
+    // the subsequent Send also carries this selection so bridge scheduling cannot revert the turn.
+    setOptimisticReasoningEffort(sessionId, reasoningEffort);
+    postIntent('chat.session.reasoning.set', { localSessionId: sessionId, reasoningEffort });
   }
   else if (action === 'nav') postIntent('nav.open', { route: target.dataset.route });
   else if (action === 'theme') postIntent('appearance.set', { theme: target.dataset.theme });
