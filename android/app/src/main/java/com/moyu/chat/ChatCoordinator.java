@@ -602,6 +602,11 @@ final class ChatCoordinator implements AutoCloseable {
             } finally {
                 if (webPreparingStages.remove(id) != null) emitStreamingView(id);
             }
+            if (turnControl != null && turnControl.isCancelled()) {
+                finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                        new String[]{"cancelled", "Generation stopped"});
+                return;
+            }
             if (preparedWeb.hasContext()) {
                 // Rebuild only the disposable main prompt so Web material is budgeted but never persisted as user text.
                 prompt = contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens,
