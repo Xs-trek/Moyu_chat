@@ -44,13 +44,19 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
-        webView = new WebView(this); webView.setBackgroundColor(Color.TRANSPARENT);
-        setContentView(webView, new ViewGroup.LayoutParams(-1, -1)); configureWebView();
         MoyuChatApplication app = (MoyuChatApplication) getApplication();
         runtime = app.chatRuntime();
         runtime.attach(this);
         coordinator = runtime.coordinator();
-        webView.loadUrl(ORIGIN + "/assets/ui/index.html");
+        createWebView();
+    }
+
+    private void createWebView() {
+        WebView next = new WebView(this); next.setBackgroundColor(Color.TRANSPARENT);
+        webView = next;
+        setContentView(next, new ViewGroup.LayoutParams(-1, -1));
+        configureWebView();
+        next.loadUrl(ORIGIN + "/assets/ui/index.html");
     }
 
     @SuppressLint("SetJavaScriptEnabled") private void configureWebView() {
