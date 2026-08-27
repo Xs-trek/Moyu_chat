@@ -247,27 +247,43 @@ final class ChatCoordinator implements AutoCloseable {
                         db.setDraft(sessionId, message); // the turn was not accepted; restore the exact submitted text.
                         throw new IllegalStateException("unable to acquire foreground generation runtime");
                     }
+                    final TurnControl turnControl = new TurnControl();
+                    if (turnControls.putIfAbsent(sessionId, turnControl) != null) {
+                        host.setTurnRuntimeActive(sessionId, false);
+                        throw new IllegalStateException("session busy");
+                    }
                     // The composer is cleared only after the runtime lease makes this an accepted turn.
                     db.setDraft(sessionId, "");
                     startingSessions.add(sessionId);
-                    preparationWorker.execute(() -> {
-                        try {
-                            send(sessionId, message, turnConfig);
-                            result(asyncRequestId, true, null);
-                        } catch (Exception error) {
-                            // Last-resort durable terminal guard: if beginTurn() already committed a live row,
-                            // no escaping preparation exception may leave the DB stuck in running/streaming.
-                            try { db.failUnhandledTurn(sessionId, "turn_internal_error", safe(error)); } catch (Exception ignored) { }
-                            startingSessions.remove(sessionId);
-                            preparingSessions.remove(sessionId);
-                            webPreparingStages.remove(sessionId);
-                            postProcessingStages.remove(sessionId);
-                            host.setTurnRuntimeActive(sessionId, false);
-                            result(asyncRequestId, false, safe(error));
-                        } finally {
-                            emitView();
-                        }
-                    });
+                    try {
+                        preparationWorker.execute(() -> {
+                            turnControl.bindCurrentThread();
+                            try {
+                                send(sessionId, message, turnConfig, turnControl);
+                                result(asyncRequestId, true, null);
+                            } catch (Exception error) {
+                                // Last-resort durable terminal guard: if beginTurn() already committed a live row,
+                                // no escaping preparation exception may leave the DB stuck in running/streaming.
+                                try { db.failUnhandledTurn(sessionId, turnControl.isCancelled() ? "cancelled" : "turn_internal_error", safe(error)); } catch (Exception ignored) { }
+                                turnControls.remove(sessionId, turnControl);
+                                startingSessions.remove(sessionId);
+                                preparingSessions.remove(sessionId);
+                                webPreparingStages.remove(sessionId);
+                                postProcessingStages.remove(sessionId);
+                                host.setTurnRuntimeActive(sessionId, false);
+                                result(asyncRequestId, false, safe(error));
+                            } finally {
+                                turnControl.clearCurrentThread();
+                                emitView();
+                            }
+                        });
+                    } catch (Exception schedulingError) {
+                        turnControls.remove(sessionId, turnControl);
+                        startingSessions.remove(sessionId);
+                        db.setDraft(sessionId, message);
+                        host.setTurnRuntimeActive(sessionId, false);
+                        throw schedulingError;
+                    }
                     return;
                 }
                 case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); break;
