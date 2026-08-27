@@ -64,6 +64,37 @@ final class ChatCoordinator implements AutoCloseable {
         }
     }
 
+    /** One cancellation owner spans accepted-send preparation, provider streaming and Smart post-processing. */
+    private static final class TurnControl {
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private final AtomicReference<Thread> taskThread = new AtomicReference<>();
+        private final AtomicReference<ChatTransport.Turn> transportTurn = new AtomicReference<>();
+
+        boolean isCancelled() { return cancelled.get(); }
+        void bindCurrentThread() {
+            Thread current = Thread.currentThread();
+            taskThread.set(current);
+            if (cancelled.get()) current.interrupt();
+        }
+        void clearCurrentThread() {
+            Thread current = Thread.currentThread();
+            taskThread.compareAndSet(current, null);
+            if (cancelled.get()) Thread.interrupted(); // do not leak cancellation into the pooled worker's next task.
+        }
+        void bindTransport(ChatTransport.Turn turn) {
+            transportTurn.set(turn);
+            if (turn != null && cancelled.get()) try { turn.cancel(); } catch (Exception ignored) { }
+        }
+        void clearTransport(ChatTransport.Turn turn) { if (turn != null) transportTurn.compareAndSet(turn, null); }
+        void cancel() {
+            cancelled.set(true);
+            ChatTransport.Turn turn = transportTurn.get();
+            if (turn != null) try { turn.cancel(); } catch (Exception ignored) { }
+            Thread thread = taskThread.get();
+            if (thread != null) thread.interrupt();
+        }
+    }
+
     private final ChatDatabase db;
     private final ChatSecretStore secrets;
     private final ChatMediaStore mediaStore;
