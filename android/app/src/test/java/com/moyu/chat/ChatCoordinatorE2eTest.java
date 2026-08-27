@@ -456,6 +456,48 @@ public class ChatCoordinatorE2eTest {
         assertTrue(assistants.get(1).optBoolean("reasoningAvailable"));
     }
 
+    @Test public void sendPayloadPersistsSelectedReasoningBeforeFreezeAndNavigation() throws Exception {
+        ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        provider.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
+        coordinator.saveProvider(provider, SECRET);
+        await("provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile(provider.id);
+        assertNotNull(profile);
+        profile.reasoningLevels = "low,high";
+        profile.defaultReasoning = "default";
+        app.database().saveModelProfile(profile);
+
+        post("chat.session.create", new JSONObject().put("providerId", provider.id).put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        assertEquals("default", activeSession(latestView()).optString("reasoningEffort"));
+
+        // Deliberately do NOT send chat.session.reasoning.set first. Send must be self-contained with
+        // the visible selector value so Native persistence/freeze cannot depend on two bridge intents.
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "use high")
+                .put("reasoningEffort", "high"));
+        RecordedRequest request = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull(request);
+        assertEquals("high", new JSONObject(request.getBody().readUtf8()).optString("reasoning_effort"));
+        await("high turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+        assertEquals("Send must persist the selector value before freezing TurnConfig", "high", app.database().getSession(sessionId).reasoningEffort);
+
+        post("nav.open", new JSONObject().put("route", "home"));
+        await("home opened", () -> "home".equals(latestView().optString("route")));
+        post("chat.session.open", new JSONObject().put("localSessionId", sessionId));
+        await("same session reopened", () -> activeSession(latestView()) != null && sessionId.equals(activeSession(latestView()).optString("localSessionId")));
+        assertEquals("same conversation must still display High after leaving and reopening", "high", activeSession(latestView()).optString("reasoningEffort"));
+
+        JSONObject assistant = null;
+        JSONArray rows = app.database().timeline(sessionId);
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) assistant = row;
+        }
+        assertNotNull(assistant);
+        assertEquals("high", assistant.optString("reasoningEffort"));
+    }
+
     // ---------- multi-turn + interrupt ----------
 
     @Test public void plainSecondTurnUsesStandardRoleHistoryWithoutToolPayload() throws Exception {
