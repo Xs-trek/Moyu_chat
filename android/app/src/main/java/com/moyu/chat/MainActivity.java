@@ -96,6 +96,10 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             Uri uri = request.getUrl(); String path = uri.getPath() == null ? "" : uri.getPath();
             return !("https".equals(uri.getScheme()) && "appassets.androidplatform.net".equals(uri.getHost()) && path.startsWith("/assets/ui/"));
         }
+        @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+            recoverWebView(view);
+            return true;
+        }
         private WebResourceResponse response(String mime, String encoding, InputStream in) {
             Map<String,String> headers = new LinkedHashMap<>(); headers.put("Cache-Control", "no-store"); headers.put("X-Content-Type-Options", "nosniff");
             return new WebResourceResponse(mime, encoding, 200, "OK", headers, in);
