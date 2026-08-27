@@ -393,6 +393,7 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void openSession(String id) { if (db.getSession(id) == null) throw new IllegalArgumentException("session not found"); activate(id); }
+    private void renameSession(String id, String title) { db.renameSession(id, bounded(title, 200, "session title")); }
     private void activate(String id) { activeSessionId = id; db.putSetting("activeSessionId", id); route = "conversation"; db.putSetting("route", route); }
 
     /** Model selection changes the configuration for future turns only; prior assistant rows keep per-turn metadata. */
