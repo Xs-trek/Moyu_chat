@@ -373,11 +373,20 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         sink.onWebSource(url, title == null || title.trim().isEmpty() ? url : title.trim());
     }
 
-    private static void emitProviderContinuationItem(JSONObject item, ChatTransport.Sink sink) {
+    private static void emitResponseContinuationItems(JSONObject response, ChatTransport.Sink sink, Set<String> emitted) {
+        JSONArray output = response == null ? null : response.optJSONArray("output"); if (output == null) return;
+        for (int i = 0; i < output.length(); i++) emitProviderContinuationItem(output.optJSONObject(i), sink, emitted);
+    }
+
+    private static void emitProviderContinuationItem(JSONObject item, ChatTransport.Sink sink, Set<String> emitted) {
         if (item == null || item.optString("type", "").trim().isEmpty()) return;
         try {
+            String serialized = item.toString();
+            String key = item.optString("id", "").trim();
+            if (key.isEmpty()) key = item.optString("type", "") + ":" + Integer.toHexString(serialized.hashCode());
+            if (emitted != null && !emitted.add(key)) return;
             // Manual Responses history must replay every response output item, not only reasoning.
-            sink.onProviderContinuation(new JSONObject().put("protocol", RESPONSES).put("item", new JSONObject(item.toString())));
+            sink.onProviderContinuation(new JSONObject().put("protocol", RESPONSES).put("item", new JSONObject(serialized)));
         } catch (Exception ignored) { }
     }
 
