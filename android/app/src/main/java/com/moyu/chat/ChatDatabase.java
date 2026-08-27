@@ -391,6 +391,15 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         }
     }
 
+    public synchronized void renameSession(String id, String title) {
+        if (id == null || id.trim().isEmpty()) throw new IllegalArgumentException("session id required");
+        String value = title == null ? "" : title.trim();
+        if (value.isEmpty()) throw new IllegalArgumentException("session title required");
+        if (value.length() > 200) throw new IllegalArgumentException("session title too long");
+        ContentValues v = new ContentValues(); v.put("title", value);
+        if (getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}) != 1) throw new IllegalArgumentException("session not found");
+    }
+
     public synchronized void setDraft(String id, String draft) { ContentValues v = new ContentValues(); v.put("draft", draft == null ? "" : draft); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
 
     public synchronized JSONArray draftMedia(String id) {
