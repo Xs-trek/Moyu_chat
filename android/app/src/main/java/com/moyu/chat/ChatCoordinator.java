@@ -642,7 +642,7 @@ final class ChatCoordinator implements AutoCloseable {
                 if (ChatTurnOptions.WEB_SEARCH.equals(tool) || ChatTurnOptions.WEB_FETCH.equals(tool)) {
                     streamStage.set(tool);
                     if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = providerWebBackend(provider.protocol);
-                    db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id);
+                    JSONObject projection = liveProjection(); db.replaceTimelineBody(streamKey, projection); emitStreamingPatch(id, projection);
                 }
             } catch (Exception ignored) { } }); }
             @Override public void onWebSource(String url, String title) { worker.execute(() -> { try {
