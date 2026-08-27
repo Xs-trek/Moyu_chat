@@ -495,6 +495,22 @@ public class TransportMockServerTest {
         assertEquals(1, sink.terminals.get());
     }
 
+    @Test public void anthropicEofSuccessFlushesCompletedNativeContinuation() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_eof\",\"name\":\"web_search\",\"input\":{}}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"eof\\\"}\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "native-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertTrue("EOF after valid SSE data is already accepted as success", sink.completed);
+        assertEquals(1, sink.terminals.get());
+        assertEquals("completed native blocks must not be lost on the EOF-success path", 1, sink.continuationItems.length());
+        JSONObject tool = sink.continuationItems.getJSONObject(0);
+        assertEquals("server_tool_use", tool.optString("type"));
+        assertEquals("eof", tool.getJSONObject("input").optString("query"));
+    }
+
     @Test public void anthropicEncodesImageInputAsBase64SourceBlock() throws Exception {
         server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
         RecordingSink sink = new RecordingSink();
