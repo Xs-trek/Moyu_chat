@@ -165,6 +165,7 @@ public class ChatCoordinatorE2eTest {
         AtomicBoolean exitRequested = new AtomicBoolean(false);
         coordinator.handleSystemBack(() -> exitRequested.set(true));
         await("system back navigates conversation to home", () -> "home".equals(latestView().optString("route")));
+        assertNull("home projection must not carry the full active conversation timeline", latestView().optJSONObject("activeSession"));
         assertFalse("first back from an internal route must not exit", exitRequested.get());
         coordinator.handleSystemBack(() -> exitRequested.set(true));
         await("second back from home requests Activity exit", exitRequested::get);
