@@ -468,7 +468,7 @@ final class ChatCoordinator implements AutoCloseable {
         if (id.equals(activeSessionId)) { activeSessionId = null; db.putSetting("activeSessionId", ""); route = "home"; db.putSetting("route", route); }
     }
 
-    private void send(String id, String text, TurnConfig turnConfig) throws Exception {
+    private void send(String id, String text, TurnConfig turnConfig, TurnControl turnControl) throws Exception {
         // trim is an emptiness check only; the stored/prompted/sent text stays byte-for-byte original.
         String input = text == null ? "" : text;
         ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("session not found");
