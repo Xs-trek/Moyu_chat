@@ -568,6 +568,11 @@ final class ChatCoordinator implements AutoCloseable {
         } finally {
             if (preparing) { preparingSessions.remove(id); emitStreamingView(id); }
         }
+        if (turnControl != null && turnControl.isCancelled()) {
+            finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                    new String[]{"cancelled", "Generation stopped"});
+            return;
+        }
 
         // Web is a separate capability plane. Hidden Router/Checkpoint calls above never receive it.
         ChatTurnOptions webOptions = new ChatTurnOptions(ChatTurnOptions.effectiveCapabilities(provider.protocol, turnConfig.toolCapabilities), turnConfig.webMode);
