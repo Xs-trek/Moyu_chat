@@ -595,7 +595,9 @@ final class ChatCoordinator implements AutoCloseable {
                 }, turnControl);
             } catch (Exception webError) {
                 finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
-                        new String[]{"web_prepare_failed", safe(webError)});
+                        turnControl != null && turnControl.isCancelled()
+                                ? new String[]{"cancelled", "Generation stopped"}
+                                : new String[]{"web_prepare_failed", safe(webError)});
                 return;
             } finally {
                 if (webPreparingStages.remove(id) != null) emitStreamingView(id);
