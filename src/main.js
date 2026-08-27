@@ -315,7 +315,10 @@ document.addEventListener('submit', (event) => {
   clearTimeout(draftTimer);
   draftTimer = 0;
   advanceDraftGeneration(sessionId);
-  const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text });
+  const reasoningEffort = getState().view?.activeSession?.localSessionId === sessionId
+    ? getState().view.activeSession.reasoningEffort
+    : undefined;
+  const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text, ...(reasoningEffort ? { reasoningEffort } : {}) });
   if (requestId && input) {
     input.value = '';
     resizeComposerTextarea(input);
