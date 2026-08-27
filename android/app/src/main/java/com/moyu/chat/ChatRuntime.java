@@ -84,13 +84,16 @@ final class ChatRuntime implements ChatCoordinator.Host {
         if (current != null) current.openExternalUrl(url);
     }
 
-    @Override public synchronized void setTurnRuntimeActive(String sessionId, boolean active) {
-        if (sessionId == null || sessionId.isEmpty()) return;
+    @Override public synchronized boolean setTurnRuntimeActive(String sessionId, boolean active) {
+        if (sessionId == null || sessionId.isEmpty()) return false;
         if (active) {
-            if (activeTurnIds.add(sessionId) && activeTurnIds.size() == 1) ChatTurnService.start(app);
-        } else {
-            activeTurnIds.remove(sessionId);
-            if (activeTurnIds.isEmpty()) ChatTurnService.stop(app);
+            if (activeTurnIds.contains(sessionId)) return true;
+            if (activeTurnIds.isEmpty() && !ChatTurnService.start(app)) return false;
+            activeTurnIds.add(sessionId);
+            return true;
         }
+        activeTurnIds.remove(sessionId);
+        if (activeTurnIds.isEmpty()) ChatTurnService.stop(app);
+        return true;
     }
 }
