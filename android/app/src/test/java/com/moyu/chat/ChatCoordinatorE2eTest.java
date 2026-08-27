@@ -53,6 +53,7 @@ public class ChatCoordinatorE2eTest {
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
         @Override public void openProviderEditor(ChatDatabase.Provider existing) { editorProvider = existing; editorOpened = true; }
         @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
+        @Override public boolean setTurnRuntimeActive(String sessionId, boolean active) { return !active || runtimeLeaseAllowed; }
         @Override public void showMessage(String text) { toasts.add(text); }
     }
 
