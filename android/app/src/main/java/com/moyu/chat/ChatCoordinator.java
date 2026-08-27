@@ -711,7 +711,7 @@ final class ChatCoordinator implements AutoCloseable {
                                    String candidateReasoning, JSONArray candidateMedia,
                                    LinkedHashMap<String, JSONObject> webSources, String webBackend,
                                    JSONArray providerContinuationItems, String webContext,
-                                   String requestDeploymentFingerprint) {
+                                   TurnConfig turnConfig) {
         String finalText = candidate == null ? "" : candidate;
         String finalReasoning = candidateReasoning == null ? "" : candidateReasoning;
         boolean repairAttempted = false;
