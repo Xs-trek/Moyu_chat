@@ -636,7 +636,7 @@ final class ChatCoordinator implements AutoCloseable {
                 textOut.append(delta);
                 markProjectionDirty();
             }
-            @Override public void onImage(String mimeType, String base64, String fileName) { if (!allowImageOutput) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage[0] = "output"; JSONObject image = mediaStore.saveBase64Image(mimeType, base64, fileName); outputMedia.put(image); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception error) { host.showMessage("image output ignored: " + safe(error)); } }); }
+            @Override public void onImage(String mimeType, String base64, String fileName) { if (!allowImageOutput) return; worker.execute(() -> { try { if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime(); streamStage.set("output"); JSONObject image = mediaStore.saveBase64Image(mimeType, base64, fileName); outputMedia.put(image); db.replaceTimelineBody(streamKey, liveProjection()); emitStreamingView(id); } catch (Exception error) { host.showMessage("image output ignored: " + safe(error)); } }); }
             @Override public void onToolActivity(String tool, String state) { worker.execute(() -> { try {
                 if (ChatTurnOptions.WEB_SEARCH.equals(tool) || ChatTurnOptions.WEB_FETCH.equals(tool)) {
                     streamStage[0] = tool;
