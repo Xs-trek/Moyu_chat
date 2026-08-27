@@ -339,7 +339,16 @@ public class ChatCoordinatorE2eTest {
         // Re-send so rollback can be verified independently.
         app.database().setDraft(sourceId, "");
         post("chat.session.send", new JSONObject().put("localSessionId", sourceId).put("text", "second prompt"));
-        await("second turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
+        await("second turn completes", () -> {
+            ChatDatabase.Session current = app.database().getSession(sourceId);
+            if (current == null || !"completed".equals(current.state)) return false;
+            JSONArray rows = app.database().timeline(sourceId);
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject item = rows.optJSONObject(i);
+                if (item != null && "message".equals(item.optString("kind")) && "assistant".equals(item.optString("role")) && !item.optBoolean("streaming", false)) return true;
+            }
+            return false;
+        });
         JSONArray secondTimeline = app.database().timeline(sourceId);
         int secondAssistantSeq = -1;
         for (int i = 0; i < secondTimeline.length(); i++) {
