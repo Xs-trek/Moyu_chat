@@ -588,8 +588,9 @@ final class ChatCoordinator implements AutoCloseable {
                         worker.execute(() -> {
                             try {
                                 if (!streamTerminal.get()) {
-                                    db.replaceTimelineBody(streamKey, liveProjection());
-                                    emitStreamingView(id);
+                                    JSONObject projection = liveProjection();
+                                    db.replaceTimelineBody(streamKey, projection);
+                                    emitStreamingPatch(id, projection);
                                 }
                             } catch (Exception ignored) { }
                             finally {
