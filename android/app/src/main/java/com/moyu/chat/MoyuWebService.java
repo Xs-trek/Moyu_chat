@@ -256,6 +256,8 @@ final class MoyuWebService implements AutoCloseable {
                     text = htmlToText(raw);
                 } else text = raw.trim();
                 return new FetchResult(current.toString(), title == null || title.isEmpty() ? current.toString() : title, limit(text, MAX_FETCH_CHARS));
+            } finally {
+                callScope.clear(call);
             }
         }
         throw new IllegalStateException("fetch redirect loop");
