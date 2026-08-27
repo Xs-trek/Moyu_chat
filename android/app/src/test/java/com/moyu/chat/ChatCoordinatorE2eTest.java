@@ -500,6 +500,39 @@ public class ChatCoordinatorE2eTest {
 
     // ---------- multi-turn + interrupt ----------
 
+    @Test public void interruptIsAvailableDuringSmartPreparationAndPreventsMainProviderTurn() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"domain\\\":\\\"general\\\",\\\"taskType\\\":\\\"answer\\\",\\\"depth\\\":\\\"standard\\\",\\\"responseMode\\\":\\\"direct\\\",\\\"contextPolicy\\\":\\\"recent\\\",\\\"modules\\\":[],\\\"confidence\\\":0.9}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                        .setBodyDelay(10, TimeUnit.SECONDS);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider").put("contextMode", ContextMode.SMART).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("smart session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "cancel while routing"));
+        await("accepted Smart turn is immediately interruptible", () -> {
+            JSONObject active = activeSession(latestView());
+            return active != null && active.optBoolean("canInterrupt") && "running".equals(active.optString("state"));
+        });
+        RecordedRequest preflight = server.takeRequest(5, TimeUnit.SECONDS);
+        assertNotNull("Smart router preflight must have started", preflight);
+
+        post("chat.session.interrupt", new JSONObject().put("localSessionId", sessionId));
+        await("preparation cancellation settles the accepted turn", () -> {
+            JSONObject active = activeSession(latestView());
+            return active != null && !active.optBoolean("canInterrupt") && active.optBoolean("canSend")
+                    && "completed".equals(active.optString("state"));
+        });
+        assertNull("interrupt during preflight must prevent the main provider request", server.takeRequest(800, TimeUnit.MILLISECONDS));
+        JSONArray rows = app.database().timeline(sessionId);
+        assertEquals("cancelled-before-main keeps the accepted user turn but removes the empty live assistant", 1, rows.length());
+        assertEquals("user", rows.getJSONObject(0).optString("role"));
+        assertEquals("cancel while routing", rows.getJSONObject(0).optString("text"));
+    }
+
     @Test public void plainSecondTurnUsesStandardRoleHistoryWithoutToolPayload() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();
