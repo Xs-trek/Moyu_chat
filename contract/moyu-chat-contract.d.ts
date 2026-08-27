@@ -273,5 +273,5 @@ export interface AppViewModel {
 
 declare global {
   interface Window { MoyuHost?: { postMessage(message: string): void }; }
-  interface WindowEventMap { 'moyu:view': CustomEvent<{ version: 1; type: string; revision?: number; view?: AppViewModel; requestId?: string; ok?: boolean; error?: { summary?: string } }> }
+  interface WindowEventMap { 'moyu:view': CustomEvent<{ version: 1; type: string; revision?: number; view?: AppViewModel; patch?: ConversationStreamPatch; requestId?: string; ok?: boolean; error?: { summary?: string } }> }
 }
