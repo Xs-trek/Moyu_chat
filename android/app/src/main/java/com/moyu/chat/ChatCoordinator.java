@@ -1240,7 +1240,7 @@ final class ChatCoordinator implements AutoCloseable {
             DisplayTimeline display = displayTimeline(s);
             o.put("messages", display.items).put("composerDraft", s.draft == null ? "" : s.draft)
                     .put("draftMedia", db.draftMedia(s.id)).put("canAttachImage", ChatDatabase.supportsModality(s.inputModalities, "image") && !active)
-                    .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", activeTurns.containsKey(s.id))
+                    .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", turnControls.containsKey(s.id))
                     .put("canConfigureTurn", !active).put("contextPreparing", preparing);
             if (display.omittedInheritedItems > 0) o.put("displayOmittedInheritedItems", display.omittedInheritedItems);
             if (webPreparing) o.put("webPreparingStage", webPreparingStage);
