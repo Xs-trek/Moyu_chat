@@ -513,6 +513,11 @@ final class ChatCoordinator implements AutoCloseable {
         startingSessions.add(id);
         final long requestStartedNanos = System.nanoTime();
         emitView();
+        if (turnControl != null && turnControl.isCancelled()) {
+            finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                    new String[]{"cancelled", "Generation stopped"});
+            return;
+        }
 
         CanonicalPrompt prompt;
         ContextBuilder.CompactionPlan compactionPlan;
