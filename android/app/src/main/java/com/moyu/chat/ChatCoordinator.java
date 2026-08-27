@@ -452,13 +452,13 @@ final class ChatCoordinator implements AutoCloseable {
         String streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();
         JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "")
                 .put("streaming", true).put("streamStage", mayPrepare ? "preparing" : "connecting").put("createdAt", Instant.now().toString())
-                .put("providerId", session.providerId).put("providerName", provider.displayName)
-                .put("modelProfileId", session.modelProfileId == null ? JSONObject.NULL : session.modelProfileId)
-                .put("model", session.model)
-                .put("modelName", requestModelProfile == null ? session.model : requestModelProfile.displayName)
-                .put("reasoningAvailable", requestModelProfile != null && !ReasoningPolicy.normalizeLevels(requestModelProfile.reasoningLevels).isEmpty())
-                .put("reasoningEffort", session.reasoningEffort == null ? ReasoningPolicy.DEFAULT : session.reasoningEffort)
-                .put("contextMode", ContextMode.normalize(session.contextMode))
+                .put("providerId", turnConfig.providerId).put("providerName", provider.displayName)
+                .put("modelProfileId", turnConfig.modelProfileId == null ? JSONObject.NULL : turnConfig.modelProfileId)
+                .put("model", turnConfig.model)
+                .put("modelName", turnConfig.modelName)
+                .put("reasoningAvailable", turnConfig.reasoningAvailable)
+                .put("reasoningEffort", turnConfig.reasoningEffort)
+                .put("contextMode", turnConfig.contextMode)
                 .put("effectiveContextMode", contextPolicy.effectiveLabel);
         db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
         startingSessions.add(id);
