@@ -97,7 +97,13 @@ final class MoyuWebService implements AutoCloseable {
      * web=auto uses a deterministic local need heuristic; web=on enables fallback on every text turn.
      */
     Prepared prepare(String userText, ChatTurnOptions nativeOptions, StageSink stages) {
+        return prepare(userText, nativeOptions, stages, NO_CANCEL);
+    }
+
+    Prepared prepare(String userText, ChatTurnOptions nativeOptions, StageSink stages, CallScope calls) {
         ChatTurnOptions options = nativeOptions == null ? ChatTurnOptions.NONE : nativeOptions;
+        CallScope callScope = calls == null ? NO_CANCEL : calls;
+        if (callScope.isCancelled()) return Prepared.none();
         if (!options.webEnabled()) return Prepared.none();
         String input = userText == null ? "" : userText;
         List<String> urls = extractUrls(input);
