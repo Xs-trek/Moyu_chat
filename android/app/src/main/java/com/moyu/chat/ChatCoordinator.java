@@ -533,7 +533,7 @@ final class ChatCoordinator implements AutoCloseable {
             }
             if (preparedWeb.hasContext()) {
                 // Rebuild only the disposable main prompt so Web material is budgeted but never persisted as user text.
-                prompt = contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens,
+                prompt = contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens,
                         preparedWeb.promptSuffix);
             }
         }
