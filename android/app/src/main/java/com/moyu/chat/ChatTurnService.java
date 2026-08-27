@@ -16,9 +16,10 @@ public final class ChatTurnService extends Service {
     private static final String CHANNEL_ID = "moyu_chat_generation";
     private static final int NOTIFICATION_ID = 2411;
 
-    static void start(Context context) {
-        try { context.startForegroundService(new Intent(context, ChatTurnService.class)); }
-        catch (Exception ignored) { }
+    /** Returns false when Android refuses the foreground-service start; callers must not silently assume a lease exists. */
+    static boolean start(Context context) {
+        try { return context.startForegroundService(new Intent(context, ChatTurnService.class)) != null; }
+        catch (Exception ignored) { return false; }
     }
 
     static void stop(Context context) {
