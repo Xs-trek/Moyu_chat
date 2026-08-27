@@ -766,7 +766,7 @@ final class ChatCoordinator implements AutoCloseable {
                     .put("repairLimitReached", repairLimitReached)
                     .put("attempts", attempts);
             seed.put("verification", meta);
-            if (!repaired) attachProviderContinuation(seed, session, provider, providerContinuationItems, requestDeploymentFingerprint);
+            if (!repaired) attachProviderContinuation(seed, turnConfig, providerContinuationItems);
         } catch (Exception ignored) { }
         finishTurn(id, streamKey, seed, finalText, finalReasoning, candidateMedia, webSources, webBackend, null);
     }
