@@ -56,7 +56,7 @@ for (const marker of ['SOURCE_CHATGPT', 'SOURCE_CLAUDE', 'current_node', 'curren
 if (!conversationImporter.includes('unsupported import source') || !conversationImporter.includes('存在多个分支')) fail('conversation import must reject provider auto-detection and ambiguous branches');
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
-if (!coordinator.includes('contexts.buildCommitted(session, session.contextTokens, session.inputTokens, session.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row without duplicating the pending input');
+if (!coordinator.includes('contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
 if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_id')) fail('deployment-scoped model profile/session binding missing');
 if (!db.includes('input_modalities') || !db.includes('output_modalities') || !db.includes('draft_media')) fail('model/session multimodal capability persistence missing');
