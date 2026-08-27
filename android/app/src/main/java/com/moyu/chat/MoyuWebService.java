@@ -164,7 +164,7 @@ final class MoyuWebService implements AutoCloseable {
         return new Prepared(suffix.toString(), sourceArray, backend, true);
     }
 
-    private String searchExa(String query) throws Exception {
+    private String searchExa(String query, CallScope callScope) throws Exception {
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) throw new IllegalArgumentException("search query is empty");
         if (q.length() > 4_000) q = q.substring(0, 4_000);
