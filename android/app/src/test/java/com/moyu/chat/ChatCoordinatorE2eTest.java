@@ -49,6 +49,7 @@ public class ChatCoordinatorE2eTest {
         final List<String> toasts = Collections.synchronizedList(new ArrayList<>());
         volatile ChatDatabase.Provider editorProvider;
         volatile boolean editorOpened;
+        volatile boolean runtimeLeaseAllowed = true;
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
         @Override public void openProviderEditor(ChatDatabase.Provider existing) { editorProvider = existing; editorOpened = true; }
         @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
