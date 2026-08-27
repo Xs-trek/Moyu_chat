@@ -28,7 +28,7 @@ final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_ITEMS = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
     private static final long STREAM_PROJECTION_INTERVAL_MS = 50L;
-    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openConversationImportPicker(String source) { } default void openExternalUrl(String url) { } default void setTurnRuntimeActive(String sessionId, boolean active) { } void showMessage(String text); }
+    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openConversationImportPicker(String source) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); }
 
     /** Immutable user-selected/deployment turn configuration frozen on the serialized intent worker. */
     private static final class TurnConfig {
