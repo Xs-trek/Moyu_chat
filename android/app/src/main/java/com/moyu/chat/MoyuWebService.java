@@ -220,7 +220,7 @@ final class MoyuWebService implements AutoCloseable {
         } catch (Exception ignored) { return null; }
     }
 
-    private FetchResult fetch(String rawUrl) throws Exception {
+    private FetchResult fetch(String rawUrl, CallScope callScope) throws Exception {
         URI current = validateHttpsUri(rawUrl);
         for (int redirects = 0; redirects <= 5; redirects++) {
             Request request = new Request.Builder().url(current.toString())
