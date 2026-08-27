@@ -431,8 +431,6 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.Provider provider = turnConfig.provider;
         String key = turnConfig.apiKey;
         ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
-        final String requestDeploymentFingerprint = turnConfig.deploymentFingerprint;
-
         // Resolve only stable session policy before durable mutation. Once the user taps Send the
         // message belongs in the transcript and the composer draft must be cleared even if later
         // context preparation, Web retrieval, or provider startup fails.
