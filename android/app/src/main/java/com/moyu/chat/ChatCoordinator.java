@@ -514,7 +514,7 @@ final class ChatCoordinator implements AutoCloseable {
         }
 
         // Web is a separate capability plane. Hidden Router/Checkpoint calls above never receive it.
-        ChatTurnOptions webOptions = ChatTurnOptions.forSession(session, provider.protocol);
+        ChatTurnOptions webOptions = new ChatTurnOptions(ChatTurnOptions.effectiveCapabilities(provider.protocol, turnConfig.toolCapabilities), turnConfig.webMode);
         MoyuWebService.Prepared preparedWeb = MoyuWebService.Prepared.none();
         if (webOptions.webEnabled()) {
             try {
