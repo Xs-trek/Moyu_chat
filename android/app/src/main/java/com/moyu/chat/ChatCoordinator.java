@@ -604,7 +604,7 @@ final class ChatCoordinator implements AutoCloseable {
             }
             @Override public void onStage(String stage) {
                 if (stage == null || stage.trim().isEmpty() || streamTerminal.get()) return;
-                streamStage[0] = stage.trim();
+                streamStage.set(stage.trim());
                 markProjectionDirty();
             }
             @Override public void onReasoningDelta(String delta) {
