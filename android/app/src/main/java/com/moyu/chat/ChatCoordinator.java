@@ -1067,7 +1067,14 @@ final class ChatCoordinator implements AutoCloseable {
             }
             view.put("providers", providers);
             JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : db.listSessions()) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
-            if (activeSessionId != null) { ChatDatabase.Session active = db.getSession(activeSessionId); if (active != null) view.put("activeLocalSessionId", activeSessionId).put("activeSession", sessionJson(active, true)); }
+            if (activeSessionId != null) {
+                ChatDatabase.Session active = db.getSession(activeSessionId);
+                if (active != null) {
+                    view.put("activeLocalSessionId", activeSessionId);
+                    // Route-scoped projection: non-conversation screens never pay to serialize/bridge the full timeline.
+                    if ("conversation".equals(route)) view.put("activeSession", sessionJson(active, true));
+                }
+            }
             RemoteDataBridge.Status rs = remoteBridge.status(); JSONObject remote = new JSONObject().put("available", rs.available); if (rs.contractVersion > 0) remote.put("contractVersion", rs.contractVersion); if (rs.reason != null) remote.put("reason", rs.reason);
             JSONArray importedSources = new JSONArray();
             for (ChatDatabase.Snapshot snapshot : db.listImportedSnapshots()) importedSources.put(new JSONObject()
