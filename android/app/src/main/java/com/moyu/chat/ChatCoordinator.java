@@ -351,6 +351,25 @@ final class ChatCoordinator implements AutoCloseable {
         session.reasoningEffort = normalized;
         session.updatedAt = Instant.now().toString();
         db.saveSession(session);
+        rememberReasoning(profile, normalized);
+    }
+
+    private String rememberedReasoning(ChatDatabase.ModelProfile profile) {
+        if (profile == null) return ReasoningPolicy.DEFAULT;
+        String fallback = ReasoningPolicy.normalizeEffort(profile.defaultReasoning);
+        String stored = db.setting(LAST_REASONING_SETTING_PREFIX + profile.id, fallback);
+        try {
+            String normalized = ReasoningPolicy.normalizeEffort(stored);
+            return ReasoningPolicy.allows(profile.reasoningLevels, normalized) ? normalized : fallback;
+        } catch (Exception ignored) { return fallback; }
+    }
+
+    private void rememberReasoning(ChatDatabase.ModelProfile profile, String effort) {
+        if (profile == null || profile.id == null || profile.id.trim().isEmpty()) return;
+        String normalized = ReasoningPolicy.normalizeEffort(effort);
+        if (ReasoningPolicy.allows(profile.reasoningLevels, normalized)) {
+            db.putSetting(LAST_REASONING_SETTING_PREFIX + profile.id, normalized);
+        }
     }
 
     /** System back follows the same route state as UI navigation; only home exits the Activity. */
