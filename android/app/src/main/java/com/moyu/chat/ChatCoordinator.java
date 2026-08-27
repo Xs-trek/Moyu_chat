@@ -778,11 +778,18 @@ final class ChatCoordinator implements AutoCloseable {
         }
         // The reader runs asynchronously and may reach a terminal callback before stream() returns.
         // Never resurrect a turn that finishTurn() has already settled and released.
-        if (!streamTerminal.get()) {
-            activeTurns.put(id, turn);
-            startingSessions.remove(id);
-            emitStreamingView(id);
+        if (streamTerminal.get() || turnControls.get(id) != turnControl) {
+            try { turn.cancel(); } catch (Exception ignored) { }
+            return;
         }
+        turnControl.bindTransport(turn);
+        if (turnControl.isCancelled()) {
+            try { turn.cancel(); } catch (Exception ignored) { }
+            return; // the transport terminal callback owns durable finalization.
+        }
+        activeTurns.put(id, turn);
+        startingSessions.remove(id);
+        emitStreamingView(id);
     }
 
     private void completeSmartTurn(String id, String streamKey, JSONObject seed, ChatDatabase.Session session,
