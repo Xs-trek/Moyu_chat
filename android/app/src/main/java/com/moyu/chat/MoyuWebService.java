@@ -133,10 +133,10 @@ final class MoyuWebService implements AutoCloseable {
             }
         }
 
-        if (needSearch) {
+        if (needSearch && !callScope.isCancelled()) {
             if (stages != null) stages.onStage("web_search");
             try {
-                String result = searchExa(input);
+                String result = searchExa(input, callScope);
                 if (result == null || result.trim().isEmpty()) throw new IllegalStateException("Exa returned no search context");
                 String bounded = limit(result, MAX_SEARCH_CHARS);
                 appendBounded(context, "\n\n[SEARCH RESULTS]\n" + bounded, MAX_CONTEXT_CHARS);
