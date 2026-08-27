@@ -30,13 +30,37 @@ final class ChatCoordinator implements AutoCloseable {
     private static final long STREAM_PROJECTION_INTERVAL_MS = 50L;
     interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openConversationImportPicker(String source) { } default void openExternalUrl(String url) { } default void setTurnRuntimeActive(String sessionId, boolean active) { } void showMessage(String text); }
 
-    /** Immutable deployment snapshot captured on the serialized intent worker before preparation begins. */
-    private static final class RequestDeployment {
+    /** Immutable user-selected/deployment turn configuration frozen on the serialized intent worker. */
+    private static final class TurnConfig {
         final ChatDatabase.Provider provider;
-        final String apiKey;
-        final String fingerprint;
-        RequestDeployment(ChatDatabase.Provider provider, String apiKey, String fingerprint) {
-            this.provider = provider; this.apiKey = apiKey; this.fingerprint = fingerprint;
+        final String apiKey, deploymentFingerprint;
+        final String providerId, modelProfileId, model, modelName, reasoningEffort;
+        final String inputModalities, outputModalities, toolCapabilities, thinkingMode, continuationMode, contextMode, webMode;
+        final int thinkingBudgetTokens, contextTokens, inputTokens, maxOutputTokens;
+        final boolean reasoningAvailable;
+
+        TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
+                   ChatDatabase.Session session, ChatDatabase.ModelProfile profile) {
+            this.provider = provider;
+            this.apiKey = apiKey;
+            this.deploymentFingerprint = deploymentFingerprint;
+            this.providerId = session.providerId;
+            this.modelProfileId = session.modelProfileId;
+            this.model = session.model;
+            this.modelName = profile == null ? session.model : profile.displayName;
+            this.reasoningEffort = ReasoningPolicy.normalizeEffort(session.reasoningEffort);
+            this.inputModalities = ChatDatabase.normalizeModalities(session.inputModalities);
+            this.outputModalities = ChatDatabase.normalizeModalities(session.outputModalities);
+            this.toolCapabilities = ChatTurnOptions.normalizeCapabilities(session.toolCapabilities);
+            this.thinkingMode = ReasoningPolicy.normalizeThinkingMode(session.thinkingMode);
+            this.thinkingBudgetTokens = Math.max(0, session.thinkingBudgetTokens);
+            this.continuationMode = ProviderContinuationPolicy.normalize(session.continuationMode);
+            this.contextMode = ContextMode.normalize(session.contextMode);
+            this.webMode = ChatTurnOptions.normalizeWebMode(session.webMode);
+            this.contextTokens = session.contextTokens;
+            this.inputTokens = session.inputTokens;
+            this.maxOutputTokens = session.maxOutputTokens;
+            this.reasoningAvailable = profile != null && !ReasoningPolicy.normalizeLevels(profile.reasoningLevels).isEmpty();
         }
     }
 
