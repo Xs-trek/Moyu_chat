@@ -838,6 +838,11 @@ final class ChatCoordinator implements AutoCloseable {
             setPostProcessingStage(id, streamKey, seed, "repairing");
             String repairedText = smartVerifier.repair(transport, provider, apiKey, session,
                     currentUserText, finalText, verification, evidence);
+            if (turnControl != null && turnControl.isCancelled()) {
+                finishTurn(id, streamKey, seed, finalText, finalReasoning, candidateMedia, webSources, webBackend,
+                        new String[]{"cancelled", "Generation stopped"});
+                return;
+            }
             if (repairedText != null && !repairedText.trim().isEmpty()) {
                 repaired = true;
                 finalText = repairedText;
