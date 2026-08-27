@@ -554,7 +554,7 @@ final class ChatCoordinator implements AutoCloseable {
         final long[] firstOutputNanos = new long[]{0L};
         StringBuffer textOut = new StringBuffer();
         StringBuffer reasoningOut = new StringBuffer();
-        String[] streamStage = new String[]{"connecting"};
+        AtomicReference<String> streamStage = new AtomicReference<>("connecting");
         AtomicBoolean streamProjectionScheduled = new AtomicBoolean(false);
         AtomicBoolean streamTerminal = new AtomicBoolean(false);
         AtomicLong streamProjectionRevision = new AtomicLong(0L);
