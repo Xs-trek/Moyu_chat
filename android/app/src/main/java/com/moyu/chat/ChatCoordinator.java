@@ -71,7 +71,12 @@ final class ChatCoordinator implements AutoCloseable {
         private final AtomicReference<ChatTransport.Turn> transportTurn = new AtomicReference<>();
         private final AtomicReference<okhttp3.Call> webCall = new AtomicReference<>();
 
-        boolean isCancelled() { return cancelled.get(); }
+        @Override public boolean isCancelled() { return cancelled.get(); }
+        @Override public void bind(okhttp3.Call call) {
+            webCall.set(call);
+            if (call != null && cancelled.get()) call.cancel();
+        }
+        @Override public void clear(okhttp3.Call call) { if (call != null) webCall.compareAndSet(call, null); }
         void bindCurrentThread() {
             Thread current = Thread.currentThread();
             taskThread.set(current);
