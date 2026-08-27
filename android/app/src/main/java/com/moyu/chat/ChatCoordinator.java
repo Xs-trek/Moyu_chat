@@ -444,10 +444,10 @@ final class ChatCoordinator implements AutoCloseable {
 
         ChatDatabase.ModelProfile requestModelProfile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
         // Request behavior comes from session-frozen deployment capability, not the mutable profile.
-        provider.thinkingMode = ReasoningPolicy.normalizeThinkingMode(session.thinkingMode);
-        provider.thinkingBudgetTokens = Math.max(0, session.thinkingBudgetTokens);
+        provider.thinkingMode = turnConfig.thinkingMode;
+        provider.thinkingBudgetTokens = turnConfig.thinkingBudgetTokens;
         final boolean allowProviderContinuation = contextPolicy.providerContinuationEnabled
-                && ProviderContinuationPolicy.enabled(session.continuationMode);
+                && ProviderContinuationPolicy.enabled(turnConfig.continuationMode);
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
         String streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();
