@@ -771,6 +771,76 @@ public class ChatCoordinatorE2eTest {
         await("slow turn cancels cleanly before teardown", () -> !"running".equals(app.database().getSession(runningId).state));
     }
 
+    @Test public void highReasoningSurvivesNavigationDuringDeltaFloodAndStreamingUsesBoundedPatches() throws Exception {
+        ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        provider.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
+        coordinator.saveProvider(provider, SECRET);
+        await("provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile(provider.id);
+        assertNotNull(profile);
+        profile.reasoningLevels = "low,high";
+        profile.defaultReasoning = "default";
+        app.database().saveModelProfile(profile);
+
+        post("chat.session.create", new JSONObject().put("providerId", provider.id).put("webMode", ChatTurnOptions.WEB_OFF).put("contextMode", ContextMode.MINIMAL));
+        await("session created", () -> latestView() != null && latestView().optString("activeLocalSessionId", "").length() > 0);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.reasoning.set", new JSONObject().put("localSessionId", sessionId).put("reasoningEffort", "high"));
+        await("high selected", () -> "high".equals(activeSession(latestView()).optString("reasoningEffort")));
+
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                StringBuilder body = new StringBuilder();
+                for (int i = 0; i < 400; i++) body.append("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"r\"},\"finish_reason\":null}]}\n\n");
+                for (int i = 0; i < 400; i++) body.append("data: {\"choices\":[{\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}\n\n");
+                body.append("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+                return sse(body.toString()).throttleBody(128, 1, TimeUnit.MILLISECONDS);
+            }
+        });
+        final int baselineEnvelopeCount = host.envelopes.size();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "flood"));
+        RecordedRequest request = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(request);
+        assertEquals("high", new JSONObject(request.getBody().readUtf8()).optString("reasoning_effort"));
+        await("at least one bounded stream patch", () -> {
+            synchronized (host.envelopes) {
+                for (int i = baselineEnvelopeCount; i < host.envelopes.size(); i++) if ("view.patch".equals(host.envelopes.get(i).optString("type"))) return true;
+            }
+            return false;
+        });
+
+        long navStarted = System.nanoTime();
+        post("nav.open", new JSONObject().put("route", "home"));
+        await("home opens during delta flood", () -> "home".equals(latestView().optString("route")));
+        long navMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - navStarted);
+        assertTrue("control-plane navigation must not sit behind token callbacks", navMs < 2_000);
+        assertEquals("same durable session keeps High while hidden", "high", app.database().getSession(sessionId).reasoningEffort);
+
+        post("chat.session.open", new JSONObject().put("localSessionId", sessionId));
+        await("same running conversation reopens", () -> sessionId.equals(latestView().optString("activeLocalSessionId")) && "conversation".equals(latestView().optString("route")));
+        assertEquals("High must survive leaving and reopening the same conversation", "high", activeSession(latestView()).optString("reasoningEffort"));
+        await("flooded turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+
+        JSONObject assistant = null;
+        JSONArray timeline = app.database().timeline(sessionId);
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject row = timeline.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "assistant".equals(row.optString("role")) && !row.optBoolean("streaming", false)) assistant = row;
+        }
+        assertNotNull(assistant);
+        assertEquals("assistant metadata must come from the same frozen TurnConfig as the request wire", "high", assistant.optString("reasoningEffort"));
+
+        int patches = 0, fullViews = 0;
+        synchronized (host.envelopes) {
+            for (int i = baselineEnvelopeCount; i < host.envelopes.size(); i++) {
+                String type = host.envelopes.get(i).optString("type");
+                if ("view.patch".equals(type)) patches++;
+                else if ("view.full".equals(type)) fullViews++;
+            }
+        }
+        assertTrue("streaming must emit bounded patches", patches > 0 && patches < 80);
+        assertTrue("800 deltas must not produce token-proportional full application snapshots", fullViews < 30);
+    }
+
     @Test public void whitespaceOnlyInputIsRejectedWithoutSideEffects() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();
