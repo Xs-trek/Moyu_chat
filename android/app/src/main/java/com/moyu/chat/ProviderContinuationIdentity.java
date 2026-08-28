@@ -31,9 +31,13 @@ final class ProviderContinuationIdentity {
         return digest(fingerprint(db, provider, session) + "\n" + historyEpoch);
     }
 
+    static String credentialEpochSettingKey(String providerId) {
+        return CREDENTIAL_EPOCH_PREFIX + (providerId == null ? "" : providerId);
+    }
+
     static void bumpCredentialEpoch(ChatDatabase db, String providerId) {
         if (db == null || providerId == null || providerId.trim().isEmpty()) return;
-        bump(db, CREDENTIAL_EPOCH_PREFIX + providerId);
+        bump(db, credentialEpochSettingKey(providerId));
     }
 
     static void bumpHistoryEpoch(ChatDatabase db, String sessionId) {
