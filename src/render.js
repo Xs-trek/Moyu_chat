@@ -647,6 +647,13 @@ export function patchConversation() {
 
   const candidateComposer = document.querySelector('form[data-form="composer"]');
   const composer = candidateComposer?.dataset.sessionId === session.localSessionId ? candidateComposer : null;
+  const currentDraftMedia = composer?.querySelector('[data-draft-media]');
+  const desiredDraftMedia = draftMediaStrip(session.draftMedia, session.localSessionId);
+  if (composer && currentDraftMedia && currentDraftMedia.dataset.mediaSignature !== desiredDraftMedia.dataset.mediaSignature) {
+    currentDraftMedia.replaceWith(desiredDraftMedia);
+  } else if (composer && !currentDraftMedia) {
+    composer.insertBefore(desiredDraftMedia, composer.firstChild);
+  }
   const primary = composer?.querySelector('.composer-primary');
   const currentInterrupt = primary?.querySelector('[data-action="interrupt"]');
   const currentSend = primary?.querySelector('.send-btn');
