@@ -364,6 +364,42 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         return choices != null && choices.length() == 0 && (usage != null || event.has("cost"));
     }
 
+    private static final class ChatToolCollector {
+        private static final class Pending {
+            String id = "";
+            String name = "";
+            final StringBuilder arguments = new StringBuilder();
+        }
+        private final java.util.TreeMap<Integer, Pending> pending = new java.util.TreeMap<>();
+
+        void onDelta(JSONArray deltas) {
+            for (int i = 0; i < deltas.length(); i++) {
+                JSONObject delta = deltas.optJSONObject(i); if (delta == null) continue;
+                int index = Math.max(0, delta.optInt("index", i));
+                Pending item = pending.get(index); if (item == null) { item = new Pending(); pending.put(index, item); }
+                String id = delta.optString("id", ""); if (!id.isEmpty()) item.id = id;
+                JSONObject function = delta.optJSONObject("function"); if (function == null) continue;
+                String name = function.optString("name", ""); if (!name.isEmpty()) item.name = name;
+                String args = function.optString("arguments", ""); if (!args.isEmpty()) item.arguments.append(args);
+            }
+        }
+
+        JSONArray calls() {
+            JSONArray out = new JSONArray();
+            for (Pending item : pending.values()) {
+                if (item.id.isEmpty() || item.name.isEmpty()) continue;
+                try {
+                    JSONObject call = new JSONObject().put("id", item.id).put("name", item.name);
+                    String raw = item.arguments.length() == 0 ? "{}" : item.arguments.toString();
+                    try { call.put("arguments", new JSONObject(raw)); }
+                    catch (Exception invalid) { call.put("arguments", new JSONObject()).put("invalidArguments", true); }
+                    out.put(call);
+                } catch (Exception ignored) { }
+            }
+            return out;
+        }
+    }
+
     private static void parseChatContentParts(JSONArray parts, ChatTransport.Sink sink) {
         for (int i = 0; i < parts.length(); i++) {
             JSONObject part = parts.optJSONObject(i); if (part == null) continue;
