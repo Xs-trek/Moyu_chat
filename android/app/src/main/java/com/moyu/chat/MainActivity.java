@@ -213,8 +213,10 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
 
     @Override public void openProviderEditor(ChatDatabase.Provider existing) {
         runOnUiThread(() -> {
+            if (configEditorAlreadyOpen()) return;
             ChatDatabase.Provider p = existing == null ? new ChatDatabase.Provider() : existing;
             LinearLayout form = editorForm();
+            TextView formError = errorBanner(form);
             EditText name = field(form, "显示名称", "仅用于本机识别这一组共享账号/endpoint，不会发送给模型。", "例如 OpenCode Go", p.displayName == null ? "AI Provider" : p.displayName, false, false);
             EditText base = field(form, "共享 Base URL", "同一 Provider 下所有 Model Profile 共享此 API 根地址与 API Key；protocol、authMode、reasoningWire 在各 Model Profile 单独配置。OpenCode Go 示例：https://opencode.ai/zen/go/v1。不要填写 /chat/completions、/responses 或 /messages。", "https://example.com/v1", p.baseUrl == null ? "" : p.baseUrl, false, false);
             EditText key = field(form, "API Key", "同一 Provider 下模型共享此密钥。仅保存在 Android 原生安全存储中，不进入 WebView、SQLite 或消息正文；编辑时留空表示保留已有密钥。", "sk-…", "", true, false);
