@@ -371,6 +371,8 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     }
 
     @Override protected void onDestroy() {
+        AlertDialog editor = activeConfigDialog; activeConfigDialog = null;
+        if (editor != null) try { editor.dismiss(); } catch (Exception ignored) { }
         ChatRuntime r = runtime; runtime = null; if (r != null) r.detach(this);
         coordinator = null;
         if (webView != null) { webView.removeJavascriptInterface("MoyuHost"); webView.destroy(); webView = null; }
