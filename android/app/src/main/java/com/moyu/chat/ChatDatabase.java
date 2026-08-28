@@ -821,6 +821,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         String levels = ReasoningPolicy.normalizeLevels(p.reasoningLevels);
         // Kept as a schema-compatibility column only; current product semantics keep effort on Session/Turn.
         String defaultReasoning = ReasoningPolicy.DEFAULT;
+        String protocol = normalizeProtocol(p.protocol);
+        String authMode = ProviderAuth.normalize(p.authMode, protocol);
+        String reasoningWire = ReasoningPolicy.normalizeWire(p.reasoningWire, protocol);
         String thinkingMode = ReasoningPolicy.normalizeThinkingMode(p.thinkingMode);
         String continuationMode = ProviderContinuationPolicy.normalize(p.continuationMode);
         int thinkingBudget = Math.max(0, p.thinkingBudgetTokens);
