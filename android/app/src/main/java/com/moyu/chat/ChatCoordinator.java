@@ -420,6 +420,9 @@ final class ChatCoordinator implements AutoCloseable {
         session.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
         session.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
         session.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
+        session.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
+        session.authMode = ProviderAuth.normalize(profile.authMode, session.protocol);
+        session.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, session.protocol);
         session.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode);
         session.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
         session.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
