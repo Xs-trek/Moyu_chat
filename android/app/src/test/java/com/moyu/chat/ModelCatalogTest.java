@@ -41,7 +41,7 @@ public class ModelCatalogTest {
 
         ModelCatalog.Resolution lookalike = ModelCatalog.resolve(provider("https://api.anthropic.com.evil.example/v1"), "claude-opus-5");
         assertEquals("moyu-base-catalog", lookalike.source);
-        assertEquals(OpenAiCompatibleTransport.CHAT_COMPLETIONS, lookalike.protocol);
+        assertFalse(lookalike.deploymentResolved);
         assertEquals(ClientToolRuntime.NONE, lookalike.clientToolCalling);
     }
 
