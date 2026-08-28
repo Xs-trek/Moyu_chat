@@ -1084,7 +1084,8 @@ final class ChatCoordinator implements AutoCloseable {
                 final String candidate = textOut.toString();
                 final String candidateReasoning = reasoningOut.toString();
                 final JSONArray candidateMedia = copyArray(outputMedia);
-                final JSONArray continuation = copyArray(providerContinuationItems);
+                final JSONArray continuation = clientToolBatchCount.get() == 0
+                        ? copyArray(providerContinuationItems) : new JSONArray();
                 final LinkedHashMap<String, JSONObject> candidateSources = copySources(webSources);
                 final String candidateWebBackend = webBackend[0];
                 final String verifierContext = (webPrepared.promptSuffix == null ? "" : webPrepared.promptSuffix)
