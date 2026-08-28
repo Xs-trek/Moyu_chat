@@ -800,6 +800,21 @@ public class ChatCoordinatorE2eTest {
         await("Claude import picker requested", () -> "claude".equals(host.importPickerSource));
     }
 
+    @Test public void sessionRenameIsDurableAndVisibleAfterNavigation() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.rename", new JSONObject().put("localSessionId", sessionId).put("title", "新的会话名称"));
+        await("renamed title persisted", () -> "新的会话名称".equals(app.database().getSession(sessionId).title));
+        assertEquals("新的会话名称", activeSession(latestView()).optString("title"));
+        post("nav.open", new JSONObject().put("route", "home"));
+        await("home shows renamed session", () -> {
+            JSONObject view = latestView();
+            if (view == null || !"home".equals(view.optString("route"))) return false;
+            JSONArray sessions = view.optJSONArray("sessions");
+            return sessions != null && sessions.length() == 1 && "新的会话名称".equals(sessions.optJSONObject(0).optString("title"));
+        });
+    }
+
     @Test public void configureNewProviderIntentOpensBlankEditorWithoutError() throws Exception {
         // The WebView sends an empty payload for "new provider"; this used to bind null into SQLite.
         String requestId = post("provider.configure.open", new JSONObject());
