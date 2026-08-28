@@ -26,6 +26,7 @@ export type MoyuChatIntent =
   | UiIntent<'nav.open', { route: Route }>
   | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; contextMode?: ContextMode; webMode?: WebMode; title?: string }>
   | UiIntent<'chat.session.open', { localSessionId: string }>
+  | UiIntent<'chat.session.rename', { localSessionId: string; title: string }>
   | UiIntent<'chat.session.model.set', { localSessionId: string; modelProfileId: string }>
   | UiIntent<'chat.session.reasoning.set', { localSessionId: string; reasoningEffort: string }>
   | UiIntent<'chat.session.send', { localSessionId: string; text: string; reasoningEffort?: string }>
