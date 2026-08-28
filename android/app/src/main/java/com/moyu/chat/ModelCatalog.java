@@ -117,6 +117,7 @@ final class ModelCatalog {
             out.continuationMode = ProviderContinuationPolicy.NONE;
             // Tool-call compatibility was not established by the prior endpoint tests; stay off.
             out.clientToolCalling = ClientToolRuntime.NONE;
+            out.deploymentResolved = true;
         }
         return out;
     }
