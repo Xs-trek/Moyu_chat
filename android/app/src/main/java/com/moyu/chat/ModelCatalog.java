@@ -27,6 +27,8 @@ final class ModelCatalog {
         int thinkingBudgetTokens = 0;
         String continuationMode = ProviderContinuationPolicy.NONE;
         String clientToolCalling = ClientToolRuntime.NONE;
+        /** True only when endpoint + model matched a reviewed concrete deployment overlay. */
+        boolean deploymentResolved;
         int contextTokens = ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
         int inputTokens = 0;
         int maxOutputTokens = ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
