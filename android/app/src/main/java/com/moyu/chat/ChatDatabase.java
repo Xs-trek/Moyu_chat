@@ -255,6 +255,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.originSnapshotId = originSnapshotId;
         s.parentSessionId = parentSessionId;
         s.contextMode = ContextMode.normalize(contextMode);
+        s.subagentMode = ContextMode.MINIMAL.equals(s.contextMode) ? HarnessPolicyResolver.SUBAGENT_OFF
+                : ContextMode.SMART.equals(s.contextMode) ? HarnessPolicyResolver.SUBAGENT_AUTO
+                : HarnessPolicyResolver.normalizeSubagentMode(setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
         s.taskProfile = "";
         s.contextCheckpoint = "";
         s.checkpointCoveredItems = 0;
