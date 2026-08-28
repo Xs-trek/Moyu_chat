@@ -22,6 +22,7 @@ export type MoyuChatIntent =
   | UiIntent<'memory.global.set', { enabled: boolean }>
   | UiIntent<'context.mode.default.set', { mode: ContextMode }>
   | UiIntent<'web.mode.default.set', { mode: WebMode }>
+  | UiIntent<'subagent.standard.default.set', { mode: SubagentMode }>
   | UiIntent<'external.open', { url: string }>
   | UiIntent<'context.intelligence.set', { enabled: boolean }>
   | UiIntent<'nav.open', { route: Route }>
