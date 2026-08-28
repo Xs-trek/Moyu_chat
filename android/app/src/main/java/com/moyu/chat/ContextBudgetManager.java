@@ -39,6 +39,19 @@ final class ContextBudgetManager {
         return selectWithinBudget(instructions, chronological, effectiveInputBudget(contextTokens, inputTokens, outputTokens));
     }
 
+    /**
+     * Re-select the already-derived prompt while reserving real input budget for same-turn provider/tool history.
+     * The newest complete user-led turn remains mandatory; if protocol history alone leaves too little room,
+     * callers fail the tool round instead of sending a request that exceeds the configured context window.
+     */
+    Result selectWithReserve(String instructions, JSONArray chronological, int contextTokens, int inputTokens,
+                             int outputTokens, int reserveTokens) {
+        int full = effectiveInputBudget(contextTokens, inputTokens, outputTokens);
+        int budget = full - Math.max(0, reserveTokens);
+        if (budget < MIN_INPUT_BUDGET) throw new IllegalArgumentException("tool/provider history leaves no usable input window");
+        return selectWithinBudget(instructions, chronological, budget);
+    }
+
     /** Select against a percentage of the effective input window. Mandatory floor still applies. */
     Result selectPercent(String instructions, JSONArray chronological, int contextTokens, int inputTokens,
                          int outputTokens, int percent) {
