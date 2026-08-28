@@ -257,8 +257,8 @@ if (!contract.includes('export interface ConversationStreamPatch') || !contract.
 
 const packageJson = JSON.parse(read('package.json'));
 const gradle = read('android/app/build.gradle');
-if (packageJson.version !== '0.0.3' || !gradle.includes("versionName '0.0.3'") || !gradle.includes('versionCode 3')) fail('v0.0.3 product version metadata is not aligned');
-if (!mainUi.includes("uiVersion: '0.0.3'")) fail('WebView app.ready version must match v0.0.3');
+if (packageJson.version !== '0.0.4' || !gradle.includes("versionName '0.0.4'") || !gradle.includes('versionCode 4')) fail('v0.0.4 product version metadata is not aligned');
+if (!mainUi.includes("uiVersion: '0.0.4'")) fail('WebView app.ready version must match v0.0.4');
 
 if (failed) process.exit(1);
-console.log('moyu-chat v0.0.3 static architecture checks passed');
+console.log('moyu-chat v0.0.4 static architecture checks passed');
