@@ -156,6 +156,34 @@ document.addEventListener('click', (event) => {
       requestAnimationFrame(() => positionChoiceMenu(field));
     } else closeChoiceField(field);
   }
+  else if (action === 'toggle-turn-nav') {
+    const nav = target.closest('.turn-nav');
+    if (!nav) return;
+    const opening = !nav.classList.contains('open');
+    nav.classList.toggle('open', opening);
+    target.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    syncTurnNavigator(document.querySelector('.timeline-scroll'));
+  }
+  else if (action === 'jump-turn') {
+    const scroller = document.querySelector('.timeline-scroll');
+    const turnKey = target.dataset.turnKey;
+    const node = scroller && [...scroller.querySelectorAll('.timeline [data-item-key]')]
+      .find((entry) => entry.dataset.itemKey === turnKey);
+    if (!scroller || !node) return;
+    setTimelineFollowLatest(scroller.dataset.sessionId || '', false);
+    const scrollerRect = scroller.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    const nextTop = Math.max(0, scroller.scrollTop + nodeRect.top - scrollerRect.top - 8);
+    const reduceMotion = Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
+    scroller.scrollTo({ top: nextTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+    noteTimelineScroll(scroller);
+    if (window.matchMedia?.('(pointer: coarse)')?.matches) {
+      const nav = target.closest('.turn-nav');
+      nav?.classList.remove('open');
+      nav?.querySelector('.turn-nav-toggle')?.setAttribute('aria-expanded', 'false');
+    }
+    requestAnimationFrame(() => syncTurnNavigator(scroller));
+  }
   else if (action === 'session-model-set') {
     closeChoiceField(target.closest('.choice-field'));
     postIntent('chat.session.model.set', { localSessionId: target.dataset.sessionId, modelProfileId: target.dataset.modelProfileId });
