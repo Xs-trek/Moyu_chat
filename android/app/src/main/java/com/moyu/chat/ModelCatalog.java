@@ -89,7 +89,7 @@ final class ModelCatalog {
 
         // Official Anthropic deployment. Tool/effort behavior is documented by the Messages API;
         // native private replay stays conservative because it is independent from basic tool support.
-        if ((base.contains("api.anthropic.com") || base.contains("anthropic.com/v1"))
+        if (base.equals("https://api.anthropic.com/v1")
                 && (model.equals("claude-opus-5") || model.equals("claude-sonnet-5"))) {
             out.source = "moyu-official-anthropic-overlay";
             out.protocol = AnthropicMessagesTransport.PROTOCOL;
