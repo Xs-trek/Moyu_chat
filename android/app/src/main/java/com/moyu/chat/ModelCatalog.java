@@ -65,8 +65,8 @@ final class ModelCatalog {
             out.harnessPreset = HarnessProfile.BALANCED;
         }
 
-        // Context/input/output limits are deployment metadata, never base-model behavior priors.
-        // Only reviewed deployment overlays below may set them.
+        // Context/input/output limits remain explicit deployment/user inputs in v0.0.4. The catalog
+        // intentionally does not infer them from a base-model name, even on a reviewed wire overlay.
 
         // Official OpenAI v1 deployment: current public GPT-5.6 guidance explicitly recommends
         // Responses for reasoning/tool workflows and documents the complete effort ladder.
