@@ -180,6 +180,8 @@ if (!mainActivity.includes('协议 (protocol)') || !mainActivity.includes('鉴�
     || !mainActivity.includes('p.protocol = protocol.getText()') || !mainActivity.includes('p.authMode = auth.getText()') || !mainActivity.includes('p.reasoningWire = reasoningWire.getText()')) fail('Model Profile editor must own protocol/auth/reasoning wire');
 if (!mainActivity.includes('支持的推理档位 (reasoningLevels)') || mainActivity.includes('默认推理档位 (defaultReasoning)')) fail('Model Profile editor must expose reasoning capability range without a current/default effort selector');
 if (!coordinator.includes('interface SaveCallback') || !mainActivity.includes('coordinator.saveProvider(p, key.getText().toString(), error ->') || !mainActivity.includes('coordinator.saveModelProfile(p, error ->') || !mainActivity.includes('if (error == null) dialog.dismiss()')) fail('async Provider/Model validation must keep the editor open on failure and dismiss only after native success');
+if (!mainActivity.includes('activeConfigDialog') || !mainActivity.includes('configEditorAlreadyOpen()') || !mainActivity.includes('ownConfigDialog(dialog)') || !mainActivity.includes('showEditorError(')) fail('Provider/Model configuration editors must be single-instance and keep actionable validation errors visible');
+if (!coordinator.includes('此 Provider 已存在 Model ID') || !coordinator.includes('ModelProfileValidator.validateResolvedProfile')) fail('duplicate Model IDs and strict deployment validation must fail before low-level SQLite/runtime errors');
 
 const styles = read('src/styles.css');
 for (const marker of ['overflow-x:hidden', 'conversation-active', '100dvh', 'timeline-scroll']) if (!styles.includes(marker)) fail(`native-feeling viewport/scroll constraint missing: ${marker}`);
