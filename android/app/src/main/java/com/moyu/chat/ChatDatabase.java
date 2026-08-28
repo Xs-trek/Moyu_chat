@@ -168,7 +168,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             profile = legacyProfile(provider, model == null || model.trim().isEmpty() ? provider.model : model.trim());
             saveModelProfile(profile);
         }
-        return createSession(profile, title, originSnapshotId, parentSessionId, profile.defaultReasoning);
+        return createSession(profile, title, originSnapshotId, parentSessionId, ReasoningPolicy.DEFAULT);
     }
 
     public synchronized Session createSession(ModelProfile profile, String title, String originSnapshotId,
