@@ -133,7 +133,7 @@ if (!contextBuilder.includes('assistant produced image output')) fail('assistant
 const openAiTransport = read('android/app/src/main/java/com/moyu/chat/OpenAiCompatibleTransport.java');
 const anthropicTransport = read('android/app/src/main/java/com/moyu/chat/AnthropicMessagesTransport.java');
 const providerEndpoint = read('android/app/src/main/java/com/moyu/chat/ProviderEndpoint.java');
-if (!providerEndpoint.includes('static String normalize(String raw, String protocol)') || !providerEndpoint.includes('Base URL must exclude the fixed protocol path')) fail('v0.0.3 provider endpoint must reject duplicate fixed protocol paths');
+if (!providerEndpoint.includes('static String normalize(String raw, String protocol)') || !providerEndpoint.includes('Base URL must exclude the fixed protocol path') || !providerEndpoint.includes('API 根地址，不要包含 /chat/completions、/responses 或 /messages')) fail('Provider Base URL must reject final protocol endpoints before a Model Profile exists');
 if (!openAiTransport.includes('ProviderEndpoint.normalize(provider.baseUrl, provider.protocol)') || !anthropicTransport.includes('ProviderEndpoint.normalize(provider.baseUrl, provider.protocol)')) fail('protocol-aware endpoint validation must also run at the actual transport request boundary');
 if (anthropicTransport.includes('wireType(ChatTurnOptions.WEB_SEARCH,') || anthropicTransport.includes('wireType(ChatTurnOptions.WEB_FETCH,') || anthropicTransport.includes('"web_search_20260318"') || anthropicTransport.includes('"web_fetch_20260318"')) fail('Messages transport must never guess a hosted-Web schema/version from a generic capability');
 for (const [name, transport] of [['OpenAI', openAiTransport], ['Anthropic', anthropicTransport]]) {
