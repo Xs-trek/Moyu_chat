@@ -805,7 +805,10 @@ public class ChatCoordinatorE2eTest {
         String sessionId = createSession();
         post("chat.session.rename", new JSONObject().put("localSessionId", sessionId).put("title", "新的会话名称"));
         await("renamed title persisted", () -> "新的会话名称".equals(app.database().getSession(sessionId).title));
-        assertEquals("新的会话名称", activeSession(latestView()).optString("title"));
+        await("renamed title projected to the active conversation", () -> {
+            JSONObject active = activeSession(latestView());
+            return active != null && "新的会话名称".equals(active.optString("title"));
+        });
         post("nav.open", new JSONObject().put("route", "home"));
         await("home shows renamed session", () -> {
             JSONObject view = latestView();
