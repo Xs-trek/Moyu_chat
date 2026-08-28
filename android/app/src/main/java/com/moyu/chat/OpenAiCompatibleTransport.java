@@ -330,6 +330,11 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                     String text = (String) content;
                     if (!text.isEmpty()) { sink.onStage("output"); sink.onTextDelta(text); }
                 } else if (content instanceof JSONArray) parseChatContentParts((JSONArray) content, sink);
+                JSONArray toolCalls = delta.optJSONArray("tool_calls");
+                if (toolCalls != null && toolCalls.length() > 0) {
+                    if (toolCollector != null) toolCollector.onDelta(toolCalls);
+                    sink.onStage("tool");
+                }
             }
             if (first != null && !first.isNull("finish_reason")) finishReason = first.optString("finish_reason", "").trim();
         }
