@@ -9,6 +9,7 @@ import java.util.Set;
 final class ReasoningPolicy {
     static final String DEFAULT = "default";
     static final String NONE_LEVEL = "none";
+    static final String MINIMAL = "minimal";
     static final String LOW = "low";
     static final String MEDIUM = "medium";
     static final String HIGH = "high";
