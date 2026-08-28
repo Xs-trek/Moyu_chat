@@ -524,6 +524,12 @@ function webModeControl(value = 'auto', dataset = { webModeSelect: '1' }) {
   return h('select', { class: 'reasoning-select web-mode-select', dataset }, ['off','auto','on'].map((mode) => h('option', { value: mode, selected: mode === value, text: labels[mode] })));
 }
 
+function subagentModeControl(value = 'off', dataset = { standardSubagentMode: '1' }) {
+  const normalized = value === 'auto' ? 'auto' : 'off';
+  const labels = { off: '子 Agent · 关闭', auto: '子 Agent · 自动' };
+  return h('select', { class: 'reasoning-select subagent-mode-select', dataset }, ['off','auto'].map((mode) => h('option', { value: mode, selected: mode === normalized, text: labels[mode] })));
+}
+
 function providers(view) {
   return h('main', { class: 'page' },
     pageHeader('Provider / Models', 'Provider 只保存共享 Base URL / API Key；protocol、auth、reasoning wire 与模型能力属于具体 Model Profile。', button('＋ Provider', 'configure-provider', {}, 'btn primary')),
