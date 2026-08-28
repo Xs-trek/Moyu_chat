@@ -626,10 +626,27 @@ final class ChatCoordinator implements AutoCloseable {
             return;
         }
 
-        // Web is a separate capability plane. Hidden Router/Checkpoint calls above never receive it.
-        ChatTurnOptions webOptions = new ChatTurnOptions(ChatTurnOptions.effectiveCapabilities(provider.protocol, turnConfig.toolCapabilities), turnConfig.webMode);
+        // Web/tools are a separate capability plane. Hidden Router/Checkpoint calls above never receive them.
+        String hostedCapabilities = ChatTurnOptions.effectiveCapabilities(provider.protocol, turnConfig.toolCapabilities);
+        boolean clientCalling = ClientToolRuntime.compatible(provider.protocol, turnConfig.clientToolCalling);
+        java.util.LinkedHashSet<String> clientToolNames = new java.util.LinkedHashSet<>();
+        if (clientCalling && ChatTurnOptions.WEB_AUTO.equals(turnConfig.webMode)) {
+            ChatTurnOptions hostedOnly = new ChatTurnOptions(hostedCapabilities, turnConfig.webMode);
+            if (!hostedOnly.supports(ChatTurnOptions.WEB_SEARCH)) clientToolNames.add(ClientToolRuntime.WEB_SEARCH);
+            if (!hostedOnly.supports(ChatTurnOptions.WEB_FETCH)) clientToolNames.add(ClientToolRuntime.WEB_FETCH);
+        }
+        if (clientCalling && HarnessPolicyResolver.SUBAGENT_AUTO.equals(adaptivePolicy.subagentMode)) {
+            clientToolNames.add(ClientToolRuntime.DELEGATE_SUBTASK);
+        }
+        final String clientToolCsv = String.join(",", clientToolNames);
+        ChatTurnOptions webOptions = new ChatTurnOptions(hostedCapabilities, turnConfig.webMode,
+                turnConfig.clientToolCalling, clientToolCsv, new JSONArray());
         MoyuWebService.Prepared preparedWeb = MoyuWebService.Prepared.none();
-        if (webOptions.webEnabled()) {
+        // `web=on` keeps the existing deterministic forced fallback semantics. In auto mode a
+        // deployment with client tools lets the model decide when to search/fetch instead.
+        boolean typedClientWeb = clientToolNames.contains(ClientToolRuntime.WEB_SEARCH)
+                || clientToolNames.contains(ClientToolRuntime.WEB_FETCH);
+        if (webOptions.webEnabled() && (!typedClientWeb || ChatTurnOptions.WEB_ON.equals(turnConfig.webMode))) {
             try {
                 preparedWeb = webService.prepare(input, webOptions, stage -> {
                     String webStage = stage == null || stage.trim().isEmpty() ? "web_search" : stage.trim();
