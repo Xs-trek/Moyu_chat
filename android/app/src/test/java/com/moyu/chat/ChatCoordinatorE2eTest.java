@@ -419,7 +419,7 @@ public class ChatCoordinatorE2eTest {
         second.id = "mock-model-b-profile"; second.providerId = provider.id; second.modelId = "mock-model-b"; second.displayName = "Mock Model B";
         second.contextTokens = 64_000; second.inputTokens = 0; second.maxOutputTokens = 4_096;
         second.inputModalities = "text,image"; second.outputModalities = "text";
-        second.reasoningLevels = "none,low,high"; second.defaultReasoning = "none";
+        second.reasoningLevels = "none,low,high"; second.defaultReasoning = "high"; // ignored by product semantics; capability only.
         coordinator.saveModelProfile(second);
         await("second model available", () -> {
             JSONObject view = latestView();
