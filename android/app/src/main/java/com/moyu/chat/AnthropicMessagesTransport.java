@@ -264,6 +264,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         }
         if ("content_block_stop".equals(type)) {
             if (continuation != null) continuation.onStop(event);
+            if (clientTools != null) clientTools.onStop(event);
             return false;
         }
         if ("content_block_delta".equals(type)) {
