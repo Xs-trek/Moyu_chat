@@ -387,7 +387,7 @@ final class ChatCoordinator implements AutoCloseable {
         String requestedTitle = p.optString("title", "").trim();
         String title = requestedTitle.isEmpty() ? null : bounded(requestedTitle, 200, "title");
         String effort = p.has("reasoningEffort") ? ReasoningPolicy.normalizeEffort(p.optString("reasoningEffort", ReasoningPolicy.DEFAULT)) : ReasoningPolicy.DEFAULT;
-        ReasoningPolicy.validateEffortForProvider(provider, profile.reasoningLevels, effort);
+        ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, profile), profile.reasoningLevels, effort);
         String contextMode = ContextMode.normalize(p.optString("contextMode", defaultContextMode));
         if (p.has("contextMode")) { defaultContextMode = contextMode; db.putSetting("defaultContextMode", defaultContextMode); }
         String webMode = ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode));
