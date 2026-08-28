@@ -22,6 +22,7 @@ public class ModelCatalogTest {
     @Test public void officialOpenAiOverlayRequiresExactV1Root() {
         ModelCatalog.Resolution exact = ModelCatalog.resolve(provider("https://api.openai.com/v1"), "gpt-5.6");
         assertEquals("moyu-official-openai-overlay", exact.source);
+        assertTrue(exact.deploymentResolved);
         assertEquals(OpenAiCompatibleTransport.RESPONSES, exact.protocol);
         assertEquals(ClientToolRuntime.OPENAI_RESPONSES, exact.clientToolCalling);
 
