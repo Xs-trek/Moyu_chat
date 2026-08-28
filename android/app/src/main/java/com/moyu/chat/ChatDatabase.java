@@ -21,8 +21,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public static final class Session {
         public String id, title, providerId, modelProfileId, model, reasoningEffort, inputModalities, outputModalities, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
-        /** v0.0.2 session-scoped context policy plus provider-neutral derived control state. */
+        /** Session-scoped context policy plus provider-neutral derived control state. */
         public String contextMode, taskProfile, contextCheckpoint, toolCapabilities, webMode;
+        /** v0.0.4 frozen model-behavior/tool orchestration policy. */
+        public String harnessPreset = HarnessProfile.BALANCED;
+        public String clientToolCalling = ClientToolRuntime.NONE;
+        public String subagentMode = HarnessPolicyResolver.SUBAGENT_OFF;
         /** Session-frozen deployment capabilities; editing a ModelProfile affects new/model-switched turns only. */
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         public String authMode = ProviderAuth.BEARER;
