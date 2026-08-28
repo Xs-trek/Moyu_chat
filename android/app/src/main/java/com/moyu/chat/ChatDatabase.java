@@ -51,6 +51,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** Model capabilities are scoped to one concrete provider deployment, not a global model name. */
     public static final class ModelProfile {
         public String id, providerId, modelId, displayName, reasoningLevels, defaultReasoning;
+        /** Wire behavior belongs to the concrete model deployment, not the shared account/endpoint. */
+        public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
+        public String authMode = ProviderAuth.BEARER;
+        public String reasoningWire = ReasoningPolicy.WIRE_NONE;
         public String inputModalities = "text", outputModalities = "text", toolCapabilities = "";
         /** Explicit thinking capability; provider-default avoids model-name guessing. */
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
