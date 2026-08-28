@@ -873,6 +873,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         v.put("protocol", protocol); v.put("auth_mode", authMode); v.put("reasoning_wire", reasoningWire);
         v.put("thinking_mode", thinkingMode); v.put("thinking_budget_tokens", thinkingBudget);
         v.put("continuation_mode", continuationMode);
+        v.put("config_mode", ModelCatalog.normalizeConfigMode(p.configMode));
+        v.put("catalog_key", p.catalogKey == null || p.catalogKey.trim().isEmpty() ? "unknown" : p.catalogKey.trim());
+        v.put("catalog_version", p.catalogVersion == null ? "" : p.catalogVersion.trim());
+        v.put("catalog_source", p.catalogSource == null || p.catalogSource.trim().isEmpty() ? "neutral-defaults" : p.catalogSource.trim());
+        v.put("harness_preset", HarnessProfile.normalize(p.harnessPreset));
+        v.put("client_tool_calling", ClientToolRuntime.normalizeCalling(p.clientToolCalling));
         v.put("updated_at", Instant.now().toString());
         return v;
     }
