@@ -137,10 +137,10 @@ public class ContextBudgetManagerTest {
         ContextBudgetManager manager = new ContextBudgetManager();
         JSONArray all = new JSONArray().put(message("user", "CURRENT"));
         try {
-            manager.select(INSTRUCTIONS, all, 2_048, 0, 512, 10_000);
+            manager.selectWithReserve(INSTRUCTIONS, all, 2_048, 0, 512, 10_000);
             fail("oversized mandatory provider/tool history must fail loudly");
         } catch (IllegalArgumentException expected) {
-            assertTrue(expected.getMessage().contains("additional provider/tool input"));
+            assertTrue(expected.getMessage().contains("tool/provider history"));
         }
     }
 
