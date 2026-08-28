@@ -221,12 +221,14 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             EditText base = field(form, "共享 Base URL", "同一 Provider 下所有 Model Profile 共享此 API 根地址与 API Key；protocol、authMode、reasoningWire 在各 Model Profile 单独配置。OpenCode Go 示例：https://opencode.ai/zen/go/v1。不要填写 /chat/completions、/responses 或 /messages。", "https://example.com/v1", p.baseUrl == null ? "" : p.baseUrl, false, false);
             EditText key = field(form, "API Key", "同一 Provider 下模型共享此密钥。仅保存在 Android 原生安全存储中，不进入 WebView、SQLite 或消息正文；编辑时留空表示保留已有密钥。", "sk-…", "", true, false);
             AlertDialog dialog = new AlertDialog.Builder(this).setTitle(existing == null ? "配置 Provider" : "编辑 Provider").setView(scroll(form)).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+            ownConfigDialog(dialog);
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
+                    formError.setVisibility(View.GONE);
                     if (p.id == null) p.id = "provider-" + UUID.randomUUID();
                     p.displayName = name.getText().toString().trim();
-                    p.baseUrl = base.getText().toString().trim();
-                    if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
+                    if (p.displayName.isEmpty()) throw new IllegalArgumentException("显示名称不能为空");
+                    p.baseUrl = ProviderEndpoint.normalize(base.getText().toString());
                     // Legacy provider wire/model columns remain migration-only and have no UI authority.
                     p.model = "";
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
@@ -234,9 +236,9 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                         if (!dialog.isShowing()) return;
                         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                         if (error == null) dialog.dismiss();
-                        else Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                        else showEditorError(formError, error);
                     }));
-                } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
+                } catch (Exception error) { showEditorError(formError, error.getMessage()); }
             }));
             dialog.show();
         });
