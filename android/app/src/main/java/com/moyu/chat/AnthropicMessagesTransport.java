@@ -45,8 +45,10 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         if (provider == null || apiKey == null || apiKey.isEmpty()) { guarded.onError("provider_not_configured", "Provider 或 API Key 未配置", false); return () -> {}; }
         try {
             String base = ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
+            ChatTurnOptions turnOptions = options == null ? ChatTurnOptions.NONE : options;
             JSONObject body = body(model, prompt, provider.maxOutputTokens);
-            applyHostedTools(body, options == null ? ChatTurnOptions.NONE : options);
+            applyHostedTools(body, turnOptions);
+            applyClientTools(body, turnOptions);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
             Request.Builder builder = new Request.Builder().url(base + "/messages")
                     .header("anthropic-version", "2023-06-01")
