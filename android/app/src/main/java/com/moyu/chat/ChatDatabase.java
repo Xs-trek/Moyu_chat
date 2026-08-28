@@ -169,7 +169,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("UPDATE model_profiles SET protocol=COALESCE((SELECT protocol FROM providers WHERE providers.provider_id=model_profiles.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM providers WHERE providers.provider_id=model_profiles.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM providers WHERE providers.provider_id=model_profiles.provider_id),'none')");
             // Old Messages semantics used base + /v1/messages. New common-base semantics use base + /messages.
             // Appending /v1 preserves the exact pre-migration request URL for every old Messages provider.
-            db.execSQL("UPDATE providers SET base_url=RTRIM(base_url,'/') || '/v1' WHERE protocol='anthropic-messages'");
+            db.execSQL("UPDATE providers SET base_url=CASE WHEN RTRIM(base_url,'/') LIKE '%/v1' THEN RTRIM(base_url,'/') ELSE RTRIM(base_url,'/') || '/v1' END WHERE protocol='anthropic-messages'");
             db.execSQL("ALTER TABLE sessions ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai-chat-completions'");
             db.execSQL("ALTER TABLE sessions ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
             db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
