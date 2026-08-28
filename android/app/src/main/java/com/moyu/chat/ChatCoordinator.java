@@ -703,6 +703,8 @@ final class ChatCoordinator implements AutoCloseable {
                 // Rebuild only the disposable main prompt so Web material is budgeted but never persisted as user text.
                 prompt = contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens,
                         preparedWeb.promptSuffix);
+                if (clientToolSchemaTokens > 0) prompt = contexts.reserveForAdditionalInput(prompt,
+                        turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens, clientToolSchemaTokens);
             }
         }
         final MoyuWebService.Prepared webPrepared = preparedWeb;
