@@ -744,11 +744,26 @@ final class ChatCoordinator implements AutoCloseable {
                 return;
             }
             if (preparedWeb.hasContext()) {
-                // Rebuild only the disposable main prompt so Web material is budgeted but never persisted as user text.
-                prompt = contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens,
-                        preparedWeb.promptSuffix);
-                if (clientToolSchemaTokens > 0) prompt = contexts.reserveForAdditionalInput(prompt,
-                        turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens, clientToolSchemaTokens);
+                // ContextBuilder treats this suffix as optional and may omit it under pressure. Only
+                // expose Web sources/evidence when the exact suffix actually survived final selection
+                // and the separately reserved client-tool definitions still fit.
+                CanonicalPrompt webPrompt = contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens,
+                        turnConfig.maxOutputTokens, preparedWeb.promptSuffix);
+                boolean webApplied = promptContainsLatestUserSuffix(webPrompt, preparedWeb.promptSuffix);
+                if (webApplied && clientToolSchemaTokens > 0) {
+                    try {
+                        webPrompt = contexts.reserveForAdditionalInput(webPrompt, turnConfig.contextTokens, turnConfig.inputTokens,
+                                turnConfig.maxOutputTokens, clientToolSchemaTokens);
+                        webApplied = promptContainsLatestUserSuffix(webPrompt, preparedWeb.promptSuffix);
+                    } catch (IllegalArgumentException optionalWebOverflow) {
+                        webApplied = false;
+                    }
+                }
+                if (webApplied) prompt = webPrompt;
+                else {
+                    prompt = preWebPrompt;
+                    preparedWeb = MoyuWebService.Prepared.none();
+                }
             }
         }
         final MoyuWebService.Prepared webPrepared = preparedWeb;
