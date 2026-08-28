@@ -32,6 +32,16 @@ function mediaGallery(items, removable = false, sessionId = '') {
   )));
 }
 
+function draftMediaStrip(items, sessionId = '') {
+  const images = (items || []).filter((item) => item?.kind === 'image' && item.url);
+  const signature = JSON.stringify(images.map((item) => [item.mediaId, item.url, item.fileName]));
+  return h('div', { class: `draft-media-strip${images.length ? '' : ' is-empty'}`, dataset: { draftMedia: '1', mediaSignature: signature } },
+    images.map((item) => h('div', { class: 'draft-media-item' },
+      h('img', { src: item.url, alt: item.fileName || '待发送图片' }),
+      h('button', { type: 'button', class: 'draft-media-remove', title: '移除图片', 'aria-label': `移除 ${item.fileName || '图片'}`, dataset: { action: 'remove-attachment', sessionId, mediaId: item.mediaId }, text: '×' })
+    )));
+}
+
 /** App-owned confirmation UI. Do not depend on window.confirm/WebChromeClient behavior. */
 export function openConfirmDialog({ title, message, confirmText = '确认', danger = false, onConfirm }) {
   document.querySelector('.modal-backdrop[data-moyu-modal]')?.remove();
