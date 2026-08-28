@@ -73,6 +73,16 @@ final class MoyuWebService implements AutoCloseable {
         static Prepared none() { return new Prepared("", new JSONArray(), "", false); }
     }
 
+    /** Structured client-tool result; raw material is ephemeral and only sources may be persisted. */
+    static final class ToolResult {
+        final String text;
+        final JSONArray sources;
+        ToolResult(String text, JSONArray sources) {
+            this.text = text == null ? "" : text;
+            this.sources = sources == null ? new JSONArray() : sources;
+        }
+    }
+
     private final String exaEndpoint;
     private final OkHttpClient searchHttp;
     private final OkHttpClient fetchHttp;
