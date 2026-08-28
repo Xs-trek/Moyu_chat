@@ -97,6 +97,15 @@ function pageHeader(title, description, action = null) {
     action);
 }
 
+function sessionContextModeBadge(session) {
+  const mode = String(session?.contextMode || 'standard').trim();
+  const labels = { minimal: '极简', standard: '标准', auto: '标准', smart: '智能' };
+  const label = labels[mode] || mode;
+  const effective = String(session?.effectiveContextMode || '').trim();
+  const title = effective && effective !== mode ? `上下文模式：${label} · 实际 ${effective}` : `上下文模式：${label}`;
+  return badge(label, `context-mode ${mode}`);
+}
+
 function home(view) {
   return h('main', { class: 'page page-home' },
     h('section', { class: 'home-start' },
