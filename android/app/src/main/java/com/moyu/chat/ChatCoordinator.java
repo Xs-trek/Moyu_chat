@@ -199,24 +199,8 @@ final class ChatCoordinator implements AutoCloseable {
                         ModelCatalog.applyAuto(provider, profile,
                                 profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
                     }
-                    profile.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
-                    if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("unsupported protocol");
-                    ProviderEndpoint.normalize(provider.baseUrl, profile.protocol);
-                    profile.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
-                    if (!ClientToolRuntime.NONE.equals(profile.clientToolCalling)
-                            && !ClientToolRuntime.compatible(profile.protocol, profile.clientToolCalling)) {
-                        throw new IllegalArgumentException("client tool calling wire is incompatible with selected protocol");
-                    }
-                    profile.authMode = ProviderAuth.normalize(profile.authMode, profile.protocol);
-                    profile.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, profile.protocol);
-                    profile.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
-                    ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, profile), profile.reasoningLevels);
-                    profile.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
-                    profile.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
-                    profile.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
-                    profile.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode);
-                    profile.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
-                    profile.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
+                    ModelProfileValidator.validateResolvedProfile(provider, profile);
+                    if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
                 }
 
                 String nextSecret = apiKey == null ? "" : apiKey.trim();
