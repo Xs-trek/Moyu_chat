@@ -711,6 +711,9 @@ final class ChatCoordinator implements AutoCloseable {
         }
         final String clientToolCsv = String.join(",", clientToolNames);
         final int clientToolSchemaTokens = clientToolSchemaReserve;
+        // Already validated against the current user turn plus client-tool definitions. Optional
+        // deterministic Web may enrich this prompt, but must never invalidate this safe baseline.
+        final CanonicalPrompt preWebPrompt = prompt;
         ChatTurnOptions webOptions = new ChatTurnOptions(hostedCapabilities, turnConfig.webMode,
                 turnConfig.clientToolCalling, clientToolCsv, new JSONArray());
         MoyuWebService.Prepared preparedWeb = MoyuWebService.Prepared.none();
