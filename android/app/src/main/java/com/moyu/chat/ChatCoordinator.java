@@ -821,22 +821,29 @@ final class ChatCoordinator implements AutoCloseable {
                 reasoningOut.append(delta);
                 markProjectionDirty();
             }
-            @Override public void onProviderContinuation(JSONObject state) { if (state == null || !allowProviderContinuation) return; worker.execute(() -> { try {
-                if (!provider.protocol.equals(state.optString("protocol", "")) || providerContinuationOverflow[0]) return;
-                JSONObject item = state.optJSONObject("item"); if (item == null) return;
-                String serialized = item.toString();
-                String key = item.optString("id", "").trim();
-                if (key.isEmpty()) key = item.optString("type", "") + ":" + Integer.toHexString(serialized.hashCode());
-                if (!providerContinuationKeys.add(key)) return;
-                if (providerContinuationChars[0] + serialized.length() > MAX_PROVIDER_CONTINUATION_CHARS) {
-                    providerContinuationOverflow[0] = true;
-                    providerContinuationKeys.clear();
-                    while (providerContinuationItems.length() > 0) providerContinuationItems.remove(providerContinuationItems.length() - 1);
-                    return; // never persist/replay a partial opaque output-item set.
-                }
-                providerContinuationChars[0] += serialized.length();
-                providerContinuationItems.put(new JSONObject(serialized));
-            } catch (Exception ignored) { } }); }
+            @Override public void onProviderContinuation(JSONObject state) {
+                if (state == null) return;
+                final int providerRound = (int) clientToolBatchCount.get() + 1;
+                worker.execute(() -> { try {
+                    if (!provider.protocol.equals(state.optString("protocol", "")) || providerContinuationOverflow[0]) return;
+                    JSONObject item = state.optJSONObject("item"); if (item == null) return;
+                    String serialized = item.toString();
+                    String key = item.optString("id", "").trim();
+                    if (key.isEmpty()) key = item.optString("type", "") + ":" + Integer.toHexString(serialized.hashCode());
+                    if (!providerContinuationKeys.add(key)) return;
+                    if (providerContinuationChars[0] + serialized.length() > MAX_PROVIDER_CONTINUATION_CHARS) {
+                        providerContinuationOverflow[0] = true;
+                        providerContinuationKeys.clear();
+                        while (providerContinuationItems.length() > 0) providerContinuationItems.remove(providerContinuationItems.length() - 1);
+                        return; // never persist/replay a partial opaque output-item set.
+                    }
+                    providerContinuationChars[0] += serialized.length();
+                    JSONObject copy = new JSONObject(serialized);
+                    // Same-turn protocol replay is required even when cross-turn native continuation is disabled.
+                    providerRoundHistory.put(new JSONObject().put("round", providerRound).put("item", new JSONObject(serialized)));
+                    if (allowProviderContinuation) providerContinuationItems.put(copy);
+                } catch (Exception ignored) { } });
+            }
             @Override public void onTextDelta(String delta) {
                 if (delta == null || delta.isEmpty() || streamTerminal.get()) return;
                 if (firstOutputNanos[0] == 0L) firstOutputNanos[0] = System.nanoTime();
