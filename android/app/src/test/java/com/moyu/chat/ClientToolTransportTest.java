@@ -90,9 +90,15 @@ public class ClientToolTransportTest {
         sink.await();
         assertNull(sink.error); assertNotNull(sink.calls); assertEquals(1, sink.calls.length());
         assertEquals("inspect A", sink.calls.getJSONObject(0).getJSONObject("arguments").optString("task"));
-        JSONObject tool = requestBody().getJSONArray("tools").getJSONObject(0);
+        JSONObject body = requestBody();
+        JSONObject tool = body.getJSONArray("tools").getJSONObject(0);
         assertEquals("function", tool.optString("type"));
         assertEquals("delegate_subtask", tool.optString("name"));
+        JSONArray include = body.optJSONArray("include");
+        assertNotNull("Responses client tools need replayable reasoning even when cross-turn continuation is off", include);
+        boolean encryptedReasoning = false;
+        for (int i = 0; i < include.length(); i++) if ("reasoning.encrypted_content".equals(include.optString(i))) encryptedReasoning = true;
+        assertTrue(encryptedReasoning);
     }
 
     @Test public void anthropicEmitsStreamedToolUseBatch() throws Exception {
