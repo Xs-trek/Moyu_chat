@@ -1,11 +1,13 @@
 package com.moyu.chat;
 
+import org.json.JSONArray;
+
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
 
-/** Provider-neutral per-turn native hosted-web policy. Hidden preprocessing always uses NONE. */
+/** Provider-neutral per-turn hosted-web + client-tool policy. Hidden preprocessing uses NONE. */
 final class ChatTurnOptions {
     static final String WEB_SEARCH = "web_search";
     static final String WEB_FETCH = "web_fetch";
@@ -22,14 +24,44 @@ final class ChatTurnOptions {
     /** Capabilities declared by the concrete model deployment and supported by this transport. */
     final String toolCapabilities;
     final String webMode;
+    final String clientToolCalling;
+    final String clientToolNames;
+    final JSONArray toolHistory;
 
     ChatTurnOptions(String toolCapabilities, String webMode) {
+        this(toolCapabilities, webMode, ClientToolRuntime.NONE, "", new JSONArray());
+    }
+
+    ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
+                    String clientToolNames, JSONArray toolHistory) {
         this.toolCapabilities = normalizeCapabilities(toolCapabilities);
         this.webMode = normalizeWebMode(webMode);
+        this.clientToolCalling = ClientToolRuntime.normalizeCalling(clientToolCalling);
+        this.clientToolNames = normalizeClientToolNames(clientToolNames);
+        try { this.toolHistory = toolHistory == null ? new JSONArray() : new JSONArray(toolHistory.toString()); }
+        catch (Exception ignored) { throw new IllegalArgumentException("invalid client tool history"); }
+    }
+
+    ChatTurnOptions withToolHistory(JSONArray history) {
+        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history);
+    }
+
+    ChatTurnOptions withoutClientTools() {
+        return new ChatTurnOptions(toolCapabilities, webMode, ClientToolRuntime.NONE, "", toolHistory);
     }
 
     boolean webEnabled() { return !WEB_OFF.equals(webMode); }
     boolean forceFallback() { return WEB_ON.equals(webMode); }
+    boolean clientToolsEnabled(String protocol) {
+        return ClientToolRuntime.compatible(protocol, clientToolCalling) && !clientToolNames.isEmpty();
+    }
+    boolean clientToolEnabled(String name) {
+        if (name == null || name.isEmpty()) return false;
+        for (String item : clientToolNames.split(",")) if (name.equals(item)) return true;
+        return false;
+    }
+    JSONArray clientToolDefinitions() { return ClientToolRuntime.canonicalDefinitions(clientToolNames); }
+
     boolean supports(String capability) {
         if (capability == null || capability.isEmpty()) return false;
         for (String item : toolCapabilities.split(",")) {
@@ -53,6 +85,21 @@ final class ChatTurnOptions {
         String value = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
         if (WEB_OFF.equals(value) || WEB_AUTO.equals(value) || WEB_ON.equals(value)) return value;
         return WEB_AUTO;
+    }
+
+    static String normalizeClientToolNames(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "";
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String part : raw.split(",")) {
+            String value = part.trim().toLowerCase(Locale.ROOT);
+            if (value.isEmpty()) continue;
+            if (!(ClientToolRuntime.WEB_SEARCH.equals(value) || ClientToolRuntime.WEB_FETCH.equals(value)
+                    || ClientToolRuntime.DELEGATE_SUBTASK.equals(value))) {
+                throw new IllegalArgumentException("unsupported Moyu client tool: " + value);
+            }
+            out.add(value);
+        }
+        return String.join(",", out);
     }
 
     /** These values mean provider-native hosted capabilities, not Moyu fallback availability. */
@@ -85,6 +132,7 @@ final class ChatTurnOptions {
 
     static ChatTurnOptions forSession(ChatDatabase.Session session, String protocol) {
         if (session == null) return NONE;
-        return new ChatTurnOptions(effectiveCapabilities(protocol, session.toolCapabilities), session.webMode);
+        return new ChatTurnOptions(effectiveCapabilities(protocol, session.toolCapabilities), session.webMode,
+                session.clientToolCalling, "", new JSONArray());
     }
 }
