@@ -1230,6 +1230,71 @@ public class ChatCoordinatorE2eTest {
         await("second request completes", () -> "completed".equals(app.database().getSession(sessionId).state));
     }
 
+    @Test public void standardSubagentToolLoopReturnsOneFinalParentAnswerAndAggregatesChildUsage() throws Exception {
+        AtomicInteger parentRounds = new AtomicInteger();
+        List<String> requestBodies = Collections.synchronizedList(new ArrayList<>());
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                requestBodies.add(body);
+                if (body.contains("You are an isolated worker for Moyu Chat")) {
+                    return sse("data: {\"choices\":[{\"delta\":{\"content\":\"child finding\"}}]}\n\n"
+                            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n");
+                }
+                if (body.contains("\"role\":\"tool\"")) {
+                    parentRounds.incrementAndGet();
+                    return sse("data: {\"choices\":[{\"delta\":{\"content\":\"final from child\"}}]}\n\n"
+                            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":3}}\n\n");
+                }
+                parentRounds.incrementAndGet();
+                return sse("data: {\"choices\":[{\"delta\":{\"content\":\"intermediate must disappear\",\"tool_calls\":[{\"index\":0,\"id\":\"call_delegate\",\"type\":\"function\",\"function\":{\"name\":\"delegate_subtask\",\"arguments\":\"{\\\"task\\\":\\\"inspect isolated fact\\\"}\"}}]}}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":1}}\n\n");
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        assertNotNull(profile);
+        profile.configMode = ModelCatalog.CONFIG_MANUAL;
+        profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
+        profile.harnessPreset = HarnessProfile.BALANCED;
+        app.database().saveModelProfile(profile);
+        post("subagent.standard.default.set", new JSONObject().put("mode", HarnessPolicyResolver.SUBAGENT_AUTO));
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.STANDARD).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("standard subagent session created", () -> activeSession(latestView()) != null
+                && HarnessPolicyResolver.SUBAGENT_AUTO.equals(activeSession(latestView()).optString("subagentMode")));
+        String sessionId = latestView().optString("activeLocalSessionId");
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "use an isolated subtask"));
+        await("tool-loop turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+        assertEquals("parent must run exactly two provider rounds", 2, parentRounds.get());
+        assertEquals("parent + child + parent should make three provider requests", 3, requestBodies.size());
+        assertTrue("first parent round must expose delegate_subtask", requestBodies.get(0).contains("delegate_subtask"));
+        assertTrue("isolated child call must not receive client tools", requestBodies.stream().anyMatch(body -> body.contains("isolated worker") && !body.contains("\"tools\"")));
+        assertTrue("second parent round must receive child tool result", requestBodies.stream().anyMatch(body -> body.contains("\"role\":\"tool\"") && body.contains("child finding")));
+
+        JSONArray rows = app.database().timeline(sessionId);
+        JSONObject assistant = null, usage = null;
+        int assistantCount = 0;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i); if (row == null) continue;
+            if ("message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) { assistant = row; assistantCount++; }
+            if ("usage".equals(row.optString("kind"))) usage = row;
+        }
+        assertEquals("tool decision must not create an extra visible assistant turn", 1, assistantCount);
+        assertNotNull(assistant);
+        assertEquals("final from child", assistant.optString("text"));
+        assertFalse("intermediate tool-decision text must be removed", assistant.optString("text").contains("intermediate must disappear"));
+        assertNotNull(usage);
+        assertEquals(1, usage.optInt("subagentCount"));
+        assertEquals(5, usage.optInt("childInputTokens"));
+        assertEquals(2, usage.optInt("childOutputTokens"));
+        assertEquals(18, usage.optInt("inputTokens"));
+        assertEquals(4, usage.optInt("outputTokens"));
+        assertEquals(23, usage.optInt("totalInputTokens"));
+        assertEquals(6, usage.optInt("totalOutputTokens"));
+    }
+
     @Test public void anthropicProtocolEndToEnd() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
