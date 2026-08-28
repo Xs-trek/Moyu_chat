@@ -412,11 +412,11 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     static boolean parseResponses(JSONObject event, ChatTransport.Sink sink, Set<String> emittedImages) {
-        return parseResponses(event, sink, emittedImages, new HashSet<>());
+        return parseResponses(event, sink, emittedImages, new HashSet<>(), new JSONArray());
     }
 
     private static boolean parseResponses(JSONObject event, ChatTransport.Sink sink, Set<String> emittedImages,
-                                          Set<String> emittedContinuation) {
+                                          Set<String> emittedContinuation, JSONArray pendingToolCalls) {
         String type = event.optString("type");
         if (type.startsWith("response.web_search_call.")) {
             String state = type.endsWith("completed") ? "completed" : "running";
