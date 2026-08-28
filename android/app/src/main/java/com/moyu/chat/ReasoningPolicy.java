@@ -59,7 +59,7 @@ final class ReasoningPolicy {
     static String normalizeEffort(String value) {
         String v = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
         if (v.isEmpty()) return DEFAULT;
-        if (DEFAULT.equals(v) || NONE_LEVEL.equals(v) || LOW.equals(v) || MEDIUM.equals(v)
+        if (DEFAULT.equals(v) || NONE_LEVEL.equals(v) || MINIMAL.equals(v) || LOW.equals(v) || MEDIUM.equals(v)
                 || HIGH.equals(v) || XHIGH.equals(v) || MAX.equals(v)) return v;
         throw new IllegalArgumentException("unsupported reasoning effort");
     }
