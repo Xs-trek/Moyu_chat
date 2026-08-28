@@ -193,14 +193,18 @@ final class ChatCoordinator implements AutoCloseable {
 
                 java.util.List<ChatDatabase.ModelProfile> affectedProfiles = db.listModelProfiles(provider.id);
                 for (ChatDatabase.ModelProfile profile : affectedProfiles) {
-                    if (ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(profile.configMode))) {
-                        // Endpoint identity is part of deployment authority. Re-resolve Auto whenever the
-                        // shared endpoint changes so stale official/native capabilities cannot follow it.
-                        ModelCatalog.applyAuto(provider, profile,
-                                profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
+                    try {
+                        if (ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(profile.configMode))) {
+                            // Endpoint identity is part of deployment authority. Re-resolve Auto whenever the
+                            // shared endpoint changes so stale official/native capabilities cannot follow it.
+                            ModelCatalog.applyAuto(provider, profile,
+                                    profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
+                        }
+                        ModelProfileValidator.validateResolvedProfile(provider, profile);
+                        if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
+                    } catch (IllegalArgumentException profileError) {
+                        throw new IllegalArgumentException("Model “" + profile.modelId + "” 配置无效：" + profileError.getMessage());
                     }
-                    ModelProfileValidator.validateResolvedProfile(provider, profile);
-                    if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
                 }
 
                 String nextSecret = apiKey == null ? "" : apiKey.trim();
