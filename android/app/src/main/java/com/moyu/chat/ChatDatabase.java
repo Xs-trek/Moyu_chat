@@ -893,7 +893,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         p.protocol = normalizeProtocol(provider.protocol); p.authMode = ProviderAuth.normalize(provider.authMode, p.protocol);
         p.reasoningWire = ReasoningPolicy.normalizeWire(provider.reasoningWire, p.protocol);
         p.thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT; p.thinkingBudgetTokens = 0;
-        p.continuationMode = ProviderContinuationPolicy.NONE; return p;
+        p.continuationMode = ProviderContinuationPolicy.NONE;
+        p.configMode = ModelCatalog.CONFIG_LEGACY_MANUAL; p.catalogKey = "unknown"; p.catalogVersion = ""; p.catalogSource = "legacy-provider";
+        p.harnessPreset = HarnessProfile.BALANCED; p.clientToolCalling = ClientToolRuntime.NONE; return p;
     }
 
     static String normalizeProtocol(String raw) {
