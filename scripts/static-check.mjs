@@ -90,6 +90,7 @@ const chatTransport = read('android/app/src/main/java/com/moyu/chat/ChatTranspor
 const modelPreflight = read('android/app/src/main/java/com/moyu/chat/ModelPreflight.java');
 if (!chatTransport.includes('Preflight callers use the legacy overload and therefore NONE') || !modelPreflight.includes('transport.stream(provider, apiKey, model, ReasoningPolicy.DEFAULT, prompt, sink)')) fail('hidden preprocessing must use the legacy no-Web transport overload');
 if (!coordinator.includes('ContextMode.resolve(') || !coordinator.includes('taskRouter.route(') || !coordinator.includes('checkpointService.update(')) fail('v0.0.2 session context-mode/router/checkpoint orchestration missing');
+if (!coordinator.includes('webCalls = ConcurrentHashMap.newKeySet()') || !coordinator.includes('for (okhttp3.Call call : webCalls)') || !coordinator.includes('batchCalls.length() > ClientToolRuntime.MAX_TOOL_CALLS_PER_BATCH')) fail('parallel client tools require all-call cancellation ownership and a bounded batch size');
 if (!coordinator.includes('.put("incomplete", true).put("terminalCode"')) fail('partial provider turns must preserve incomplete semantics');
 
 const taskProfile = read('android/app/src/main/java/com/moyu/chat/TaskProfile.java');
