@@ -458,6 +458,19 @@ public class ChatCoordinatorE2eTest {
         assertTrue(assistants.get(1).optBoolean("reasoningAvailable"));
     }
 
+    @Test public void newChatContextModeRemembersLastExplicitSelection() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider").put("contextMode", ContextMode.SMART));
+        await("smart session created", () -> activeSession(latestView()) != null && ContextMode.SMART.equals(activeSession(latestView()).optString("contextMode")));
+        assertEquals("explicit new-chat selection becomes the next new-chat preference", ContextMode.SMART,
+                latestView().optJSONObject("ui").optString("defaultContextMode"));
+        post("nav.open", new JSONObject().put("route", "home"));
+        await("home opened", () -> "home".equals(latestView().optString("route")));
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
+        await("next session inherits remembered context mode", () -> activeSession(latestView()) != null
+                && ContextMode.SMART.equals(activeSession(latestView()).optString("contextMode")));
+    }
+
     @Test public void sendPayloadPersistsSelectedReasoningBeforeFreezeAndNavigation() throws Exception {
         ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         provider.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
