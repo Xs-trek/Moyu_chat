@@ -312,6 +312,10 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
      * finish_reason or emit one final empty-choices usage/cost chunk.
      */
     static boolean parseChat(JSONObject event, ChatTransport.Sink sink) {
+        return parseChat(event, sink, new ChatToolCollector());
+    }
+
+    private static boolean parseChat(JSONObject event, ChatTransport.Sink sink, ChatToolCollector toolCollector) {
         JSONObject error = event.optJSONObject("error");
         if (error != null) { sink.onError(error.optString("code", "provider_error"), error.optString("message", "Provider error"), false); return true; }
         JSONArray choices = event.optJSONArray("choices");
