@@ -431,7 +431,7 @@ public class ChatCoordinatorE2eTest {
         await("model switched", () -> second.id.equals(activeSession(latestView()).optString("modelProfileId")));
         assertEquals("Mock Model B", activeSession(latestView()).optString("modelName"));
         assertEquals("none,low,high", activeSession(latestView()).optString("reasoningLevels"));
-        assertEquals("none", activeSession(latestView()).optString("reasoningEffort"));
+        assertEquals("model switch must not apply a hidden Model Profile default", "default", activeSession(latestView()).optString("reasoningEffort"));
         assertTrue(activeSession(latestView()).optBoolean("canAttachImage"));
 
         post("chat.session.reasoning.set", new JSONObject().put("localSessionId", sessionId).put("reasoningEffort", "high"));
