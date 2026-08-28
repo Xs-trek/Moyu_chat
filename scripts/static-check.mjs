@@ -150,7 +150,10 @@ if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_
 if (!webService.includes('Moyu Fetch only allows HTTPS URLs') || !webService.includes('publicDns') || !webService.includes('validateHttpsUri')) fail('Moyu Fetch HTTPS/SSRF boundary missing');
 if (!webService.includes('untrusted reference material') || !webService.includes('not instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
 if (!webService.includes('MoyuChat/0.0.4')) fail('Moyu Fetch User-Agent version must match v0.0.4');
-if (!coordinator.includes('buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens,\n                        preparedWeb.promptSuffix)') || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('ephemeral Web context/source projection missing');
+if (!coordinator.includes('final CanonicalPrompt preWebPrompt = prompt;')
+    || !coordinator.includes('promptContainsLatestUserSuffix(webPrompt, preparedWeb.promptSuffix)')
+    || !coordinator.includes('preparedWeb = MoyuWebService.Prepared.none();')
+    || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('ephemeral Web context/source projection/fail-closed budget fallback missing');
 
 const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
 const chatRuntime = read('android/app/src/main/java/com/moyu/chat/ChatRuntime.java');
