@@ -675,6 +675,35 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (listModelProfiles(p.id).isEmpty() && p.model != null && !p.model.trim().isEmpty()) saveModelProfile(legacyProfile(p, p.model.trim()));
     }
 
+    /** Atomically save one shared Provider plus every deployment profile affected by its endpoint change. */
+    public synchronized void saveProviderAndProfiles(Provider p, List<ModelProfile> profiles, boolean bumpCredentialEpoch) {
+        if (p == null || p.id == null || p.id.trim().isEmpty()) throw new IllegalArgumentException("provider required");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            ContentValues provider = providerValues(p);
+            int updated = db.update("providers", provider, "provider_id=?", new String[]{p.id});
+            if (updated == 0) db.insertWithOnConflict("providers", null, provider, SQLiteDatabase.CONFLICT_ABORT);
+            if (profiles != null) for (ModelProfile profile : profiles) {
+                if (profile == null) continue;
+                if (!p.id.equals(profile.providerId)) throw new IllegalArgumentException("model profile belongs to another provider");
+                ContentValues model = modelProfileValues(profile);
+                int modelUpdated = db.update("model_profiles", model, "profile_id=?", new String[]{profile.id});
+                if (modelUpdated == 0) db.insertWithOnConflict("model_profiles", null, model, SQLiteDatabase.CONFLICT_ABORT);
+            }
+            if (bumpCredentialEpoch) {
+                String key = ProviderContinuationIdentity.credentialEpochSettingKey(p.id);
+                long current = 0L;
+                try (Cursor c = db.rawQuery("SELECT value FROM settings WHERE key=?", new String[]{key})) {
+                    if (c.moveToFirst()) try { current = Long.parseLong(c.getString(0)); } catch (Exception ignored) { }
+                }
+                ContentValues setting = new ContentValues(); setting.put("key", key); setting.put("value", Long.toString(current + 1L));
+                db.insertWithOnConflict("settings", null, setting, SQLiteDatabase.CONFLICT_REPLACE);
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
     public synchronized Provider getProvider(String id) {
         if (id == null) return null;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,reasoning_wire,model,context_tokens,input_tokens,max_output_tokens FROM providers WHERE provider_id=?", new String[]{id})) {
