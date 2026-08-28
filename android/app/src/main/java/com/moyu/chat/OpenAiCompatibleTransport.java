@@ -467,6 +467,28 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         return false;
     }
 
+    private static void collectResponseToolCalls(JSONObject response, JSONArray out) {
+        JSONArray output = response == null ? null : response.optJSONArray("output"); if (output == null) return;
+        for (int i = 0; i < output.length(); i++) collectResponseToolCall(output.optJSONObject(i), out);
+    }
+
+    private static void collectResponseToolCall(JSONObject item, JSONArray out) {
+        if (item == null || out == null || !"function_call".equals(item.optString("type", ""))) return;
+        String callId = item.optString("call_id", "").trim();
+        String name = item.optString("name", "").trim();
+        if (callId.isEmpty() || name.isEmpty()) return;
+        for (int i = 0; i < out.length(); i++) {
+            JSONObject existing = out.optJSONObject(i); if (existing != null && callId.equals(existing.optString("id", ""))) return;
+        }
+        try {
+            JSONObject call = new JSONObject().put("id", callId).put("name", name);
+            String raw = item.optString("arguments", "{}");
+            try { call.put("arguments", new JSONObject(raw)); }
+            catch (Exception invalid) { call.put("arguments", new JSONObject()).put("invalidArguments", true); }
+            out.put(call);
+        } catch (Exception ignored) { }
+    }
+
     private static void emitResponseImages(JSONObject response, ChatTransport.Sink sink, Set<String> emittedImages) {
         JSONArray output = response == null ? null : response.optJSONArray("output"); if (output == null) return;
         for (int i = 0; i < output.length(); i++) emitImageItem(output.optJSONObject(i), sink, emittedImages);
