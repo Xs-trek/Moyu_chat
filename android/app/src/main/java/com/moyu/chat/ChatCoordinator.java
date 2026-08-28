@@ -125,6 +125,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final TaskRouter taskRouter = new TaskRouter();
     private final ContextCheckpointService checkpointService = new ContextCheckpointService();
     private final SmartVerifierService smartVerifier = new SmartVerifierService();
+    private final FocusedSubagentService focusedSubagent = new FocusedSubagentService();
     private final ConversationImportService conversationImporter = new ConversationImportService();
     private final MoyuWebService webService = new MoyuWebService();
     private final RemoteDataBridge remoteBridge;
