@@ -1295,6 +1295,47 @@ public class ChatCoordinatorE2eTest {
         assertEquals(6, usage.optInt("totalOutputTokens"));
     }
 
+    @Test public void autoProviderEndpointChangeToUnreviewedDeploymentIsRejectedAtomically() throws Exception {
+        ChatDatabase.Provider provider = new ChatDatabase.Provider();
+        provider.id = "auto-provider"; provider.displayName = "Auto"; provider.baseUrl = "https://api.openai.com/v1";
+        provider.model = "";
+        coordinator.saveProvider(provider, SECRET);
+        await("auto provider saved", () -> app.database().getProvider("auto-provider") != null);
+
+        ChatDatabase.ModelProfile profile = new ChatDatabase.ModelProfile();
+        profile.id = "auto-gpt"; profile.providerId = provider.id; profile.modelId = "gpt-5.6"; profile.displayName = "GPT";
+        profile.configMode = ModelCatalog.CONFIG_AUTO;
+        profile.contextTokens = 77_777; profile.inputTokens = 55_555; profile.maxOutputTokens = 7_777;
+        coordinator.saveModelProfile(profile);
+        await("auto profile resolved", () -> {
+            ChatDatabase.ModelProfile stored = app.database().getModelProfile("auto-gpt");
+            return stored != null && OpenAiCompatibleTransport.RESPONSES.equals(stored.protocol);
+        });
+        ChatDatabase.ModelProfile before = app.database().getModelProfile("auto-gpt");
+        assertEquals(ClientToolRuntime.OPENAI_RESPONSES, before.clientToolCalling);
+        assertEquals(77_777, before.contextTokens);
+        assertEquals(55_555, before.inputTokens);
+        assertEquals(7_777, before.maxOutputTokens);
+        assertEquals(SECRET, secrets.get("auto-provider"));
+
+        ChatDatabase.Provider changed = app.database().getProvider("auto-provider");
+        changed.baseUrl = "https://third-party.example/v1";
+        host.toasts.clear();
+        coordinator.saveProvider(changed, "");
+        await("unreviewed Auto endpoint rejected", () -> !host.toasts.isEmpty());
+
+        ChatDatabase.Provider afterProvider = app.database().getProvider("auto-provider");
+        ChatDatabase.ModelProfile afterProfile = app.database().getModelProfile("auto-gpt");
+        assertEquals("https://api.openai.com/v1", afterProvider.baseUrl);
+        assertEquals(OpenAiCompatibleTransport.RESPONSES, afterProfile.protocol);
+        assertEquals(ClientToolRuntime.OPENAI_RESPONSES, afterProfile.clientToolCalling);
+        assertEquals(77_777, afterProfile.contextTokens);
+        assertEquals(55_555, afterProfile.inputTokens);
+        assertEquals(7_777, afterProfile.maxOutputTokens);
+        assertEquals("failed Provider save must not alter credential", SECRET, secrets.get("auto-provider"));
+        assertTrue(host.toasts.get(host.toasts.size() - 1).contains("use Advanced"));
+    }
+
     @Test public void anthropicProtocolEndToEnd() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
