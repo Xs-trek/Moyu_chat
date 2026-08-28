@@ -100,6 +100,7 @@ final class ModelCatalog {
             out.outputModalities = "text";
             out.thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
             out.clientToolCalling = ClientToolRuntime.ANTHROPIC_TOOLS;
+            out.deploymentResolved = true;
         }
 
         // Verified OpenCode Go GLM-5.3-Flash route from the v0.0.3 compatibility investigation.
