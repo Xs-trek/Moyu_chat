@@ -49,6 +49,10 @@ if (!db.includes('static Provider deploymentProvider(Provider shared, ModelProfi
 if (!db.includes('CREATE VIRTUAL TABLE knowledge_fts USING fts4') || !db.includes("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'")) fail('lightweight FTS4 knowledge index / auto-to-standard migration missing');
 const contextMode = read('android/app/src/main/java/com/moyu/chat/ContextMode.java');
 const promptPolicy = read('android/app/src/main/java/com/moyu/chat/PromptPolicy.java');
+const modelCatalog = read('android/app/src/main/java/com/moyu/chat/ModelCatalog.java');
+const harnessResolver = read('android/app/src/main/java/com/moyu/chat/HarnessPolicyResolver.java');
+const clientTools = read('android/app/src/main/java/com/moyu/chat/ClientToolRuntime.java');
+const focusedSubagent = read('android/app/src/main/java/com/moyu/chat/FocusedSubagentService.java');
 const knowledgeStore = read('android/app/src/main/java/com/moyu/chat/LocalKnowledgeStore.java');
 if (!contextMode.includes('STANDARD = "standard"') || !contextMode.includes('retrievalEnabled') || !contextMode.includes('evidencePolicyEnabled')) fail('three-tier Harness policy missing');
 if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
