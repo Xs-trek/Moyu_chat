@@ -353,7 +353,11 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         if (!finishReason.isEmpty()) {
             if ("length".equals(finishReason)) sink.onError("response_incomplete", "Response stopped at max output tokens", false);
             else if ("content_filter".equals(finishReason)) sink.onError("content_filter", "Provider stopped the response due to content filtering", false);
-            else if ("tool_calls".equals(finishReason) || "function_call".equals(finishReason)) sink.onError("unsupported_tool_call", "Provider requested a tool call, but Moyu Chat has no tool runtime", false);
+            else if ("tool_calls".equals(finishReason)) {
+                JSONArray calls = toolCollector == null ? new JSONArray() : toolCollector.calls();
+                if (calls.length() == 0) sink.onError("invalid_tool_call", "Provider ended with tool_calls but emitted no valid function calls", false);
+                else sink.onClientToolBatch(calls);
+            } else if ("function_call".equals(finishReason)) sink.onError("unsupported_tool_call", "Legacy function_call is not enabled; use tools/tool_calls", false);
             else if ("network_error".equals(finishReason) || "insufficient_system_resource".equals(finishReason)) sink.onError(finishReason, "Provider terminated the stream: " + finishReason, true);
             return true;
         }
