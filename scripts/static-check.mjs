@@ -157,6 +157,9 @@ if (!mainActivity.includes('openExternalUrl(String url)') || !mainActivity.inclu
 if (!mainActivity.includes('openConversationImportPicker(String source)') || !mainActivity.includes('REQUEST_CONVERSATION_IMPORT') || !mainActivity.includes('Intent.ACTION_OPEN_DOCUMENT') || !mainActivity.includes('importConversationFromUri(')) fail('conversation export import must use an explicit Android document picker/native parser boundary');
 if (!mainActivity.includes('STATE_PENDING_IMPORT_SOURCE') || !mainActivity.includes('onSaveInstanceState(Bundle outState)') || !mainActivity.includes('无法打开系统文件选择器')) fail('document picker source state must survive Activity recreation and picker launch failures must be visible');
 if (!mainActivity.includes('Provider-native Web capabilities') || !mainActivity.includes('p.toolCapabilities = toolCapabilities')) fail('model editor must expose explicit provider-native Web capabilities');
+if (!mainActivity.includes('共享 Base URL') || !mainActivity.includes('protocol、authMode、reasoningWire 在各 Model Profile 单独配置')) fail('Provider editor must expose only shared connection/account configuration');
+if (!mainActivity.includes('协议 (protocol)') || !mainActivity.includes('鉴权方式 (authMode)') || !mainActivity.includes('推理参数映射 (reasoningWire)')
+    || !mainActivity.includes('p.protocol = protocol.getText()') || !mainActivity.includes('p.authMode = auth.getText()') || !mainActivity.includes('p.reasoningWire = reasoningWire.getText()')) fail('Model Profile editor must own protocol/auth/reasoning wire');
 if (!mainActivity.includes('支持的推理档位 (reasoningLevels)') || mainActivity.includes('默认推理档位 (defaultReasoning)')) fail('Model Profile editor must expose reasoning capability range without a current/default effort selector');
 
 const styles = read('src/styles.css');
