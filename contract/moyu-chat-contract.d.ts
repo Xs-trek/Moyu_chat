@@ -78,6 +78,12 @@ export interface ModelProfileView {
   thinkingMode: 'provider-default' | 'adaptive' | 'disabled' | 'manual';
   thinkingBudgetTokens: number;
   continuationMode: 'none' | 'native';
+  configMode: 'auto' | 'manual' | 'legacy-manual';
+  catalogKey: string;
+  catalogVersion: string;
+  catalogSource: string;
+  harnessPreset: 'lean' | 'balanced' | 'reinforced';
+  clientToolCalling: 'none' | 'openai-chat-tools' | 'openai-responses-tools' | 'anthropic-tools';
   inputModalities: string;
   outputModalities: string;
   toolCapabilities: string;
