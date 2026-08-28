@@ -129,7 +129,7 @@ public class ContextBudgetManagerTest {
                 reserved.messages.length() < full.messages.length());
         assertEquals("CURRENT TOOL QUESTION",
                 reserved.messages.getJSONObject(reserved.messages.length() - 1).optString("text"));
-        assertTrue(reserved.estimatedTokens + 1_400 <= manager.effectiveInputBudget(4_000, 0, 512));
+        assertTrue(reserved.estimatedTokens + 2_500 <= manager.effectiveInputBudget(4_000, 0, 512));
     }
 
     @Test
