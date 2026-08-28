@@ -43,6 +43,8 @@ if (!db.includes('private static final int VERSION = 14')) fail('v0.0.4 catalog/
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 for (const marker of ['protocol', 'auth_mode', 'reasoning_wire', 'thinking_mode', 'thinking_budget_tokens', 'continuation_mode']) if (!db.includes(marker)) fail(`deployment-scoped model/session capability persistence missing: ${marker}`);
+for (const marker of ['config_mode', 'catalog_key', 'catalog_version', 'catalog_source', 'harness_preset', 'client_tool_calling', 'subagent_mode']) if (!db.includes(marker)) fail(`v0.0.4 catalog/harness/tool persistence missing: ${marker}`);
+if (!db.includes('CONFIG_LEGACY_MANUAL') || !db.includes("ALTER TABLE model_profiles ADD COLUMN config_mode TEXT NOT NULL DEFAULT 'legacy-manual'")) fail('v0.0.4 migration must preserve existing v0.0.3 model profiles as manual deployments');
 if (!db.includes('static Provider deploymentProvider(Provider shared, ModelProfile profile)') || !db.includes('static Provider deploymentProvider(Provider shared, Session session)')) fail('shared Provider data must resolve through one model/session deployment snapshot before transport use');
 if (!db.includes('CREATE VIRTUAL TABLE knowledge_fts USING fts4') || !db.includes("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'")) fail('lightweight FTS4 knowledge index / auto-to-standard migration missing');
 const contextMode = read('android/app/src/main/java/com/moyu/chat/ContextMode.java');
