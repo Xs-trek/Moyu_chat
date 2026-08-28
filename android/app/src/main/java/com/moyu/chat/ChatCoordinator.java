@@ -170,18 +170,10 @@ final class ChatCoordinator implements AutoCloseable {
                 if (provider == null || provider.id == null || provider.id.trim().isEmpty()) throw new IllegalArgumentException("provider id required");
                 provider.id = bounded(provider.id, 128, "provider id");
                 provider.displayName = bounded(provider.displayName, 128, "display name");
-                provider.protocol = bounded(provider.protocol, 64, "protocol");
-                if (!transports.supports(provider.protocol)) throw new IllegalArgumentException("unsupported protocol");
-                provider.authMode = ProviderAuth.normalize(provider.authMode, provider.protocol);
-                provider.reasoningWire = ReasoningPolicy.normalizeWire(provider.reasoningWire, provider.protocol);
-                provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
-                for (ChatDatabase.ModelProfile existing : db.listModelProfiles(provider.id)) {
-                    ReasoningPolicy.validateLevelsForProvider(provider, existing.reasoningLevels);
-                }
-                provider.model = bounded(provider.model, 256, "model");
-                if (provider.contextTokens < 2048 || provider.contextTokens > 4_000_000) throw new IllegalArgumentException("context tokens out of range");
-                if (provider.inputTokens < 0 || provider.inputTokens > provider.contextTokens) throw new IllegalArgumentException("input tokens out of range");
-                if (provider.maxOutputTokens < 256 || provider.maxOutputTokens >= provider.contextTokens) throw new IllegalArgumentException("max output tokens out of range");
+                // Provider is the shared account/connection boundary. Protocol/auth/reasoning wire are
+                // model-deployment capabilities and are validated in saveModelProfile instead.
+                provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
+                provider.model = provider.model == null ? "" : provider.model.trim();
                 db.saveProvider(provider);
                 if (apiKey != null && !apiKey.trim().isEmpty()) {
                     secrets.put(provider.id, apiKey.trim());
