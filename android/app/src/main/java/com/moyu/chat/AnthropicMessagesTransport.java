@@ -134,7 +134,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
 
     private static void applyClientTools(JSONObject body, ChatTurnOptions options) throws Exception {
         if (options == null) return;
-        appendToolHistory(body, options.toolHistory);
+        appendToolHistory(body, options.toolHistory, options.providerRoundHistory);
         if (!options.clientToolsEnabled(PROTOCOL)) return;
         JSONArray definitions = options.clientToolDefinitions();
         if (definitions.length() == 0) return;
