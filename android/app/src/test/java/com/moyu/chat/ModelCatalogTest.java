@@ -48,6 +48,7 @@ public class ModelCatalogTest {
     @Test public void openCodeGoOverlayRequiresExactReviewedRoot() {
         ModelCatalog.Resolution exact = ModelCatalog.resolve(provider("https://opencode.ai/zen/go/v1"), "glm-5.3-flash");
         assertEquals("moyu-opencode-go-overlay", exact.source);
+        assertTrue(exact.deploymentResolved);
         assertEquals(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, exact.reasoningWire);
         assertEquals("low,high,max", exact.reasoningLevels);
 
