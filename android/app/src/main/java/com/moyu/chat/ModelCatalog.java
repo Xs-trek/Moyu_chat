@@ -63,9 +63,10 @@ final class ModelCatalog {
             out.catalogKey = model;
             out.source = "moyu-base-catalog";
             out.harnessPreset = HarnessProfile.BALANCED;
-            out.contextTokens = 1_048_576;
-            out.maxOutputTokens = 65_536;
         }
+
+        // Context/input/output limits are deployment metadata, never base-model behavior priors.
+        // Only reviewed deployment overlays below may set them.
 
         // Official OpenAI v1 deployment: current public GPT-5.6 guidance explicitly recommends
         // Responses for reasoning/tool workflows and documents the complete effort ladder.
