@@ -27,27 +27,40 @@ final class ChatTurnOptions {
     final String clientToolCalling;
     final String clientToolNames;
     final JSONArray toolHistory;
+    /** Exact provider output/content blocks from earlier client-tool rounds in this same user turn. */
+    final JSONArray providerRoundHistory;
 
     ChatTurnOptions(String toolCapabilities, String webMode) {
-        this(toolCapabilities, webMode, ClientToolRuntime.NONE, "", new JSONArray());
+        this(toolCapabilities, webMode, ClientToolRuntime.NONE, "", new JSONArray(), new JSONArray());
     }
 
     ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
                     String clientToolNames, JSONArray toolHistory) {
+        this(toolCapabilities, webMode, clientToolCalling, clientToolNames, toolHistory, new JSONArray());
+    }
+
+    ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
+                    String clientToolNames, JSONArray toolHistory, JSONArray providerRoundHistory) {
         this.toolCapabilities = normalizeCapabilities(toolCapabilities);
         this.webMode = normalizeWebMode(webMode);
         this.clientToolCalling = ClientToolRuntime.normalizeCalling(clientToolCalling);
         this.clientToolNames = normalizeClientToolNames(clientToolNames);
-        try { this.toolHistory = toolHistory == null ? new JSONArray() : new JSONArray(toolHistory.toString()); }
-        catch (Exception ignored) { throw new IllegalArgumentException("invalid client tool history"); }
+        try {
+            this.toolHistory = toolHistory == null ? new JSONArray() : new JSONArray(toolHistory.toString());
+            this.providerRoundHistory = providerRoundHistory == null ? new JSONArray() : new JSONArray(providerRoundHistory.toString());
+        } catch (Exception ignored) { throw new IllegalArgumentException("invalid client tool/provider round history"); }
     }
 
     ChatTurnOptions withToolHistory(JSONArray history) {
-        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history);
+        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, providerRoundHistory);
+    }
+
+    ChatTurnOptions withRoundHistory(JSONArray history, JSONArray roundHistory) {
+        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, roundHistory);
     }
 
     ChatTurnOptions withoutClientTools() {
-        return new ChatTurnOptions(toolCapabilities, webMode, ClientToolRuntime.NONE, "", toolHistory);
+        return new ChatTurnOptions(toolCapabilities, webMode, ClientToolRuntime.NONE, "", toolHistory, providerRoundHistory);
     }
 
     boolean webEnabled() { return !WEB_OFF.equals(webMode); }
