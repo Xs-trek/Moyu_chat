@@ -54,7 +54,28 @@ public class ModelCatalogTest {
 
         ModelCatalog.Resolution extended = ModelCatalog.resolve(provider("https://opencode.ai/zen/go/v1/extra"), "glm-5.3-flash");
         assertEquals("moyu-base-catalog", extended.source);
+        assertFalse(extended.deploymentResolved);
         assertEquals(ReasoningPolicy.WIRE_NONE, extended.reasoningWire);
         assertEquals("", extended.reasoningLevels);
+    }
+
+    @Test public void autoRequiresReviewedDeploymentAndNeverGuessesLimits() {
+        ChatDatabase.ModelProfile profile = new ChatDatabase.ModelProfile();
+        profile.id = "m"; profile.providerId = "p"; profile.modelId = "gpt-5.6"; profile.displayName = "GPT";
+        profile.contextTokens = 77_777; profile.inputTokens = 55_555; profile.maxOutputTokens = 7_777;
+        try {
+            ModelCatalog.applyAuto(provider("https://third-party.example/v1"), profile,
+                    profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
+            fail("unreviewed endpoint must require Advanced instead of guessing Chat Completions");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("use Advanced"));
+        }
+
+        ModelCatalog.applyAuto(provider("https://api.openai.com/v1"), profile,
+                profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
+        assertEquals(OpenAiCompatibleTransport.RESPONSES, profile.protocol);
+        assertEquals(77_777, profile.contextTokens);
+        assertEquals(55_555, profile.inputTokens);
+        assertEquals(7_777, profile.maxOutputTokens);
     }
 }
