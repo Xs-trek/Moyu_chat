@@ -389,8 +389,10 @@ final class ChatCoordinator implements AutoCloseable {
         if (profile == null || !providerId.equals(profile.providerId)) throw new IllegalStateException("model profile not configured");
         String requestedTitle = p.optString("title", "").trim();
         String title = requestedTitle.isEmpty() ? null : bounded(requestedTitle, 200, "title");
-        String effort = p.optString("reasoningEffort", profile.defaultReasoning);
+        String effort = p.has("reasoningEffort") ? ReasoningPolicy.normalizeEffort(p.optString("reasoningEffort", ReasoningPolicy.DEFAULT)) : ReasoningPolicy.DEFAULT;
+        ReasoningPolicy.validateEffortForProvider(provider, profile.reasoningLevels, effort);
         String contextMode = ContextMode.normalize(p.optString("contextMode", defaultContextMode));
+        if (p.has("contextMode")) { defaultContextMode = contextMode; db.putSetting("defaultContextMode", defaultContextMode); }
         String webMode = ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode));
         ChatDatabase.Session s = db.createSession(profile, title, null, null, effort, contextMode, webMode);
         activate(s.id);
