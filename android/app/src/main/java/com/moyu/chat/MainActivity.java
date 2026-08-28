@@ -158,7 +158,8 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             pendingConversationImportSource = source;
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
             intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "application/zip", "application/x-zip-compressed", "text/json"});
-            startActivityForResult(intent, REQUEST_CONVERSATION_IMPORT);
+            try { startActivityForResult(intent, REQUEST_CONVERSATION_IMPORT); }
+            catch (Exception error) { pendingConversationImportSource = null; Toast.makeText(this, "无法打开系统文件选择器：" + (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()), Toast.LENGTH_LONG).show(); }
         });
     }
 
