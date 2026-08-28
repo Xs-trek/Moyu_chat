@@ -203,7 +203,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     /** Add reviewed Moyu client tools and replay only tool-call/result items from prior rounds. */
     private static void applyClientTools(JSONObject body, String protocol, ChatTurnOptions options) throws Exception {
         if (options == null) return;
-        appendToolHistory(body, protocol, options.toolHistory);
+        appendToolHistory(body, protocol, options.toolHistory, options.providerRoundHistory);
         if (!options.clientToolsEnabled(protocol)) return;
         JSONArray definitions = options.clientToolDefinitions();
         if (definitions.length() == 0) return;
