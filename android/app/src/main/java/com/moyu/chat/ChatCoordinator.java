@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Native-only domain coordinator. UI knows intents/view models; provider keys never cross the bridge. */
 final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_PROVIDER_CONTINUATION_CHARS = 1_048_576;
+    private static final int MAX_CLIENT_TOOL_ROUNDS = 4;
     private static final int MAX_UI_INHERITED_ITEMS = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
     private static final long STREAM_PROJECTION_INTERVAL_MS = 50L;
