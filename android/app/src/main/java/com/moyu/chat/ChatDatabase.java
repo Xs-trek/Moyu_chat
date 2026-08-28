@@ -779,6 +779,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         v.put("reasoning_effort", ReasoningPolicy.normalizeEffort(s.reasoningEffort));
         v.put("input_modalities", normalizeModalities(s.inputModalities)); v.put("output_modalities", normalizeModalities(s.outputModalities));
         v.put("tool_capabilities", ChatTurnOptions.normalizeCapabilities(s.toolCapabilities));
+        String protocol = normalizeProtocol(s.protocol);
+        v.put("protocol", protocol); v.put("auth_mode", ProviderAuth.normalize(s.authMode, protocol));
+        v.put("reasoning_wire", ReasoningPolicy.normalizeWire(s.reasoningWire, protocol));
         v.put("thinking_mode", ReasoningPolicy.normalizeThinkingMode(s.thinkingMode));
         v.put("thinking_budget_tokens", Math.max(0, s.thinkingBudgetTokens));
         v.put("continuation_mode", ProviderContinuationPolicy.normalize(s.continuationMode));
