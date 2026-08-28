@@ -30,6 +30,10 @@ public class ModelCatalogTest {
         assertEquals("moyu-base-catalog", missingV1.source);
         assertFalse("same model name on an unreviewed endpoint is not an Auto deployment", missingV1.deploymentResolved);
         assertEquals(ClientToolRuntime.NONE, missingV1.clientToolCalling);
+
+        ModelCatalog.Resolution typo = ModelCatalog.resolve(provider("https://api.openai.com/v1"), "gpt-5.6-soll");
+        assertFalse("lookalike/typo model IDs must not inherit a reviewed official deployment overlay", typo.deploymentResolved);
+        assertEquals(ClientToolRuntime.NONE, typo.clientToolCalling);
     }
 
     @Test public void officialAnthropicOverlayRequiresExactHostAndV1Root() {
