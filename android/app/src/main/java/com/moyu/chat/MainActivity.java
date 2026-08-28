@@ -43,6 +43,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     private WebView webView;
     private ChatRuntime runtime;
     private ChatCoordinator coordinator;
+    private AlertDialog activeConfigDialog;
     private String pendingImageSessionId;
     private String pendingConversationImportSource;
 
