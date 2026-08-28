@@ -134,6 +134,14 @@ window.addEventListener('resize', repositionOpenChoiceMenu, { passive: true });
 document.addEventListener('click', (event) => {
   const clickedField = event.target.closest('.choice-field');
   if (!clickedField) closeChoiceMenus();
+  const clickedTurnNav = event.target.closest('.turn-nav');
+  if (!clickedTurnNav) {
+    const nav = document.querySelector('.turn-nav.open');
+    if (nav) {
+      nav.classList.remove('open');
+      nav.querySelector('.turn-nav-toggle')?.setAttribute('aria-expanded', 'false');
+    }
+  }
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled) return;
   const action = target.dataset.action;
