@@ -50,7 +50,11 @@ final class ContextMode {
     static Policy resolve(ChatDatabase.Session session, ChatDatabase.Snapshot snapshot) {
         String mode = normalize(session == null ? null : session.contextMode);
         if (MINIMAL.equals(mode)) return new Policy(false, false, false, false, false, false, false, MINIMAL);
-        if (SMART.equals(mode)) return new Policy(true, true, true, true, true, true, true, SMART);
+        if (SMART.equals(mode)) {
+            HarnessPolicyResolver.Policy adaptive = HarnessPolicyResolver.resolve(session);
+            boolean evidencePrompt = !HarnessProfile.LEAN.equals(adaptive.harnessPreset);
+            return new Policy(adaptive.routerEnabled, true, true, evidencePrompt, true, true, adaptive.verifierAvailable, SMART);
+        }
         return new Policy(false, true, true, false, true, true, false, STANDARD);
     }
 }
