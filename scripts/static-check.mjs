@@ -230,7 +230,7 @@ if (!coordinator.includes('boundedInheritedDisplay(') || !coordinator.includes('
 if (!render.includes('choice-field') || !mainUi.includes("postIntent('chat.session.model.set'") || !mainUi.includes("postIntent('chat.session.reasoning.set'")) fail('conversation model/reasoning custom selector missing');
 if (!render.includes('contextModeBadge') || !render.includes("minimal: '极简'") || !render.includes("standard: '标准'") || !render.includes("smart: '智能'")) fail('assistant cards must visibly distinguish minimal/standard/smart modes');
 if (!render.includes("['模型'") || !render.includes("['深度'") || !render.includes("['入/出'") || !render.includes("['总耗'") || !styles.includes('grid-template-columns:repeat(4')) fail('assistant turn facts must use the Moyu UI 2x4 metric layout');
-if (!render.includes('当前模型未声明图片输入能力') || !mainActivity.includes('初始输入模态') || !mainActivity.includes('初始输出模态')) fail('image capability must be visible/configurable instead of silently absent');
+if (!render.includes('当前模型未声明图片输入能力') || !mainActivity.includes('输入模态 (inputModalities)') || !mainActivity.includes('输出模态 (outputModalities)')) fail('image capability must be visible/configurable on the Model Profile instead of silently absent');
 if (!render.includes('contextPreparing') || !render.includes('整理上下文')) fail('hidden preprocessing must be visible as a bounded UI state');
 if (!coordinator.includes('reasoningOut') || !coordinator.includes('outputTokensPerSecond') || !coordinator.includes('cachedInputTokens')) fail('reasoning/usage observability pipeline missing');
 if (!styles.includes('text-align:left') || !render.includes(' token/s')) fail('usage statistics must be left-aligned and use token units');
