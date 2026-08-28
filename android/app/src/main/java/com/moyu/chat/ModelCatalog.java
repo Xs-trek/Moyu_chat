@@ -154,8 +154,9 @@ final class ModelCatalog {
         String reasoning = r.reasoningLevels.isEmpty() ? "Provider 默认/未声明" : r.reasoningLevels.replace(',', '/');
         String tools = ClientToolRuntime.NONE.equals(r.clientToolCalling) ? "未声明" : "支持";
         String web = r.toolCapabilities.isEmpty() ? "Moyu fallback" : r.toolCapabilities;
+        String protocol = r.deploymentResolved ? r.protocol : "未识别（需高级配置）";
         return "来源: " + r.source + "\n"
-                + "协议: " + r.protocol + "\n"
+                + "协议: " + protocol + "\n"
                 + "推理: " + reasoning + "\n"
                 + "输入/输出: " + r.inputModalities + " / " + r.outputModalities + "\n"
                 + "Client Tools: " + tools + "\n"
