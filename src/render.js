@@ -632,7 +632,10 @@ export function patchConversation() {
     : contextPreparing ? '正在整理上下文'
     : session.webPreparingStage ? '正在联网检索'
     : '等待当前回合结束';
-  if (anchor) requestAnimationFrame(() => restoreTimelineAnchor(anchor, session.localSessionId));
+  requestAnimationFrame(() => {
+    if (anchor) restoreTimelineAnchor(anchor, session.localSessionId);
+    syncTurnNavigator(scroll);
+  });
   return true;
 }
 
