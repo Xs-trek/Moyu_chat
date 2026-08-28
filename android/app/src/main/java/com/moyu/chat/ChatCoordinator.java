@@ -213,6 +213,10 @@ final class ChatCoordinator implements AutoCloseable {
                 profile.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
                 profile.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
                 if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("unsupported protocol");
+                if (!ClientToolRuntime.NONE.equals(profile.clientToolCalling)
+                        && !ClientToolRuntime.compatible(profile.protocol, profile.clientToolCalling)) {
+                    throw new IllegalArgumentException("client tool calling wire is incompatible with selected protocol");
+                }
                 profile.authMode = ProviderAuth.normalize(profile.authMode, profile.protocol);
                 profile.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, profile.protocol);
                 ProviderEndpoint.normalize(provider.baseUrl, profile.protocol);
