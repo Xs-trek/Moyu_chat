@@ -59,6 +59,9 @@ final class ChatCoordinator implements AutoCloseable {
             this.continuationMode = ProviderContinuationPolicy.normalize(session.continuationMode);
             this.contextMode = ContextMode.normalize(session.contextMode);
             this.webMode = ChatTurnOptions.normalizeWebMode(session.webMode);
+            this.harnessPreset = HarnessProfile.normalize(session.harnessPreset);
+            this.clientToolCalling = ClientToolRuntime.normalizeCalling(session.clientToolCalling);
+            this.subagentMode = HarnessPolicyResolver.normalizeSubagentMode(session.subagentMode);
             this.contextTokens = session.contextTokens;
             this.inputTokens = session.inputTokens;
             this.maxOutputTokens = session.maxOutputTokens;
