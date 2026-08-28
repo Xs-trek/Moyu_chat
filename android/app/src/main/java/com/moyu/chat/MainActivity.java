@@ -246,9 +246,10 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
 
     @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) {
         runOnUiThread(() -> {
-            if (provider == null) return;
+            if (provider == null || configEditorAlreadyOpen()) return;
             ChatDatabase.ModelProfile p = existing == null ? new ChatDatabase.ModelProfile() : existing;
             LinearLayout form = editorForm();
+            TextView formError = errorBanner(form);
             EditText name = field(form, "模型显示名称", "仅用于本机 UI，可与实际 Model ID 不同。", "例如 DeepSeek V4 Flash Vision", p.displayName == null ? "" : p.displayName, false, false);
             EditText model = field(form, "Model ID", "实际写入 API 请求 body 的 model 字符串。不要填写 OpenCode 客户端自己的 provider/model 前缀。", "deepseek-v4-flash-vision-exp", p.modelId == null ? "" : p.modelId, false, false);
             Switch autoConfig = new Switch(this);
