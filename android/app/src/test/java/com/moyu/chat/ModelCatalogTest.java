@@ -35,6 +35,7 @@ public class ModelCatalogTest {
     @Test public void officialAnthropicOverlayRequiresExactHostAndV1Root() {
         ModelCatalog.Resolution exact = ModelCatalog.resolve(provider("https://api.anthropic.com/v1"), "claude-opus-5");
         assertEquals("moyu-official-anthropic-overlay", exact.source);
+        assertTrue(exact.deploymentResolved);
         assertEquals(AnthropicMessagesTransport.PROTOCOL, exact.protocol);
         assertEquals(ClientToolRuntime.ANTHROPIC_TOOLS, exact.clientToolCalling);
 
