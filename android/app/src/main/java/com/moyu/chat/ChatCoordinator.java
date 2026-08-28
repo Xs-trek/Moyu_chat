@@ -205,6 +205,12 @@ final class ChatCoordinator implements AutoCloseable {
                 profile.providerId = bounded(profile.providerId, 128, "provider id");
                 profile.modelId = bounded(profile.modelId, 256, "model id");
                 profile.displayName = bounded(profile.displayName == null || profile.displayName.trim().isEmpty() ? profile.modelId : profile.displayName, 128, "model display name");
+                profile.configMode = ModelCatalog.normalizeConfigMode(profile.configMode);
+                if (ModelCatalog.CONFIG_AUTO.equals(profile.configMode)) {
+                    ModelCatalog.applyAuto(provider, profile, profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
+                }
+                profile.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
+                profile.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
                 profile.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
                 if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("unsupported protocol");
                 profile.authMode = ProviderAuth.normalize(profile.authMode, profile.protocol);
