@@ -747,6 +747,7 @@ final class ChatCoordinator implements AutoCloseable {
         StringBuilder clientEvidenceContext = new StringBuilder();
         AtomicReference<java.util.function.Consumer<ChatTurnOptions>> roundStarter = new AtomicReference<>();
         AtomicReference<ChatTurnOptions> activeRoundOptions = new AtomicReference<>(webOptions);
+        AtomicReference<CanonicalPrompt> activeRoundPrompt = new AtomicReference<>(mainPrompt);
         int[] roundTextStart = new int[]{0};
         int[] roundReasoningStart = new int[]{0};
         int[] roundMediaStart = new int[]{0};
