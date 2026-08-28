@@ -198,6 +198,83 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         ensureInclude(body, "web_search_call.action.sources");
     }
 
+    /** Add reviewed Moyu client tools and replay only tool-call/result items from prior rounds. */
+    private static void applyClientTools(JSONObject body, String protocol, ChatTurnOptions options) throws Exception {
+        if (options == null) return;
+        appendToolHistory(body, protocol, options.toolHistory);
+        if (!options.clientToolsEnabled(protocol)) return;
+        JSONArray definitions = options.clientToolDefinitions();
+        if (definitions.length() == 0) return;
+        JSONArray tools = body.optJSONArray("tools");
+        if (tools == null) { tools = new JSONArray(); body.put("tools", tools); }
+        for (int i = 0; i < definitions.length(); i++) {
+            JSONObject canonical = definitions.optJSONObject(i); if (canonical == null) continue;
+            JSONObject tool;
+            if (CHAT_COMPLETIONS.equals(protocol)) {
+                tool = new JSONObject().put("type", "function").put("function", new JSONObject()
+                        .put("name", canonical.optString("name")).put("description", canonical.optString("description"))
+                        .put("parameters", canonical.optJSONObject("parameters")).put("strict", true));
+            } else {
+                tool = new JSONObject().put("type", "function")
+                        .put("name", canonical.optString("name")).put("description", canonical.optString("description"))
+                        .put("parameters", canonical.optJSONObject("parameters")).put("strict", true);
+            }
+            tools.put(tool);
+        }
+        body.put("tool_choice", "auto").put("parallel_tool_calls", true);
+    }
+
+    private static void appendToolHistory(JSONObject body, String protocol, JSONArray history) throws Exception {
+        if (history == null || history.length() == 0) return;
+        if (CHAT_COMPLETIONS.equals(protocol)) {
+            JSONArray messages = body.optJSONArray("messages"); if (messages == null) return;
+            java.util.TreeMap<Integer, JSONArray> rounds = groupToolHistory(history);
+            for (JSONArray entries : rounds.values()) {
+                JSONArray calls = new JSONArray();
+                for (int i = 0; i < entries.length(); i++) {
+                    JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
+                    calls.put(new JSONObject().put("id", entry.optString("id")).put("type", "function")
+                            .put("function", new JSONObject().put("name", entry.optString("name"))
+                                    .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString())));
+                }
+                if (calls.length() > 0) messages.put(new JSONObject().put("role", "assistant").put("content", JSONObject.NULL).put("tool_calls", calls));
+                for (int i = 0; i < entries.length(); i++) {
+                    JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
+                    messages.put(new JSONObject().put("role", "tool").put("tool_call_id", entry.optString("id"))
+                            .put("content", toolResultText(entry)));
+                }
+            }
+        } else if (RESPONSES.equals(protocol)) {
+            JSONArray input = body.optJSONArray("input"); if (input == null) return;
+            for (int i = 0; i < history.length(); i++) {
+                JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
+                input.put(new JSONObject().put("type", "function_call").put("call_id", entry.optString("id"))
+                        .put("name", entry.optString("name"))
+                        .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString()));
+                input.put(new JSONObject().put("type", "function_call_output").put("call_id", entry.optString("id"))
+                        .put("output", toolResultText(entry)));
+            }
+        }
+    }
+
+    private static java.util.TreeMap<Integer, JSONArray> groupToolHistory(JSONArray history) {
+        java.util.TreeMap<Integer, JSONArray> rounds = new java.util.TreeMap<>();
+        for (int i = 0; i < history.length(); i++) {
+            JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
+            int round = Math.max(0, entry.optInt("round", 0));
+            JSONArray group = rounds.get(round); if (group == null) { group = new JSONArray(); rounds.put(round, group); }
+            group.put(entry);
+        }
+        return rounds;
+    }
+
+    private static String toolResultText(JSONObject entry) {
+        if (entry == null) return "Tool result unavailable";
+        String error = entry.optString("error", "").trim();
+        if (!error.isEmpty()) return "Tool error: " + error;
+        return entry.optString("result", "");
+    }
+
     private static void applyContinuationRequest(JSONObject body, String protocol, CanonicalPrompt prompt) throws Exception {
         if (!RESPONSES.equals(protocol) || prompt == null || !prompt.allowProviderContinuation) return;
         // Stateless/manual-history continuation needs replayable encrypted reasoning when the provider supports it.
