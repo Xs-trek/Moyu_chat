@@ -725,7 +725,7 @@ public class TransportMockServerTest {
         assertFalse("credential must never enter request JSON", request.getBody().readUtf8().contains("test-key"));
     }
 
-    @Test public void anthropicUsesRootPlusV1MessagesPath() throws Exception {
+    @Test public void anthropicUsesSharedV1BasePlusMessagesPath() throws Exception {
         server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
         RecordingSink sink = new RecordingSink();
         anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", prompt("user", "hi"), sink);
