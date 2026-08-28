@@ -359,4 +359,4 @@ document.addEventListener('focusin', (event) => {
   if (event.target?.name === 'message') resizeComposerTextarea(event.target);
 });
 
-postIntent('app.ready', { uiVersion: '0.0.2' });
+postIntent('app.ready', { uiVersion: '0.0.3' });
