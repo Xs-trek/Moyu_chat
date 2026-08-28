@@ -64,8 +64,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
         public String continuationMode = ProviderContinuationPolicy.NONE;
         /** v0.0.4 catalog + adaptive harness metadata. */
-        public String configMode = ModelCatalog.CONFIG_AUTO;
-        public String catalogKey = "unknown", catalogVersion = ModelCatalog.CATALOG_VERSION, catalogSource = "neutral-defaults";
+        // Programmatic callers are explicit/manual by default. The New Model UI opts into Auto
+        // deliberately, so setting protocol/capability fields can never be silently overwritten.
+        public String configMode = ModelCatalog.CONFIG_MANUAL;
+        public String catalogKey = "unknown", catalogVersion = "", catalogSource = "manual";
         public String harnessPreset = HarnessProfile.BALANCED;
         public String clientToolCalling = ClientToolRuntime.NONE;
         public int thinkingBudgetTokens = 0;
