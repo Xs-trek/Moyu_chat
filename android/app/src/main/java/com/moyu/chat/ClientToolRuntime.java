@@ -105,6 +105,8 @@ final class ClientToolRuntime {
                 try {
                     if (cancellation != null && cancellation.isCancelled()) throw new java.io.InterruptedIOException("cancelled");
                     String name = entry.optString("name", "");
+                    if (!allowed.contains(name)) throw new IllegalStateException("client tool was not exposed for this turn: " + name);
+                    if (call.optBoolean("invalidArguments", false)) throw new IllegalArgumentException("invalid tool arguments JSON");
                     JSONObject args = entry.optJSONObject("arguments");
                     if (WEB_SEARCH.equals(name)) {
                         MoyuWebService.ToolResult result = web.executeSearch(args == null ? "" : args.optString("query", ""), cancellation);
