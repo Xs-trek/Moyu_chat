@@ -35,6 +35,22 @@ public class ProviderEndpointTest {
         assertRejected("not a url");
     }
 
+    @Test
+    public void protocolAwareValidationRejectsDuplicatedFixedPaths() {
+        assertProtocolRejected("https://api.example.com/v1/chat/completions", OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        assertProtocolRejected("https://api.example.com/v1/responses", OpenAiCompatibleTransport.RESPONSES);
+        assertProtocolRejected("https://api.example.com/v1/messages", AnthropicMessagesTransport.PROTOCOL);
+        assertEquals("https://api.example.com/v1", ProviderEndpoint.normalize("https://api.example.com/v1", OpenAiCompatibleTransport.RESPONSES));
+        assertEquals("https://api.example.com", ProviderEndpoint.normalize("https://api.example.com", AnthropicMessagesTransport.PROTOCOL));
+    }
+
+    private static void assertProtocolRejected(String raw, String protocol) {
+        try {
+            ProviderEndpoint.normalize(raw, protocol);
+            fail("expected protocol-aware rejection: " + raw);
+        } catch (IllegalArgumentException expected) { }
+    }
+
     private static void assertRejected(String raw) {
         try {
             ProviderEndpoint.normalize(raw);
