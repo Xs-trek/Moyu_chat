@@ -300,7 +300,9 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         }
         if ("message_stop".equals(type)) {
             if (continuation != null) continuation.flush();
-            sink.onCompleted(); return true;
+            JSONArray calls = clientTools == null ? new JSONArray() : clientTools.calls();
+            if (calls.length() > 0) sink.onClientToolBatch(calls); else sink.onCompleted();
+            return true;
         }
         if ("error".equals(type)) {
             JSONObject error = event.optJSONObject("error"); String code = error == null ? "provider_error" : error.optString("type", "provider_error");
