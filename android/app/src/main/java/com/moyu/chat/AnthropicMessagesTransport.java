@@ -48,7 +48,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             JSONObject body = body(model, prompt, provider.maxOutputTokens);
             applyHostedTools(body, options == null ? ChatTurnOptions.NONE : options);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
-            Request.Builder builder = new Request.Builder().url(base + "/v1/messages")
+            Request.Builder builder = new Request.Builder().url(base + "/messages")
                     .header("anthropic-version", "2023-06-01")
                     .header("Accept", "text/event-stream")
                     .post(RequestBody.create(JSON, body.toString()));
