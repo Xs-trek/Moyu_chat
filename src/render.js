@@ -250,6 +250,7 @@ function streamStageLabel(stage) {
   if (stage === 'preparing') return '整理上下文';
   if (stage === 'web_search') return '搜索网页';
   if (stage === 'web_fetch') return '读取网页';
+  if (stage === 'tool') return '执行工具';
   if (stage === 'connected') return '已连接 · 等待模型';
   if (stage === 'reasoning') return '推理中';
   if (stage === 'output') return '输出中';
