@@ -36,6 +36,13 @@ public class ProviderEndpointTest {
     }
 
     @Test
+    public void genericProviderRootRejectsKnownFinalProtocolPathsEarly() {
+        assertRejected("https://api.example.com/v1/chat/completions");
+        assertRejected("https://api.example.com/v1/responses");
+        assertRejected("https://api.example.com/v1/messages");
+    }
+
+    @Test
     public void protocolAwareValidationRejectsDuplicatedFixedPaths() {
         assertProtocolRejected("https://api.example.com/v1/chat/completions", OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         assertProtocolRejected("https://api.example.com/v1/responses", OpenAiCompatibleTransport.RESPONSES);
