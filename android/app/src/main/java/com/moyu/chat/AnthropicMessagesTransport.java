@@ -225,7 +225,11 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                     if (parse(event, sink, continuation, clientTools)) return;
                 }
             }
-            if (sawData) { continuation.flush(); sink.onCompleted(); }
+            if (sawData) {
+                continuation.flush();
+                JSONArray calls = clientTools.calls();
+                if (calls.length() > 0) sink.onClientToolBatch(calls); else sink.onCompleted();
+            }
             else if (sawUnexpectedPayload) sink.onError("unexpected_response_format", "Provider returned HTTP 200 but not an SSE data stream", false);
             else sink.onError("empty_stream", "Provider returned HTTP 200 with no stream data", true);
         } catch (IOException error) {
