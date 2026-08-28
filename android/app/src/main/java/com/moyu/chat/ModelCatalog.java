@@ -73,7 +73,8 @@ final class ModelCatalog {
         // Official OpenAI v1 deployment: current public GPT-5.6 guidance explicitly recommends
         // Responses for reasoning/tool workflows and documents the complete effort ladder.
         if (base.equals("https://api.openai.com/v1")
-                && (model.equals("gpt-5.6") || model.startsWith("gpt-5.6-"))) {
+                && (model.equals("gpt-5.6") || model.equals("gpt-5.6-sol")
+                || model.equals("gpt-5.6-terra") || model.equals("gpt-5.6-luna"))) {
             out.source = "moyu-official-openai-overlay";
             out.protocol = OpenAiCompatibleTransport.RESPONSES;
             out.authMode = ProviderAuth.BEARER;
