@@ -52,6 +52,21 @@ final class ContextBuilder {
     }
 
     /**
+     * Same-turn tool/provider history is transport input even though it is not durable Chat history.
+     * Re-budget only the already selected disposable prompt so optional Web/Memory material is never
+     * re-expanded while older complete turns can still be dropped to make exact protocol history fit.
+     */
+    CanonicalPrompt reserveForAdditionalInput(CanonicalPrompt prompt, int contextTokens, int inputTokens,
+                                              int outputTokens, int reserveTokens) throws Exception {
+        if (prompt == null) throw new IllegalArgumentException("prompt required");
+        ContextBudgetManager.Result selected = budgets.selectWithReserve(prompt.instructions, prompt.messages,
+                contextTokens, inputTokens, outputTokens, reserveTokens);
+        return new CanonicalPrompt(prompt.instructions, selected.messages, prompt.truncated || selected.truncated,
+                selected.estimatedTokens + Math.max(0, reserveTokens), prompt.inheritedItemCount, prompt.localItemCount,
+                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation);
+    }
+
+    /**
      * Proactive compaction is based on the active raw tail, including provider-private replay state,
      * not only visible text. Trigger=50%; target=30% of the effective input window.
      */
