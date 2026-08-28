@@ -1070,7 +1070,9 @@ final class ChatCoordinator implements AutoCloseable {
                         && HarnessPolicyResolver.shouldVerify(session, resolvedTaskProfile, usedExternalEvidence,
                         mainPrompt.truncated, subagentCount[0] > 0);
                 if (!shouldVerify) {
-                    try { attachProviderContinuation(live, turnConfig, providerContinuationItems); } catch (Exception ignored) { }
+                    // Client-tool turns depend on hidden tool_call/tool_result history that is intentionally
+                    // not durable Chat history. Do not persist partial native continuation across user turns.
+                    if (clientToolBatchCount.get() == 0) try { attachProviderContinuation(live, turnConfig, providerContinuationItems); } catch (Exception ignored) { }
                     finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], null);
                     return;
                 }
