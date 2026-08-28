@@ -173,6 +173,9 @@ if (!mainUi.includes('selectionScopeForNode') || !mainUi.includes('pointerMaySel
 if (mainUi.includes("['pointerdown', 'touchstart']") || mainUi.includes("['pointerup', 'pointercancel', 'touchend', 'touchcancel']")) fail('duplicate global touch/pointer render leases must not return');
 if (!mainUi.includes('positionChoiceMenu') || !mainUi.includes('window.visualViewport')) fail('choice menus must clamp to the Android visual viewport');
 if (!styles.includes('.choice-scrim') || !styles.includes('background:transparent')) fail('mobile model/reasoning sheet must not dim the entire conversation');
+if (!styles.includes('.choice-scrim { position:fixed; inset:0; z-index:11;')
+    || !mainUi.includes("const openSheetField = document.querySelector('.choice-field.open.sheet');")
+    || !mainUi.includes('if (openSheetField && !openSheetField.contains(event.target))')) fail('mobile choice sheet scrim must stay below the composer stacking context while outside taps are consumed as close-only');
 if (mainUi.includes('input.blur()')) fail('composer must not blur immediately after send; stale pre-send views can repopulate the draft');
 if (!mainUi.includes('draftGenerations') || !mainUi.includes('advanceDraftGeneration(sessionId)') || !coordinator.includes('db.setDraft(sessionId, "")')) fail('submitted composer text must not be resurrected by stale draft writes or preflight failures');
 const markdown = read('src/markdown.js');

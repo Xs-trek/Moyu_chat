@@ -132,7 +132,15 @@ window.visualViewport?.addEventListener?.('scroll', repositionOpenChoiceMenu, { 
 window.addEventListener('resize', repositionOpenChoiceMenu, { passive: true });
 
 document.addEventListener('click', (event) => {
+  const openSheetField = document.querySelector('.choice-field.open.sheet');
   const clickedField = event.target.closest('.choice-field');
+  // The mobile scrim sits below the composer stacking context so the sheet remains touchable.
+  // A tap elsewhere in the composer must still be consumed as "close sheet" rather than
+  // accidentally sending a message or changing another turn control underneath it.
+  if (openSheetField && !openSheetField.contains(event.target)) {
+    closeChoiceMenus();
+    return;
+  }
   if (!clickedField) closeChoiceMenus();
   const clickedTurnNav = event.target.closest('.turn-nav');
   if (!clickedTurnNav) {
