@@ -684,11 +684,21 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             ContentValues provider = providerValues(p);
             int updated = db.update("providers", provider, "provider_id=?", new String[]{p.id});
             if (updated == 0) db.insertWithOnConflict("providers", null, provider, SQLiteDatabase.CONFLICT_ABORT);
+            boolean hasProfiles = profiles != null && !profiles.isEmpty();
             if (profiles != null) for (ModelProfile profile : profiles) {
                 if (profile == null) continue;
                 if (!p.id.equals(profile.providerId)) throw new IllegalArgumentException("model profile belongs to another provider");
                 ContentValues model = modelProfileValues(profile);
                 int modelUpdated = db.update("model_profiles", model, "profile_id=?", new String[]{profile.id});
+                if (modelUpdated == 0) db.insertWithOnConflict("model_profiles", null, model, SQLiteDatabase.CONFLICT_ABORT);
+            }
+            // Compatibility for programmatic/legacy one-step Provider creation. The v0.0.4 UI keeps
+            // Provider.model empty and creates Model Profiles explicitly, so this never invents a model
+            // for normal Auto configuration.
+            if (!hasProfiles && p.model != null && !p.model.trim().isEmpty()) {
+                ModelProfile legacy = legacyProfile(p, p.model.trim());
+                ContentValues model = modelProfileValues(legacy);
+                int modelUpdated = db.update("model_profiles", model, "profile_id=?", new String[]{legacy.id});
                 if (modelUpdated == 0) db.insertWithOnConflict("model_profiles", null, model, SQLiteDatabase.CONFLICT_ABORT);
             }
             if (bumpCredentialEpoch) {
