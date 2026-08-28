@@ -85,6 +85,30 @@ final class ReasoningPolicy {
         return false;
     }
 
+    static void validateLevelsForProvider(ChatDatabase.Provider provider, String levels) {
+        if (provider == null) throw new IllegalArgumentException("provider required");
+        String normalized = normalizeLevels(levels);
+        if (normalized.isEmpty()) return;
+        String wire = normalizeWire(provider.reasoningWire, provider.protocol);
+        if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("reasoning levels require an enabled reasoning wire");
+        for (String item : normalized.split(",")) {
+            if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol)
+                    && (NONE_LEVEL.equals(item) || MINIMAL.equals(item))) {
+                throw new IllegalArgumentException("anthropic-messages effort supports low/medium/high/xhigh/max; thinking on/off is configured separately");
+            }
+        }
+    }
+
+    static void validateEffortForProvider(ChatDatabase.Provider provider, String levels, String effort) {
+        String normalized = normalizeEffort(effort);
+        if (!allows(levels, normalized)) throw new IllegalArgumentException("reasoning effort not supported by model profile");
+        if (DEFAULT.equals(normalized)) return;
+        validateLevelsForProvider(provider, levels);
+        if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol) && NONE_LEVEL.equals(normalized)) {
+            throw new IllegalArgumentException("anthropic-messages does not use effort=none; configure thinking separately");
+        }
+    }
+
     /** Current transport entry point: thinking mode is independent from effort on Anthropic. */
     static void apply(JSONObject body, ChatDatabase.Provider provider, String effort) throws Exception {
         if (provider == null) throw new IllegalArgumentException("provider required");
