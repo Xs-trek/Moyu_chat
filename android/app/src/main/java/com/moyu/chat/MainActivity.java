@@ -264,15 +264,18 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                     if (p.id == null) p.id = "model-" + UUID.randomUUID();
                     p.providerId = provider.id; p.modelId = model.getText().toString().trim(); p.displayName = name.getText().toString().trim();
                     if (p.modelId.isEmpty()) throw new IllegalArgumentException("Model ID required");
+                    // Limits are explicit deployment/user inputs in both modes; Catalog never guesses them.
+                    p.contextTokens = Integer.parseInt(context.getText().toString().trim());
+                    p.inputTokens = Integer.parseInt(input.getText().toString().trim());
+                    p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
                     p.configMode = autoConfig.isChecked() ? ModelCatalog.CONFIG_AUTO : ModelCatalog.CONFIG_MANUAL;
                     if (autoConfig.isChecked()) {
-                        // Coordinator resolves the reviewed Catalog as one coherent deployment profile.
+                        // Coordinator resolves reviewed wire/capability/Harness metadata while preserving limits above.
                         p.catalogVersion = ModelCatalog.CATALOG_VERSION;
                     } else {
                         p.protocol = protocol.getText().toString().trim(); p.authMode = auth.getText().toString().trim(); p.reasoningWire = reasoningWire.getText().toString().trim();
                         p.inputModalities = inputModalities.getText().toString().trim(); p.outputModalities = outputModalities.getText().toString().trim();
                         p.toolCapabilities = toolCapabilities.getText().toString().trim();
-                        p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(input.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
                         p.reasoningLevels = levels.getText().toString().trim(); p.defaultReasoning = ReasoningPolicy.DEFAULT;
                         p.thinkingMode = thinkingMode.getText().toString().trim(); p.thinkingBudgetTokens = Integer.parseInt(thinkingBudget.getText().toString().trim());
                         p.continuationMode = continuationMode.getText().toString().trim();
