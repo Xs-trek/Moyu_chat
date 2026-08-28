@@ -103,7 +103,7 @@ function sessionContextModeBadge(session) {
   const label = labels[mode] || mode;
   const effective = String(session?.effectiveContextMode || '').trim();
   const title = effective && effective !== mode ? `上下文模式：${label} · 实际 ${effective}` : `上下文模式：${label}`;
-  return badge(label, `context-mode ${mode}`);
+  return h('span', { class: `badge context-mode ${mode}`, title, text: label });
 }
 
 function home(view) {
