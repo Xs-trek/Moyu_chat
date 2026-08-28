@@ -55,6 +55,10 @@ const clientTools = read('android/app/src/main/java/com/moyu/chat/ClientToolRunt
 const focusedSubagent = read('android/app/src/main/java/com/moyu/chat/FocusedSubagentService.java');
 const knowledgeStore = read('android/app/src/main/java/com/moyu/chat/LocalKnowledgeStore.java');
 if (!contextMode.includes('STANDARD = "standard"') || !contextMode.includes('retrievalEnabled') || !contextMode.includes('evidencePolicyEnabled')) fail('three-tier Harness policy missing');
+if (!modelCatalog.includes('CONFIG_AUTO') || !modelCatalog.includes('CONFIG_MANUAL') || !modelCatalog.includes('CONFIG_LEGACY_MANUAL') || !modelCatalog.includes('CATALOG_VERSION')) fail('v0.0.4 reviewed model catalog/config modes missing');
+if (!harnessResolver.includes('shouldVerify(') || !harnessResolver.includes('SUBAGENT_AUTO') || !harnessResolver.includes('HarnessProfile.LEAN')) fail('v0.0.4 adaptive Harness/verifier/subagent policy missing');
+if (!clientTools.includes('MAX_PARALLEL_SUBAGENTS = 4') || !clientTools.includes('client tool was not exposed for this turn') || !clientTools.includes('DELEGATE_SUBTASK')) fail('v0.0.4 bounded capability-gated client tool runtime missing');
+if (!focusedSubagent.includes('isolated worker') || !focusedSubagent.includes('runOutputWithEffort')) fail('v0.0.4 isolated same-model focused subagent missing');
 if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
 if (!promptPolicy.includes('compactInstructions(') || !read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('selectWithPolicy(')) fail('weak-context models require deterministic compact Harness fallback instead of an arbitrary occupancy threshold');
 if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('searchUserMemory(') || !knowledgeStore.includes('includeImports') || !knowledgeStore.includes('current session and its current origin snapshot are excluded')) fail('snapshot + capability-gated cross-chat retrieval boundary missing');
