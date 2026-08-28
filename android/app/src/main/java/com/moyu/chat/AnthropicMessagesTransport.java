@@ -397,10 +397,10 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 JSONObject block = event.optJSONObject("content_block"); if (block == null) return;
                 String type = block.optString("type", "");
                 if (!("text".equals(type) || "thinking".equals(type) || "redacted_thinking".equals(type)
-                        || "server_tool_use".equals(type) || "web_search_tool_result".equals(type)
+                        || "tool_use".equals(type) || "server_tool_use".equals(type) || "web_search_tool_result".equals(type)
                         || "web_fetch_tool_result".equals(type))) return;
                 blocks.put(index, new JSONObject(block.toString()));
-                if ("server_tool_use".equals(type)) inputJson.put(index, new StringBuilder());
+                if ("tool_use".equals(type) || "server_tool_use".equals(type)) inputJson.put(index, new StringBuilder());
             } catch (Exception ignored) { }
         }
 
