@@ -667,6 +667,9 @@ export function render() {
   document.documentElement.dataset.theme = resolvedTheme(view);
   document.documentElement.dataset.route = view.route || 'home';
   root.replaceChildren(shell(view, body));
-  if (view.route === 'conversation' && sessionId) requestAnimationFrame(() => restoreTimelineAnchor(anchor, sessionId));
+  if (view.route === 'conversation' && sessionId) requestAnimationFrame(() => {
+    if (anchor) restoreTimelineAnchor(anchor, sessionId);
+    syncTurnNavigator(document.querySelector('.timeline-scroll'));
+  });
   renderNotice();
 }
