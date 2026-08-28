@@ -234,6 +234,25 @@ public class ChatDatabaseTest {
         upgraded.close();
     }
 
+    @Test public void upgradeFromV13PreservesManualDeploymentAndFreezesV004Defaults() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(13);
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        assertNotNull(profile); assertNotNull(session);
+        assertEquals("v0.0.3 profiles must never become auto-catalog deployments during migration",
+                ModelCatalog.CONFIG_LEGACY_MANUAL, profile.configMode);
+        assertEquals("legacy-manual", profile.catalogSource);
+        assertEquals(HarnessProfile.BALANCED, profile.harnessPreset);
+        assertEquals(ClientToolRuntime.NONE, profile.clientToolCalling);
+        assertEquals(HarnessProfile.BALANCED, session.harnessPreset);
+        assertEquals(ClientToolRuntime.NONE, session.clientToolCalling);
+        assertEquals(HarnessPolicyResolver.SUBAGENT_OFF, session.subagentMode);
+        assertEquals(OpenAiCompatibleTransport.RESPONSES, session.protocol);
+        assertEquals(2, upgraded.timeline(session.id).length());
+        upgraded.close();
+    }
+
     @Test public void localBranchesInheritFrozenContextMode() {
         ChatDatabase.Provider provider = provider("p-mode"); db.saveProvider(provider);
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); assertNotNull(profile);
