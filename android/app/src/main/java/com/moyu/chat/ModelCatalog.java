@@ -84,6 +84,7 @@ final class ModelCatalog {
             out.toolCapabilities = ChatTurnOptions.WEB_SEARCH;
             out.continuationMode = ProviderContinuationPolicy.NATIVE;
             out.clientToolCalling = ClientToolRuntime.OPENAI_RESPONSES;
+            out.deploymentResolved = true;
         }
 
         // Official Anthropic deployment. Tool/effort behavior is documented by the Messages API;
