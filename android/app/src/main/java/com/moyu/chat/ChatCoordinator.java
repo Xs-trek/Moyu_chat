@@ -117,6 +117,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final ScheduledExecutorService streamProjectionScheduler = Executors.newSingleThreadScheduledExecutor();
     // Blocking Router/Checkpoint/Web preparation must never occupy the UI/intent authority queue.
     private final ExecutorService preparationWorker = Executors.newFixedThreadPool(2);
+    // Client tools may run independently; the hard subagent fan-out is four and no child may recurse.
+    private final ExecutorService clientToolWorker = Executors.newFixedThreadPool(ClientToolRuntime.MAX_PARALLEL_SUBAGENTS);
     private final ChatTransportRegistry transports = new ChatTransportRegistry();
     private final ContextBuilder contexts;
     private final SnapshotService snapshots;
