@@ -206,6 +206,16 @@ if (!coordinator.includes('if (p.has("contextMode")) { defaultContextMode = cont
 if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('联网 · 关闭') || !render.includes('联网 · 自动') || !render.includes('联网 · 开启')) fail('Web modes must be explicitly selectable for new chats/imports/settings');
 if (!render.includes('reasoningCapability(model)') || !render.includes('深度支持 ·') || render.includes('data-reasoning-select')) fail('Provider/Model overview must show a read-only reasoning capability range; actual effort selection belongs to the conversation');
 if (!mainUi.includes("action === 'rename-session'") || !mainUi.includes("postIntent('chat.session.rename'") || !render.includes('openTextDialog') || !render.includes("'rename-session'")) fail('manual session rename must be exposed through app-owned UI');
+if (!render.includes('TURN_NAV_MIN_TURNS = 6')
+    || !render.includes("item?.kind === 'message' && item?.role === 'user'")
+    || !render.includes("turnAnchor: 'user'")
+    || !render.includes('reconcileTurnNavigator(layout, session)')
+    || !render.includes('export function syncTurnNavigator(')
+    || !mainUi.includes("action === 'toggle-turn-nav'")
+    || !mainUi.includes("action === 'jump-turn'")
+    || !mainUi.includes("setTimelineFollowLatest(scroller.dataset.sessionId || '', false)")
+    || !mainUi.includes('nodeRect.top - scrollerRect.top - 8')
+    || !styles.includes('.turn-nav-item.active')) fail('v0.0.3 long-conversation navigation must be a local user-turn rail with active markers and top-aligned jumps');
 if (!mainUi.includes("postIntent('external.open'") || !render.includes("'open-source'")) fail('Web source links must cross the native external.open boundary');
 if (!render.includes('renderSafeMarkdown') || !render.includes('assistant-footer') || !render.includes("'copy-message'") || !render.includes("'jump-latest'")) fail('safe Markdown/assistant footer/copy/jump-latest UX missing');
 if (!render.includes("verification?.status === 'valid'") || !render.includes('verification?.coverageComplete === true')) fail('verifier feedback UI must reject invalid or incomplete verification');
