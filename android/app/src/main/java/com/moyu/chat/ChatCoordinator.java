@@ -1077,7 +1077,7 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.Provider provider = preferredProvider(); if (provider == null) throw new IllegalStateException("configure a Chat provider before opening an imported conversation");
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); if (profile == null) throw new IllegalStateException("configure a model before opening an imported conversation");
         ChatDatabase.Session branch = db.createSession(profile, "导入 · " + snapshot.sourceTitle, snapshot.id, null,
-                profile.defaultReasoning, contextMode, webMode);
+                ReasoningPolicy.DEFAULT, contextMode, webMode);
         activate(branch.id);
     }
 
