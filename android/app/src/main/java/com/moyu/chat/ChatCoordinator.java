@@ -1191,6 +1191,9 @@ final class ChatCoordinator implements AutoCloseable {
                 JSONArray models = new JSONArray();
                 for (ChatDatabase.ModelProfile m : db.listModelProfiles(p.id)) models.put(new JSONObject()
                         .put("modelProfileId", m.id).put("modelId", m.modelId).put("displayName", m.displayName)
+                        .put("protocol", ChatDatabase.normalizeProtocol(m.protocol))
+                        .put("authMode", ProviderAuth.normalize(m.authMode, m.protocol))
+                        .put("reasoningWire", ReasoningPolicy.normalizeWire(m.reasoningWire, m.protocol))
                         .put("contextTokens", m.contextTokens).put("inputTokens", m.inputTokens).put("maxOutputTokens", m.maxOutputTokens)
                         .put("reasoningLevels", m.reasoningLevels)
                         .put("thinkingMode", ReasoningPolicy.normalizeThinkingMode(m.thinkingMode)).put("thinkingBudgetTokens", Math.max(0, m.thinkingBudgetTokens))
@@ -1198,9 +1201,9 @@ final class ChatCoordinator implements AutoCloseable {
                         .put("inputModalities", m.inputModalities).put("outputModalities", m.outputModalities)
                         .put("toolCapabilities", ChatTurnOptions.normalizeCapabilities(m.toolCapabilities)));
                 String defaultModel = models.length() > 0 ? models.optJSONObject(0).optString("modelId", p.model) : p.model;
-                providers.put(new JSONObject().put("providerId", p.id).put("displayName", p.displayName).put("protocol", p.protocol)
-                        .put("authMode", p.authMode).put("reasoningWire", p.reasoningWire).put("model", defaultModel)
-                        .put("hasCredential", secrets.has(p.id)).put("configured", secrets.has(p.id) && models.length() > 0).put("models", models));
+                providers.put(new JSONObject().put("providerId", p.id).put("displayName", p.displayName).put("baseUrl", p.baseUrl)
+                        .put("model", defaultModel).put("hasCredential", secrets.has(p.id))
+                        .put("configured", secrets.has(p.id) && models.length() > 0).put("models", models));
             }
             view.put("providers", providers);
             JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : db.listSessions()) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
