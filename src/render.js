@@ -2,6 +2,8 @@ import { captureTimelineAnchor, restoreTimelineAnchor } from './scroll-anchor.js
 import { renderSafeMarkdown } from './markdown.js';
 import { getState } from './state.js';
 
+const TURN_NAV_MIN_TURNS = 6;
+
 function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
