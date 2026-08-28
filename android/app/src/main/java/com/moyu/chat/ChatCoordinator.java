@@ -197,7 +197,8 @@ final class ChatCoordinator implements AutoCloseable {
     void saveModelProfile(ChatDatabase.ModelProfile profile) {
         worker.execute(() -> {
             try {
-                if (profile == null || db.getProvider(profile.providerId) == null) throw new IllegalArgumentException("provider not found");
+                ChatDatabase.Provider provider = profile == null ? null : db.getProvider(profile.providerId);
+                if (profile == null || provider == null) throw new IllegalArgumentException("provider not found");
                 profile.id = bounded(profile.id, 160, "model profile id");
                 profile.providerId = bounded(profile.providerId, 128, "provider id");
                 profile.modelId = bounded(profile.modelId, 256, "model id");
