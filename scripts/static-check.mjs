@@ -174,6 +174,7 @@ if (!mainActivity.includes('共享 Base URL') || !mainActivity.includes('protoco
 if (!mainActivity.includes('协议 (protocol)') || !mainActivity.includes('鉴权方式 (authMode)') || !mainActivity.includes('推理参数映射 (reasoningWire)')
     || !mainActivity.includes('p.protocol = protocol.getText()') || !mainActivity.includes('p.authMode = auth.getText()') || !mainActivity.includes('p.reasoningWire = reasoningWire.getText()')) fail('Model Profile editor must own protocol/auth/reasoning wire');
 if (!mainActivity.includes('支持的推理档位 (reasoningLevels)') || mainActivity.includes('默认推理档位 (defaultReasoning)')) fail('Model Profile editor must expose reasoning capability range without a current/default effort selector');
+if (!coordinator.includes('interface SaveCallback') || !mainActivity.includes('coordinator.saveProvider(p, key.getText().toString(), error ->') || !mainActivity.includes('coordinator.saveModelProfile(p, error ->') || !mainActivity.includes('if (error == null) dialog.dismiss()')) fail('async Provider/Model validation must keep the editor open on failure and dismiss only after native success');
 
 const styles = read('src/styles.css');
 for (const marker of ['overflow-x:hidden', 'conversation-active', '100dvh', 'timeline-scroll']) if (!styles.includes(marker)) fail(`native-feeling viewport/scroll constraint missing: ${marker}`);
