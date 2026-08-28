@@ -17,6 +17,10 @@ final class ProviderEndpoint {
         }
         String normalized = url.toString();
         while (normalized.endsWith("/") && normalized.length() > HTTPS_PREFIX.length()) normalized = normalized.substring(0, normalized.length() - 1);
+        String path = HttpUrl.parse(normalized).encodedPath();
+        if (path != null && (path.endsWith("/chat/completions") || path.endsWith("/responses") || path.endsWith("/messages"))) {
+            throw new IllegalArgumentException("Base URL 必须填写 API 根地址，不要包含 /chat/completions、/responses 或 /messages");
+        }
         return normalized;
     }
 
