@@ -655,7 +655,21 @@ final class ChatCoordinator implements AutoCloseable {
         if (clientCalling && HarnessPolicyResolver.SUBAGENT_AUTO.equals(adaptivePolicy.subagentMode)) {
             clientToolNames.add(ClientToolRuntime.DELEGATE_SUBTASK);
         }
+        // Tool definitions are real model input. If even the schema cannot fit beside the mandatory
+        // newest user-led turn, client tools are an optional enhancement and are disabled for this turn.
+        int clientToolSchemaReserve = clientToolNames.isEmpty() ? 0
+                : new ContextBudgetManager().estimate(ClientToolRuntime.canonicalDefinitions(String.join(",", clientToolNames)).toString()) + 128;
+        if (clientToolSchemaReserve > 0) {
+            try {
+                prompt = contexts.reserveForAdditionalInput(prompt, turnConfig.contextTokens, turnConfig.inputTokens,
+                        turnConfig.maxOutputTokens, clientToolSchemaReserve);
+            } catch (IllegalArgumentException noToolRoom) {
+                clientToolNames.clear();
+                clientToolSchemaReserve = 0;
+            }
+        }
         final String clientToolCsv = String.join(",", clientToolNames);
+        final int clientToolSchemaTokens = clientToolSchemaReserve;
         ChatTurnOptions webOptions = new ChatTurnOptions(hostedCapabilities, turnConfig.webMode,
                 turnConfig.clientToolCalling, clientToolCsv, new JSONArray());
         MoyuWebService.Prepared preparedWeb = MoyuWebService.Prepared.none();
