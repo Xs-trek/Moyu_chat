@@ -173,7 +173,6 @@ export interface SessionView {
   model: string;
   modelName: string;
   reasoningLevels: string;
-  defaultReasoning: string;
   reasoningEffort: string;
   thinkingMode: 'provider-default' | 'adaptive' | 'disabled' | 'manual';
   thinkingBudgetTokens: number;
