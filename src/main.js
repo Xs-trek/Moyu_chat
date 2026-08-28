@@ -1,6 +1,6 @@
 import { bindHost, postIntent } from './bridge.js';
 import { createRenderGate } from './render-gate.js';
-import { openConfirmDialog, patchConversation, render, renderNotice } from './render.js';
+import { openConfirmDialog, openTextDialog, patchConversation, render, renderNotice } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
 import { getState, setNotice, setOptimisticReasoningEffort, setView, subscribe } from './state.js';
 
