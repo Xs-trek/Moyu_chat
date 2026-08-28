@@ -242,7 +242,7 @@ public class ChatDatabaseTest {
         assertNotNull(profile); assertNotNull(session);
         assertEquals("v0.0.3 profiles must never become auto-catalog deployments during migration",
                 ModelCatalog.CONFIG_LEGACY_MANUAL, profile.configMode);
-        assertEquals("legacy-manual", profile.catalogSource);
+        assertEquals("legacy-v0.0.3", profile.catalogSource);
         assertEquals(HarnessProfile.BALANCED, profile.harnessPreset);
         assertEquals(ClientToolRuntime.NONE, profile.clientToolCalling);
         assertEquals(HarnessProfile.BALANCED, session.harnessPreset);
