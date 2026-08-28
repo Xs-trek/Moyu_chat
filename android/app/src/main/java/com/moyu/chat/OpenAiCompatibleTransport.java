@@ -69,6 +69,8 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     private void run(Call call, String protocol, ChatTransport.Sink sink) {
         Set<String> emittedImages = new HashSet<>();
         Set<String> emittedContinuation = new HashSet<>();
+        ChatToolCollector chatToolCollector = new ChatToolCollector();
+        JSONArray responseToolCalls = new JSONArray();
         boolean sawData = false;
         boolean sawUnexpectedPayload = false;
         boolean responseStarted = false;
