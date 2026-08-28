@@ -197,8 +197,13 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                     if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
                     // Legacy provider wire/model columns remain migration-only and have no UI authority.
                     p.model = "";
-                    coordinator.saveProvider(p, key.getText().toString());
-                    dialog.dismiss();
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                    coordinator.saveProvider(p, key.getText().toString(), error -> runOnUiThread(() -> {
+                        if (!dialog.isShowing()) return;
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                        if (error == null) dialog.dismiss();
+                        else Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                    }));
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
             }));
             dialog.show();
