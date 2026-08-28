@@ -253,7 +253,7 @@ final class MoyuWebService implements AutoCloseable {
             if (callScope.isCancelled()) throw new java.io.InterruptedIOException("cancelled");
             Request request = new Request.Builder().url(current.toString())
                     .header("Accept", "text/html,text/plain,application/json,application/xml,application/xhtml+xml;q=0.9,*/*;q=0.1")
-                    .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 Chrome/151 Safari/537.36 MoyuChat/0.0.2")
+                    .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 Chrome/151 Safari/537.36 MoyuChat/0.0.4")
                     .get().build();
             okhttp3.Call call = fetchHttp.newCall(request);
             callScope.bind(call);
