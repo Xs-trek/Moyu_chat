@@ -1308,7 +1308,7 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("inputModalities", ChatDatabase.normalizeModalities(s.inputModalities)).put("outputModalities", ChatDatabase.normalizeModalities(s.outputModalities))
                 .put("nativeWebCapabilities", ChatTurnOptions.normalizeCapabilities(s.toolCapabilities))
                 .put("webMode", ChatTurnOptions.normalizeWebMode(s.webMode))
-                .put("effectiveWebBackend", effectiveWebBackend(s, p))
+                .put("effectiveWebBackend", effectiveWebBackend(s, deployment))
                 .put("state", visibleState).put("updatedAt", s.updatedAt);
         if (s.preview != null) o.put("preview", s.preview);
         TaskProfile taskProfile = TaskProfile.fromStored(s.taskProfile);
