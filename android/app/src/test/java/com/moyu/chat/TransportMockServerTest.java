@@ -209,7 +209,7 @@ public class TransportMockServerTest {
 
         RecordingSink tool = new RecordingSink();
         assertTrue(OpenAiCompatibleTransport.parseChat(new JSONObject("{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"), tool));
-        assertEquals("unsupported_tool_call", tool.errorCode); assertFalse(tool.retryable);
+        assertEquals("invalid_tool_call", tool.errorCode); assertFalse(tool.retryable);
     }
 
     // ---------- OpenAI Responses ----------
