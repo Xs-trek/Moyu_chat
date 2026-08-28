@@ -1445,6 +1445,12 @@ final class ChatCoordinator implements AutoCloseable {
                         .put("reasoningLevels", m.reasoningLevels)
                         .put("thinkingMode", ReasoningPolicy.normalizeThinkingMode(m.thinkingMode)).put("thinkingBudgetTokens", Math.max(0, m.thinkingBudgetTokens))
                         .put("continuationMode", ProviderContinuationPolicy.normalize(m.continuationMode))
+                        .put("configMode", ModelCatalog.normalizeConfigMode(m.configMode))
+                        .put("catalogKey", m.catalogKey == null ? "unknown" : m.catalogKey)
+                        .put("catalogVersion", m.catalogVersion == null ? "" : m.catalogVersion)
+                        .put("catalogSource", m.catalogSource == null ? "" : m.catalogSource)
+                        .put("harnessPreset", HarnessProfile.normalize(m.harnessPreset))
+                        .put("clientToolCalling", ClientToolRuntime.normalizeCalling(m.clientToolCalling))
                         .put("inputModalities", m.inputModalities).put("outputModalities", m.outputModalities)
                         .put("toolCapabilities", ChatTurnOptions.normalizeCapabilities(m.toolCapabilities)));
                 String defaultModel = models.length() > 0 ? models.optJSONObject(0).optString("modelId", p.model) : p.model;
