@@ -970,8 +970,34 @@ final class ChatCoordinator implements AutoCloseable {
                                                     webSources, webBackend[0], new String[]{"cancelled", "Generation stopped"});
                                             return;
                                         }
-                                        for (int i = 0; i < batch.historyEntries.length(); i++) {
-                                            JSONObject entry = batch.historyEntries.optJSONObject(i); if (entry == null) continue;
+                                        // Tool results have not been sent yet, so only this new batch may be clipped.
+                                        // Prior tool results and exact provider round items are immutable once replayed.
+                                        JSONArray boundedBatch = null;
+                                        CanonicalPrompt nextPrompt = null;
+                                        int nextSchemaReserve = batchNumber >= MAX_CLIENT_TOOL_ROUNDS ? 0 : clientToolSchemaTokens;
+                                        int[] resultCaps = new int[]{65_536, 12_000, 6_000, 3_000, 1_500, 750, 384, 192, 128};
+                                        for (int cap : resultCaps) {
+                                            JSONArray attemptBatch = copyArray(batch.historyEntries);
+                                            ClientToolRuntime.clipBatchResults(attemptBatch, cap);
+                                            JSONArray attemptHistory = copyArray(clientToolHistory);
+                                            for (int i = 0; i < attemptBatch.length(); i++) {
+                                                JSONObject entry = attemptBatch.optJSONObject(i); if (entry != null) attemptHistory.put(new JSONObject(entry.toString()));
+                                            }
+                                            int reserve = nextSchemaReserve + ClientToolRuntime.estimateWireHistoryTokens(attemptHistory, providerRoundHistory);
+                                            try {
+                                                nextPrompt = contexts.reserveForAdditionalInput(mainPrompt, turnConfig.contextTokens,
+                                                        turnConfig.inputTokens, turnConfig.maxOutputTokens, reserve);
+                                                boundedBatch = attemptBatch;
+                                                break;
+                                            } catch (IllegalArgumentException noRoom) {
+                                                // Try a smaller not-yet-sent result payload. Exact provider state is never truncated.
+                                            }
+                                        }
+                                        if (boundedBatch == null || nextPrompt == null) {
+                                            throw new IllegalStateException("client tool/provider history exceeds the configured input context budget");
+                                        }
+                                        for (int i = 0; i < boundedBatch.length(); i++) {
+                                            JSONObject entry = boundedBatch.optJSONObject(i); if (entry == null) continue;
                                             clientToolHistory.put(new JSONObject(entry.toString()));
                                             String toolName = entry.optString("name", "");
                                             if (ClientToolRuntime.WEB_SEARCH.equals(toolName) || ClientToolRuntime.WEB_FETCH.equals(toolName)) {
@@ -996,7 +1022,8 @@ final class ChatCoordinator implements AutoCloseable {
                                         childOutputTokens[0] += batch.childOutputTokens;
                                         subagentCount[0] += batch.subagentCount;
                                         persistUsageProjection();
-                                        ChatTurnOptions nextOptions = webOptions.withToolHistory(clientToolHistory);
+                                        activeRoundPrompt.set(nextPrompt);
+                                        ChatTurnOptions nextOptions = webOptions.withRoundHistory(clientToolHistory, providerRoundHistory);
                                         if (batchNumber >= MAX_CLIENT_TOOL_ROUNDS) nextOptions = nextOptions.withoutClientTools();
                                         streamStage.set("connecting");
                                         JSONObject projection = liveProjection();
