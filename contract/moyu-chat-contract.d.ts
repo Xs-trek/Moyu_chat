@@ -84,9 +84,7 @@ export interface ModelProfileView {
 export interface ProviderView {
   providerId: string;
   displayName: string;
-  protocol: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | string;
-  authMode: 'bearer' | 'x-api-key' | 'api-key' | string;
-  reasoningWire: 'none' | 'openai-responses' | 'openai-chat-effort' | 'anthropic-effort' | string;
+  baseUrl: string;
   model: string;
   models: ModelProfileView[];
   hasCredential: boolean;
