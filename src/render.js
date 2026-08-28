@@ -515,10 +515,11 @@ function webModeControl(value = 'auto', dataset = { webModeSelect: '1' }) {
 
 function providers(view) {
   return h('main', { class: 'page' },
-    pageHeader('Provider / Models', 'Endpoint/Auth 属于 Provider；模型能力与推理配置属于具体 Model Profile。', button('＋ Provider', 'configure-provider', {}, 'btn primary')),
+    pageHeader('Provider / Models', 'Provider 只保存共享 Base URL / API Key；protocol、auth、reasoning wire 与模型能力属于具体 Model Profile。', button('＋ Provider', 'configure-provider', {}, 'btn primary')),
     view.providers.length ? h('section', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card provider-card' },
-      h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: provider.displayName }), badge(provider.protocol), badge(provider.hasCredential ? '凭据已配置' : '缺少凭据', provider.hasCredential ? 'good' : 'warn')),
-      h('div', { class: 'provider-actions row' }, badge(`reasoning · ${provider.reasoningWire || 'none'}`, 'quiet'), h('span', { class: 'grow' }), button('编辑 Provider', 'configure-provider', { providerId: provider.providerId }, 'btn ghost small'), button('＋ 模型', 'configure-model', { providerId: provider.providerId }, 'btn ghost small')),
+      h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: provider.displayName }), badge(provider.hasCredential ? '凭据已配置' : '缺少凭据', provider.hasCredential ? 'good' : 'warn')),
+      h('code', { class: 'model-id', text: provider.baseUrl || '未配置 Base URL' }),
+      h('div', { class: 'provider-actions row' }, badge('共享连接', 'quiet'), h('span', { class: 'grow' }), button('编辑 Provider', 'configure-provider', { providerId: provider.providerId }, 'btn ghost small'), button('＋ 模型', 'configure-model', { providerId: provider.providerId }, 'btn ghost small')),
       h('section', { class: 'stack model-stack' }, (provider.models || []).map((model) => h('div', { class: 'model-card' },
         h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: model.displayName || model.modelId })),
         h('code', { class: 'model-id', text: model.modelId }),
