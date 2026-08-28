@@ -124,7 +124,7 @@ public class ProviderContinuationReplayTest {
     private void seedPersistedContinuation() throws Exception {
         db.appendTimeline(session.id, "u1", message("user", "first"));
         ChatDatabase.Session current = db.getSession(session.id);
-        ChatDatabase.Provider deployment = db.getProvider(provider.id);
+        ChatDatabase.Provider deployment = ChatDatabase.deploymentProvider(db.getProvider(provider.id), current);
         JSONArray nativeItems = new JSONArray()
                 .put(new JSONObject().put("id", "rs_1").put("type", "reasoning").put("encrypted_content", "cipher"))
                 .put(new JSONObject().put("id", "ws_1").put("type", "web_search_call"))
