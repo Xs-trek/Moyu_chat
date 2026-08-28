@@ -284,6 +284,12 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         parent.addView(input, new LinearLayout.LayoutParams(-1, -2)); return input;
     }
 
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        if (pendingImageSessionId != null) outState.putString(STATE_PENDING_IMAGE_SESSION, pendingImageSessionId);
+        if (pendingConversationImportSource != null) outState.putString(STATE_PENDING_IMPORT_SOURCE, pendingConversationImportSource);
+        super.onSaveInstanceState(outState);
+    }
+
     @Override protected void onResume() {
         super.onResume();
         ChatRuntime r = runtime; if (r != null) r.setResumed(this, true);
