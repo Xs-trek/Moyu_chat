@@ -311,6 +311,56 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         return false;
     }
 
+    private static final class AnthropicClientToolCollector {
+        private static final class Pending {
+            final String id;
+            final String name;
+            final JSONObject initialInput;
+            final StringBuilder inputJson = new StringBuilder();
+            Pending(String id, String name, JSONObject initialInput) {
+                this.id = id; this.name = name;
+                this.initialInput = initialInput == null ? new JSONObject() : initialInput;
+            }
+        }
+        private final Map<Integer, Pending> pending = new HashMap<>();
+        private final java.util.TreeMap<Integer, JSONObject> completed = new java.util.TreeMap<>();
+
+        void onStart(JSONObject event) {
+            int index = event.optInt("index", -1); if (index < 0) return;
+            JSONObject block = event.optJSONObject("content_block"); if (block == null || !"tool_use".equals(block.optString("type", ""))) return;
+            String id = block.optString("id", "").trim(); String name = block.optString("name", "").trim();
+            if (id.isEmpty() || name.isEmpty()) return;
+            try { pending.put(index, new Pending(id, name, block.optJSONObject("input") == null ? new JSONObject() : new JSONObject(block.optJSONObject("input").toString()))); }
+            catch (Exception ignored) { }
+        }
+
+        void onDelta(JSONObject event) {
+            int index = event.optInt("index", -1); Pending item = pending.get(index); if (item == null) return;
+            JSONObject delta = event.optJSONObject("delta"); if (delta == null || !"input_json_delta".equals(delta.optString("type", ""))) return;
+            item.inputJson.append(delta.optString("partial_json", ""));
+        }
+
+        void onStop(JSONObject event) {
+            int index = event.optInt("index", -1); Pending item = pending.remove(index); if (item == null) return;
+            try {
+                JSONObject call = new JSONObject().put("id", item.id).put("name", item.name);
+                if (item.inputJson.length() == 0) call.put("arguments", new JSONObject(item.initialInput.toString()));
+                else {
+                    try { call.put("arguments", new JSONObject(item.inputJson.toString())); }
+                    catch (Exception invalid) { call.put("arguments", new JSONObject()).put("invalidArguments", true); }
+                }
+                completed.put(index, call);
+            } catch (Exception ignored) { }
+        }
+
+        JSONArray calls() {
+            JSONArray out = new JSONArray();
+            for (JSONObject call : completed.values()) try { out.put(new JSONObject(call.toString())); } catch (Exception ignored) { }
+            completed.clear(); pending.clear();
+            return out;
+        }
+    }
+
     private static final class AnthropicContinuationCollector {
         private final ChatTransport.Sink sink;
         private final Map<Integer, JSONObject> blocks = new HashMap<>();
