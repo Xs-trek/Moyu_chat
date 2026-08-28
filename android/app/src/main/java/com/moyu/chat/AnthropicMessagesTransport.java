@@ -132,6 +132,52 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         if (tools.length() > 0) body.put("tools", tools);
     }
 
+    private static void applyClientTools(JSONObject body, ChatTurnOptions options) throws Exception {
+        if (options == null) return;
+        appendToolHistory(body, options.toolHistory);
+        if (!options.clientToolsEnabled(PROTOCOL)) return;
+        JSONArray definitions = options.clientToolDefinitions();
+        if (definitions.length() == 0) return;
+        JSONArray tools = body.optJSONArray("tools");
+        if (tools == null) { tools = new JSONArray(); body.put("tools", tools); }
+        for (int i = 0; i < definitions.length(); i++) {
+            JSONObject canonical = definitions.optJSONObject(i); if (canonical == null) continue;
+            tools.put(new JSONObject().put("name", canonical.optString("name"))
+                    .put("description", canonical.optString("description"))
+                    .put("input_schema", canonical.optJSONObject("parameters")).put("strict", true));
+        }
+        body.put("tool_choice", new JSONObject().put("type", "auto"));
+    }
+
+    private static void appendToolHistory(JSONObject body, JSONArray history) throws Exception {
+        if (history == null || history.length() == 0) return;
+        JSONArray messages = body.optJSONArray("messages"); if (messages == null) return;
+        java.util.TreeMap<Integer, JSONArray> rounds = new java.util.TreeMap<>();
+        for (int i = 0; i < history.length(); i++) {
+            JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
+            int round = Math.max(0, entry.optInt("round", 0));
+            JSONArray group = rounds.get(round); if (group == null) { group = new JSONArray(); rounds.put(round, group); }
+            group.put(entry);
+        }
+        for (JSONArray entries : rounds.values()) {
+            JSONArray assistantContent = new JSONArray();
+            JSONArray userContent = new JSONArray();
+            for (int i = 0; i < entries.length(); i++) {
+                JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
+                assistantContent.put(new JSONObject().put("type", "tool_use").put("id", entry.optString("id"))
+                        .put("name", entry.optString("name"))
+                        .put("input", entry.optJSONObject("arguments") == null ? new JSONObject() : entry.optJSONObject("arguments")));
+                String error = entry.optString("error", "").trim();
+                JSONObject result = new JSONObject().put("type", "tool_result").put("tool_use_id", entry.optString("id"))
+                        .put("content", error.isEmpty() ? entry.optString("result", "") : "Tool error: " + error);
+                if (!error.isEmpty()) result.put("is_error", true);
+                userContent.put(result);
+            }
+            if (assistantContent.length() > 0) messages.put(new JSONObject().put("role", "assistant").put("content", assistantContent));
+            if (userContent.length() > 0) messages.put(new JSONObject().put("role", "user").put("content", userContent));
+        }
+    }
+
     private static void appendImages(JSONArray content, JSONArray attachments) throws Exception {
         for (int i = 0; i < attachments.length(); i++) {
             JSONObject image = attachments.optJSONObject(i); if (image == null || !"image".equals(image.optString("kind"))) continue;
