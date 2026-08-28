@@ -6,6 +6,17 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Executes a bounded hidden model call used only for structured control/context preprocessing. */
 final class ModelPreflight {
+    static final class Output {
+        final String text;
+        final int inputTokens;
+        final int outputTokens;
+        Output(String text, int inputTokens, int outputTokens) {
+            this.text = text == null ? "" : text;
+            this.inputTokens = Math.max(0, inputTokens);
+            this.outputTokens = Math.max(0, outputTokens);
+        }
+    }
+
     private ModelPreflight() { }
 
     static String run(ChatTransport transport, ChatDatabase.Provider source, String apiKey, String model,
