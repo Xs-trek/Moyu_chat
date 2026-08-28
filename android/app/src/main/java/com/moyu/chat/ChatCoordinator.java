@@ -717,6 +717,40 @@ final class ChatCoordinator implements AutoCloseable {
         int[] roundInput = new int[]{0}, roundOutput = new int[]{0}, roundCached = new int[]{0}, roundCacheWrite = new int[]{0}, roundCacheBase = new int[]{0}, roundReasoning = new int[]{0};
         int[] mainInput = new int[]{0}, mainOutput = new int[]{0}, mainCached = new int[]{0}, mainCacheWrite = new int[]{0}, mainCacheBase = new int[]{0}, mainReasoning = new int[]{0};
         ChatTransport.Sink sink = new ChatTransport.Sink() {
+            private void refreshUsageProjection() throws Exception {
+                int currentInput = mainInput[0] + roundInput[0];
+                int currentOutput = mainOutput[0] + roundOutput[0];
+                int currentCached = mainCached[0] + roundCached[0];
+                int currentCacheWrite = mainCacheWrite[0] + roundCacheWrite[0];
+                int currentCacheBase = mainCacheBase[0] + roundCacheBase[0];
+                int currentReasoning = mainReasoning[0] + roundReasoning[0];
+                if (currentInput > 0) usageState.put("inputTokens", currentInput);
+                if (currentOutput > 0) usageState.put("outputTokens", currentOutput);
+                if (currentCached > 0) usageState.put("cachedInputTokens", currentCached);
+                if (currentCacheWrite > 0) usageState.put("cacheWriteInputTokens", currentCacheWrite);
+                if (currentCacheBase > 0) usageState.put("cacheHitBaseTokens", currentCacheBase);
+                if (currentReasoning > 0) usageState.put("reasoningTokens", currentReasoning);
+                if (childInputTokens[0] > 0) usageState.put("childInputTokens", childInputTokens[0]);
+                if (childOutputTokens[0] > 0) usageState.put("childOutputTokens", childOutputTokens[0]);
+                if (subagentCount[0] > 0) usageState.put("subagentCount", subagentCount[0]);
+                if (currentInput > 0 || childInputTokens[0] > 0) usageState.put("totalInputTokens", currentInput + childInputTokens[0]);
+                if (currentOutput > 0 || childOutputTokens[0] > 0) usageState.put("totalOutputTokens", currentOutput + childOutputTokens[0]);
+            }
+            private void persistUsageProjection() throws Exception {
+                refreshUsageProjection();
+                if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState);
+                else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; }
+            }
+            private void commitRoundUsage() throws Exception {
+                mainInput[0] += roundInput[0]; mainOutput[0] += roundOutput[0]; mainCached[0] += roundCached[0];
+                mainCacheWrite[0] += roundCacheWrite[0]; mainCacheBase[0] += roundCacheBase[0]; mainReasoning[0] += roundReasoning[0];
+                roundInput[0] = 0; roundOutput[0] = 0; roundCached[0] = 0; roundCacheWrite[0] = 0; roundCacheBase[0] = 0; roundReasoning[0] = 0;
+                refreshUsageProjection();
+            }
+            private void clearIntermediateContinuation() {
+                providerContinuationKeys.clear(); providerContinuationChars[0] = 0; providerContinuationOverflow[0] = false;
+                while (providerContinuationItems.length() > 0) providerContinuationItems.remove(providerContinuationItems.length() - 1);
+            }
             private JSONObject liveProjection() throws Exception {
                 JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage.get());
                 if (reasoningOut.length() > 0) next.put("reasoning", reasoningOut.toString());
