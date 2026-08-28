@@ -49,8 +49,10 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         try {
             String base = ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
             String path = CHAT_COMPLETIONS.equals(protocol) ? "/chat/completions" : "/responses";
+            ChatTurnOptions turnOptions = options == null ? ChatTurnOptions.NONE : options;
             JSONObject body = CHAT_COMPLETIONS.equals(protocol) ? chatBody(model, prompt, provider.maxOutputTokens) : responsesBody(model, prompt, provider.maxOutputTokens);
-            applyHostedTools(body, protocol, options == null ? ChatTurnOptions.NONE : options);
+            applyHostedTools(body, protocol, turnOptions);
+            applyClientTools(body, protocol, turnOptions);
             applyContinuationRequest(body, protocol, prompt);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
             Request.Builder builder = new Request.Builder().url(base + path)
