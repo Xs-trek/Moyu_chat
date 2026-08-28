@@ -304,6 +304,25 @@ public class ChatDatabaseTest {
         if (version >= 8) {
             raw.execSQL("ALTER TABLE sessions ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'auto'");
         }
+        if (version >= 9) {
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN web_mode TEXT NOT NULL DEFAULT 'auto'");
+        }
+        if (version >= 10) {
+            raw.execSQL("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'");
+            raw.execSQL("CREATE VIRTUAL TABLE knowledge_fts USING fts4(scope_id,item_ref,ordinal,role,text,terms,tokenize=simple)");
+        }
+        if (version >= 11) {
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
+        }
+        if (version >= 12) {
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
+        }
         raw.execSQL("INSERT INTO snapshot_items VALUES('legacy-snap',0,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}')");
         raw.execSQL("PRAGMA user_version = " + version);
         raw.close();
