@@ -250,6 +250,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "memory.global.set": crossChatMemoryEnabled = p.optBoolean("enabled", false); db.putSetting("crossChatMemoryEnabled", crossChatMemoryEnabled ? "true" : "false"); break;
                 case "context.mode.default.set": defaultContextMode = ContextMode.normalize(required(p, "mode")); db.putSetting("defaultContextMode", defaultContextMode); break;
                 case "web.mode.default.set": defaultWebMode = ChatTurnOptions.normalizeWebMode(required(p, "mode")); db.putSetting("defaultWebMode", defaultWebMode); break;
+                case "subagent.standard.default.set": standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(required(p, "mode")); db.putSetting("standardSubagentMode", standardSubagentMode); break;
                 case "external.open": host.openExternalUrl(required(p, "url")); break;
                 // v0.0.2 migration compatibility for an older UI bundle: off -> minimal, on -> standard.
                 case "context.intelligence.set": defaultContextMode = p.optBoolean("enabled", true) ? ContextMode.STANDARD : ContextMode.MINIMAL; db.putSetting("defaultContextMode", defaultContextMode); break;
