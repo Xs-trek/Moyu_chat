@@ -790,8 +790,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (input > context) throw new IllegalArgumentException("input tokens out of range");
         if (output < 256 || output >= context) throw new IllegalArgumentException("max output tokens out of range");
         String levels = ReasoningPolicy.normalizeLevels(p.reasoningLevels);
-        String defaultReasoning = ReasoningPolicy.normalizeEffort(p.defaultReasoning);
-        if (!ReasoningPolicy.allows(levels, defaultReasoning)) throw new IllegalArgumentException("default reasoning not allowed by model profile");
+        // Kept as a schema-compatibility column only; current product semantics keep effort on Session/Turn.
+        String defaultReasoning = ReasoningPolicy.DEFAULT;
         String thinkingMode = ReasoningPolicy.normalizeThinkingMode(p.thinkingMode);
         String continuationMode = ProviderContinuationPolicy.normalize(p.continuationMode);
         int thinkingBudget = Math.max(0, p.thinkingBudgetTokens);
