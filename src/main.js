@@ -333,6 +333,8 @@ document.addEventListener('change', (event) => {
     postIntent('context.mode.default.set', { mode: event.target.value });
   } else if (event.target?.dataset?.defaultWebMode === '1') {
     postIntent('web.mode.default.set', { mode: event.target.value });
+  } else if (event.target?.dataset?.standardSubagentMode === '1') {
+    postIntent('subagent.standard.default.set', { mode: event.target.value });
   }
 });
 
