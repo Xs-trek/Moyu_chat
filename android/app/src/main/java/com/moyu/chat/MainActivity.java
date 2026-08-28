@@ -234,6 +234,23 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             EditText thinkingMode = field(form, "Messages thinking mode", "仅 anthropic-messages 协议族。provider-default 不猜第三方模型能力；adaptive / disabled / manual 必须由该具体 endpoint 明确支持。", "provider-default", p.thinkingMode == null ? ReasoningPolicy.THINKING_PROVIDER_DEFAULT : p.thinkingMode, false, false);
             EditText thinkingBudget = field(form, "Manual thinking budget", "仅 thinkingMode=manual 时使用；必须 >=1024 且小于 Max output tokens。其它模式填 0。", "0", String.valueOf(Math.max(0, p.thinkingBudgetTokens)), false, true);
             EditText continuationMode = field(form, "Provider-private continuation", "none = 仅使用 provider-neutral 可见历史；native = 允许该部署回放 provider 私有状态。第三方 endpoint 即使兼容 Responses/Messages，也只有明确支持原生 replay 时才选 native。", "none", p.continuationMode == null ? ProviderContinuationPolicy.NONE : p.continuationMode, false, false);
+            EditText harnessPreset = field(form, "Harness preset", "高级模式下显式覆盖模型行为档位：lean / balanced / reinforced。Auto 模式由 Model Catalog 决定。", "balanced", p.harnessPreset == null ? HarnessProfile.BALANCED : p.harnessPreset, false, false);
+            EditText clientToolCalling = field(form, "Client tool calling", "高级模式下声明该 endpoint 的 client tool wire：none / openai-chat-tools / openai-responses-tools / anthropic-tools。仅协议兼容并不代表支持工具调用。", "none", p.clientToolCalling == null ? ClientToolRuntime.NONE : p.clientToolCalling, false, false);
+            EditText[] advancedFields = new EditText[]{protocol, auth, reasoningWire, inputModalities, outputModalities, toolCapabilities, context, input, output, levels, thinkingMode, thinkingBudget, continuationMode, harnessPreset, clientToolCalling};
+            Runnable refreshCatalog = () -> {
+                String modelId = model.getText().toString().trim();
+                catalogSummary.setText(ModelCatalog.summary(provider, modelId));
+                boolean advanced = !autoConfig.isChecked();
+                for (EditText field : advancedFields) field.setEnabled(advanced);
+                catalogSummary.setAlpha(autoConfig.isChecked() ? 1f : 0.62f);
+            };
+            autoConfig.setOnCheckedChangeListener((button, checked) -> refreshCatalog.run());
+            model.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+                @Override public void onTextChanged(CharSequence s, int start, int before, int count) { refreshCatalog.run(); }
+                @Override public void afterTextChanged(Editable s) { }
+            });
+            refreshCatalog.run();
             AlertDialog dialog = new AlertDialog.Builder(this).setTitle((existing == null ? "新增模型 · " : "编辑模型 · ") + provider.displayName).setView(scroll(form)).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
