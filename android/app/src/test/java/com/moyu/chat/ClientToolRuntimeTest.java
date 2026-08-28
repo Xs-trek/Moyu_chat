@@ -18,7 +18,7 @@ public class ClientToolRuntimeTest {
                     .put("name", ClientToolRuntime.DELEGATE_SUBTASK)
                     .put("arguments", new JSONObject().put("task", "work")));
             ClientToolRuntime.BatchResult result = ClientToolRuntime.executeBatch(
-                    calls, 1, "", executor, null, null, null, null, "", "", null);
+                    calls, 1, "", executor, null, null, null, null, "", "", "", null);
             assertEquals(1, result.historyEntries.length());
             assertTrue(result.historyEntries.getJSONObject(0).has("error"));
             assertEquals(0, result.subagentCount);
