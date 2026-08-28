@@ -386,6 +386,11 @@ function assistantFooter(item, finalized, sessionId) {
     ['首字', usage?.firstOutputLatencyMs === undefined ? '—' : seconds(usage.firstOutputLatencyMs)],
     ['总耗', usage?.requestDurationMs === undefined ? '—' : seconds(usage.requestDurationMs)],
   ];
+  if (subagentCount !== null && subagentCount > 0) {
+    facts.push(['子任务', `${subagentCount.toLocaleString()} 个`]);
+    facts.push(['子模型入/出', `${(childInput || 0).toLocaleString()} / ${(childOutput || 0).toLocaleString()}`]);
+    facts.push(['总入/出', `${(totalInput || 0).toLocaleString()} / ${(totalOutput || 0).toLocaleString()}`]);
+  }
   const signature = JSON.stringify({ sources: item.sources || [], backend, usage: usage || null, facts, canAct, localSeq: item.localSeq, verification });
   return h('footer', { class: 'assistant-footer', dataset: { footerSignature: signature } },
     sourceNode,
