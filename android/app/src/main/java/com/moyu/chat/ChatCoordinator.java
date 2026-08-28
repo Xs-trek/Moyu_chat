@@ -260,7 +260,8 @@ final class ChatCoordinator implements AutoCloseable {
                     // Auto is catalog-owned as one coherent deployment profile. Per-field overrides
                     // belong to Advanced/manual mode; mixing stale manual values into Auto would make
                     // catalog updates appear applied while silently retaining old limits/capabilities.
-                    ModelCatalog.applyAuto(provider, profile, 0, 0, 0);
+                    ModelCatalog.applyAuto(provider, profile,
+                            profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
                 }
                 profile.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
                 profile.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
