@@ -533,9 +533,6 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("contextMode", turnConfig.contextMode)
                 .put("effectiveContextMode", contextPolicy.effectiveLabel);
         db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
-        if (user.optInt("localSeq", 0) == 1 && "新 Chat".equals(session.title)) {
-            db.renameSession(id, autoTitle(input, pendingMedia.length()));
-        }
         startingSessions.add(id);
         final long requestStartedNanos = System.nanoTime();
         emitView();
