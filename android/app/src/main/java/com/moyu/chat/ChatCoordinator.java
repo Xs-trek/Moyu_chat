@@ -838,13 +838,13 @@ final class ChatCoordinator implements AutoCloseable {
             } catch (Exception ignored) { } }); }
             @Override public void onUsage(Integer in, Integer out) { onUsageDetails(in, out, null, null, null, null); }
             @Override public void onUsageDetails(Integer in, Integer out, Integer cached, Integer cacheWrite, Integer cacheBase, Integer reasoningTokens) { worker.execute(() -> { try {
-                if (in != null) usageState.put("inputTokens", Math.max(0, in));
-                if (out != null) usageState.put("outputTokens", Math.max(0, out));
-                if (cached != null) usageState.put("cachedInputTokens", Math.max(0, cached));
-                if (cacheWrite != null) usageState.put("cacheWriteInputTokens", Math.max(0, cacheWrite));
-                if (cacheBase != null) usageState.put("cacheHitBaseTokens", Math.max(0, cacheBase));
-                if (reasoningTokens != null) usageState.put("reasoningTokens", Math.max(0, reasoningTokens));
-                if (usagePersisted[0]) db.replaceTimelineBody(usageKey, usageState); else { db.appendTimeline(id, usageKey, usageState); usagePersisted[0] = true; }
+                if (in != null) roundInput[0] = Math.max(roundInput[0], Math.max(0, in));
+                if (out != null) roundOutput[0] = Math.max(roundOutput[0], Math.max(0, out));
+                if (cached != null) roundCached[0] = Math.max(roundCached[0], Math.max(0, cached));
+                if (cacheWrite != null) roundCacheWrite[0] = Math.max(roundCacheWrite[0], Math.max(0, cacheWrite));
+                if (cacheBase != null) roundCacheBase[0] = Math.max(roundCacheBase[0], Math.max(0, cacheBase));
+                if (reasoningTokens != null) roundReasoning[0] = Math.max(roundReasoning[0], Math.max(0, reasoningTokens));
+                persistUsageProjection();
             } catch (Exception ignored) { } }); }
             @Override public void onCompleted() {
                 streamTerminal.set(true);
