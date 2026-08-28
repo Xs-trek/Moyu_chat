@@ -75,7 +75,7 @@ final class ClientToolRuntime {
     }
 
     /** Execute one model-emitted tool batch. Unknown/malformed calls become explicit tool errors. */
-    static BatchResult executeBatch(JSONArray calls, int round, ExecutorService executor,
+    static BatchResult executeBatch(JSONArray calls, int round, String allowedToolNames, ExecutorService executor,
                                     MoyuWebService web, FocusedSubagentService subagents,
                                     ChatTransport transport, ChatDatabase.Provider provider, String apiKey,
                                     String model, String effort, TurnCancellation cancellation) {
