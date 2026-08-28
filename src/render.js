@@ -359,6 +359,11 @@ function assistantFooter(item, finalized, sessionId) {
   const canAct = finalized && Number(item.localSeq) > 0;
   const reasoningTokens = tokenCount(usage?.reasoningTokens);
   const speed = Number(usage?.outputTokensPerSecond);
+  const subagentCount = tokenCount(usage?.subagentCount);
+  const childInput = tokenCount(usage?.childInputTokens);
+  const childOutput = tokenCount(usage?.childOutputTokens);
+  const totalInput = tokenCount(usage?.totalInputTokens);
+  const totalOutput = tokenCount(usage?.totalOutputTokens);
   const verification = item.verification || null;
   const feedbackRecorded = Boolean(verification?.feedbackLabel);
   const verificationVerdict = String(verification?.verdict || '');
