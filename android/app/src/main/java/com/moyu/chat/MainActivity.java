@@ -181,48 +181,20 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     @Override public void openProviderEditor(ChatDatabase.Provider existing) {
         runOnUiThread(() -> {
             ChatDatabase.Provider p = existing == null ? new ChatDatabase.Provider() : existing;
-            LinearLayout form = editorForm(); boolean isNew = existing == null;
-            EditText name = field(form, "显示名称", "仅用于本机识别这个 endpoint，不会发送给模型。", "例如 OpenCode Go", p.displayName == null ? "AI Provider" : p.displayName, false, false);
-            EditText protocol = field(form, "协议 (protocol)", "决定请求体和固定路径：openai-chat-completions → /chat/completions；openai-responses → /responses；anthropic-messages → /v1/messages。", "openai-chat-completions", p.protocol == null ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : p.protocol, false, false);
-            EditText auth = field(form, "鉴权方式 (authMode)", "bearer = Authorization: Bearer <key>；x-api-key = x-api-key: <key>；api-key = api-key: <key>。密钥是否以 sk- 开头不决定鉴权方式。", "bearer", p.authMode == null ? ProviderAuth.BEARER : p.authMode, false, false);
-            EditText reasoningWire = field(form, "推理参数映射 (reasoningWire)", "把中立 reasoning 档位映射到该 endpoint 的可选 JSON 字段。可用：none / openai-responses / openai-chat-effort / anthropic-effort。第三方兼容端点默认应留空/none；只有确认部署支持对应 effort 字段时再开启。", "例如 openai-chat-effort", isNew ? "" : (p.reasoningWire == null ? "" : p.reasoningWire), false, false);
-            EditText base = field(form, "Base URL", "填写最终固定路径之前的前缀，不要写 /chat/completions、/responses 或 /v1/messages。例：OpenCode Go 的 Chat/Responses 用 https://opencode.ai/zen/go/v1；Anthropic 协议用 https://opencode.ai/zen/go。", "https://api.openai.com/v1", p.baseUrl == null ? suggestedBaseUrl(p.protocol) : p.baseUrl, false, false);
-            EditText model = field(form, "初始 Model ID", "仅在新建 Provider 时用于创建第一个 Model Profile；之后模型统一在 Provider 页面单独管理。这里填写 API body 实际发送的裸 model ID。", "例如 deepseek-v4-flash-vision-exp", p.model == null ? "" : p.model, false, false);
-            EditText initialInputModalities = field(form, "初始输入模态", "text = 纯文本；text,image = 在 Chat composer 中开放图片选择并按当前协议编码发送。只在确认该 endpoint 支持图片时加入 image。", "text,image", "text", false, false);
-            EditText initialOutputModalities = field(form, "初始输出模态", "text = 文本；text,image = 允许保存和展示 Provider 实际返回的图片结果。Moyu 不会因为填写 image 就假设服务端一定具备图片生成工具。", "text,image", "text", false, false);
-            EditText initialToolCapabilities = field(form, "初始 Provider-native Web capabilities", "仅声明 Provider 原生 hosted Web 能力。Responses 可显式填 web_search；Messages 必须填写该 endpoint 明确支持的实际 wire version（如 web_search_20260209、web_fetch_20250910），不会从通用 capability 猜 schema/version。未声明时使用 Moyu fallback。", "Responses: web_search；Messages: web_search_20260209", "", false, false);
-            EditText initialReasoningLevels = field(form, "初始支持的推理档位", "这里只声明初始 Model Profile 的能力范围，不选择当前会话深度。OpenAI-compatible 可按实际部署填写 none,minimal,low,medium,high,xhigh,max 的子集；Anthropic Messages effort 仅填写该部署实际支持的 low,medium,high,xhigh,max 子集，thinking 开关使用下面独立字段。", "例如 low,medium,high", "", false, false);
-            EditText initialThinkingMode = field(form, "初始 Messages thinking mode", "仅影响 anthropic-messages 协议族。provider-default 不猜第三方模型能力；adaptive / disabled / manual 只有在该兼容 endpoint 明确支持相应字段时才启用。", "provider-default", ReasoningPolicy.THINKING_PROVIDER_DEFAULT, false, false);
-            EditText initialThinkingBudget = field(form, "初始 manual thinking budget", "仅 thinkingMode=manual 时使用；必须 >=1024 且小于 Max output tokens。其它模式填 0。", "0", "0", false, true);
-            EditText initialContinuationMode = field(form, "初始 Provider-private continuation", "默认 none。只有确认该具体部署支持原生 replay（例如完整 Responses output-item replay 或 Messages signed thinking replay）时才填 native。仅协议格式兼容不代表支持此能力。", "none", ProviderContinuationPolicy.NONE, false, false);
-            EditText context = field(form, "初始 Context tokens", "该模型部署的总上下文窗口。只用于创建初始 Model Profile；不是自动探测值。", "32000", String.valueOf(p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS), false, true);
-            EditText inputLimit = field(form, "初始 Max input tokens", "0 表示按 context - output - safety 自动计算；若托管平台有更低输入上限，请填写实际限制。", "0", String.valueOf(Math.max(0, p.inputTokens)), false, true);
-            EditText output = field(form, "初始 Max output tokens", "单次响应允许的最大输出 token，用于本地预算和 API 请求字段。", "4096", String.valueOf(p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS), false, true);
-            model.setEnabled(isNew); initialInputModalities.setEnabled(isNew); initialOutputModalities.setEnabled(isNew); initialToolCapabilities.setEnabled(isNew); initialReasoningLevels.setEnabled(isNew); initialThinkingMode.setEnabled(isNew); initialThinkingBudget.setEnabled(isNew); initialContinuationMode.setEnabled(isNew); context.setEnabled(isNew); inputLimit.setEnabled(isNew); output.setEnabled(isNew);
-            EditText key = field(form, "API Key", "仅保存在 Android 原生安全存储中，不进入 WebView、SQLite 或消息正文。留空表示保留已有密钥。", "sk-…", "", true, false);
+            LinearLayout form = editorForm();
+            EditText name = field(form, "显示名称", "仅用于本机识别这一组共享账号/endpoint，不会发送给模型。", "例如 OpenCode Go", p.displayName == null ? "AI Provider" : p.displayName, false, false);
+            EditText base = field(form, "共享 Base URL", "同一 Provider 下所有 Model Profile 共享此 API 根地址与 API Key；protocol、authMode、reasoningWire 在各 Model Profile 单独配置。OpenCode Go 示例：https://opencode.ai/zen/go/v1。不要填写 /chat/completions、/responses 或 /messages。", "https://example.com/v1", p.baseUrl == null ? "" : p.baseUrl, false, false);
+            EditText key = field(form, "API Key", "同一 Provider 下模型共享此密钥。仅保存在 Android 原生安全存储中，不进入 WebView、SQLite 或消息正文；编辑时留空表示保留已有密钥。", "sk-…", "", true, false);
             AlertDialog dialog = new AlertDialog.Builder(this).setTitle(existing == null ? "配置 Provider" : "编辑 Provider").setView(scroll(form)).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
                     if (p.id == null) p.id = "provider-" + UUID.randomUUID();
-                    p.displayName = name.getText().toString().trim(); p.protocol = protocol.getText().toString().trim();
-                    p.authMode = auth.getText().toString().trim(); p.reasoningWire = reasoningWire.getText().toString().trim();
+                    p.displayName = name.getText().toString().trim();
                     p.baseUrl = base.getText().toString().trim();
-                    if (p.baseUrl.isEmpty()) p.baseUrl = suggestedBaseUrl(p.protocol);
                     if (p.baseUrl.isEmpty()) throw new IllegalArgumentException("Base URL required");
-                    p.model = model.getText().toString().trim();
-                    p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(inputLimit.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
+                    // Legacy provider wire/model columns remain migration-only and have no UI authority.
+                    p.model = "";
                     coordinator.saveProvider(p, key.getText().toString());
-                    if (isNew) {
-                        ChatDatabase.ModelProfile initial = new ChatDatabase.ModelProfile();
-                        initial.id = p.id + ":default"; initial.providerId = p.id; initial.modelId = p.model; initial.displayName = p.model;
-                        initial.contextTokens = p.contextTokens; initial.inputTokens = p.inputTokens; initial.maxOutputTokens = p.maxOutputTokens;
-                        initial.inputModalities = initialInputModalities.getText().toString().trim(); initial.outputModalities = initialOutputModalities.getText().toString().trim();
-                        initial.toolCapabilities = initialToolCapabilities.getText().toString().trim();
-                        initial.reasoningLevels = initialReasoningLevels.getText().toString().trim(); initial.defaultReasoning = ReasoningPolicy.DEFAULT;
-                        initial.thinkingMode = initialThinkingMode.getText().toString().trim(); initial.thinkingBudgetTokens = Integer.parseInt(initialThinkingBudget.getText().toString().trim());
-                        initial.continuationMode = initialContinuationMode.getText().toString().trim();
-                        coordinator.saveModelProfile(initial);
-                    }
                     dialog.dismiss();
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
             }));
