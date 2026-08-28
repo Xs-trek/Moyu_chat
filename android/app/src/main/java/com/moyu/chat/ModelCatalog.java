@@ -104,7 +104,7 @@ final class ModelCatalog {
 
         // Verified OpenCode Go GLM-5.3-Flash route from the v0.0.3 compatibility investigation.
         // Only the fields that were actually established are enabled here.
-        if (base.startsWith("https://opencode.ai/zen/go/v1") && model.equals("glm-5.3-flash")) {
+        if (base.equals("https://opencode.ai/zen/go/v1") && model.equals("glm-5.3-flash")) {
             out.source = "moyu-opencode-go-overlay";
             out.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
             out.authMode = ProviderAuth.BEARER;
