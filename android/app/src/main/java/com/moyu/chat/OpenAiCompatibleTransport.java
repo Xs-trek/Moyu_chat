@@ -47,7 +47,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         String protocol = provider.protocol;
         if (!(CHAT_COMPLETIONS.equals(protocol) || RESPONSES.equals(protocol))) { guarded.onError("unsupported_protocol", "当前 Provider 协议不受支持", false); return () -> {}; }
         try {
-            String base = ProviderEndpoint.normalize(provider.baseUrl);
+            String base = ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
             String path = CHAT_COMPLETIONS.equals(protocol) ? "/chat/completions" : "/responses";
             JSONObject body = CHAT_COMPLETIONS.equals(protocol) ? chatBody(model, prompt, provider.maxOutputTokens) : responsesBody(model, prompt, provider.maxOutputTokens);
             applyHostedTools(body, protocol, options == null ? ChatTurnOptions.NONE : options);
