@@ -240,10 +240,11 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     }
 
     static boolean parse(JSONObject event, ChatTransport.Sink sink) {
-        return parse(event, sink, null);
+        return parse(event, sink, null, new AnthropicClientToolCollector());
     }
 
-    private static boolean parse(JSONObject event, ChatTransport.Sink sink, AnthropicContinuationCollector continuation) {
+    private static boolean parse(JSONObject event, ChatTransport.Sink sink, AnthropicContinuationCollector continuation,
+                                 AnthropicClientToolCollector clientTools) {
         String type = event.optString("type");
         if ("content_block_start".equals(type)) {
             if (continuation != null) continuation.onStart(event);
