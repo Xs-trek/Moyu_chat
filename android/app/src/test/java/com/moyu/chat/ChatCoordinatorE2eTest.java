@@ -460,6 +460,85 @@ public class ChatCoordinatorE2eTest {
         assertTrue(assistants.get(1).optBoolean("reasoningAvailable"));
     }
 
+    @Test public void oneSharedProviderRoutesModelsThroughDifferentProtocolsAndReasoningWires() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String path = request.getPath() == null ? "" : request.getPath();
+                if (path.endsWith("/responses")) {
+                    return sse("data: {\"type\":\"response.output_text.delta\",\"delta\":\"responses answer\"}\n\n"
+                            + "data: {\"type\":\"response.completed\",\"response\":{}}\n\n");
+                }
+                if (path.endsWith("/messages")) {
+                    return sse("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"messages answer\"}}\n\n"
+                            + "data: {\"type\":\"message_stop\"}\n\n");
+                }
+                return sse("data: {\"choices\":[{\"delta\":{\"content\":\"chat answer\"},\"finish_reason\":\"stop\"}]}\n\n"
+                        + "data: [DONE]\n\n");
+            }
+        });
+
+        ChatDatabase.Provider shared = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        shared.model = "";
+        shared.baseUrl = server.url("/v1").toString();
+        coordinator.saveProvider(shared, SECRET);
+        await("shared provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
+
+        ChatDatabase.ModelProfile chat = new ChatDatabase.ModelProfile();
+        chat.id = "go-chat"; chat.providerId = shared.id; chat.modelId = "deepseek-v4-flash-vision-exp"; chat.displayName = "DS V4 Flash Vision";
+        chat.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; chat.authMode = ProviderAuth.BEARER; chat.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
+        chat.reasoningLevels = "low,high,max"; chat.contextTokens = 128_000; chat.maxOutputTokens = 8_192; chat.inputModalities = "text,image"; chat.outputModalities = "text";
+        coordinator.saveModelProfile(chat);
+
+        ChatDatabase.ModelProfile responses = new ChatDatabase.ModelProfile();
+        responses.id = "go-responses"; responses.providerId = shared.id; responses.modelId = "gpt-5.6-luna"; responses.displayName = "Luna";
+        responses.protocol = OpenAiCompatibleTransport.RESPONSES; responses.authMode = ProviderAuth.BEARER; responses.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES;
+        responses.reasoningLevels = "high,xhigh"; responses.contextTokens = 128_000; responses.maxOutputTokens = 8_192;
+        coordinator.saveModelProfile(responses);
+
+        ChatDatabase.ModelProfile messages = new ChatDatabase.ModelProfile();
+        messages.id = "go-messages"; messages.providerId = shared.id; messages.modelId = "qwen3.8-max"; messages.displayName = "Qwen";
+        messages.protocol = AnthropicMessagesTransport.PROTOCOL; messages.authMode = ProviderAuth.X_API_KEY; messages.reasoningWire = ReasoningPolicy.WIRE_ANTHROPIC_EFFORT;
+        messages.reasoningLevels = "low,high"; messages.contextTokens = 128_000; messages.maxOutputTokens = 8_192;
+        coordinator.saveModelProfile(messages);
+
+        await("three model routes projected", () -> {
+            JSONObject view = latestView();
+            JSONObject providerView = view == null ? null : view.optJSONArray("providers").optJSONObject(0);
+            return providerView != null && providerView.optJSONArray("models") != null && providerView.optJSONArray("models").length() == 3;
+        });
+
+        post("chat.session.create", new JSONObject().put("providerId", shared.id).put("modelProfileId", chat.id)
+                .put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("chat route session created", () -> activeSession(latestView()) != null && chat.id.equals(activeSession(latestView()).optString("modelProfileId")));
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.reasoning.set", new JSONObject().put("localSessionId", sessionId).put("reasoningEffort", "high"));
+        await("chat high selected", () -> "high".equals(activeSession(latestView()).optString("reasoningEffort")));
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "chat"));
+        RecordedRequest chatRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(chatRequest);
+        assertEquals("/v1/chat/completions", chatRequest.getPath());
+        assertEquals("Bearer " + SECRET, chatRequest.getHeader("Authorization"));
+        assertEquals("high", new JSONObject(chatRequest.getBody().readUtf8()).optString("reasoning_effort"));
+        await("chat route completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+
+        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", responses.id));
+        await("responses model selected", () -> responses.id.equals(activeSession(latestView()).optString("modelProfileId")));
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "responses"));
+        RecordedRequest responsesRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(responsesRequest);
+        assertEquals("/v1/responses", responsesRequest.getPath());
+        assertEquals("Bearer " + SECRET, responsesRequest.getHeader("Authorization"));
+        assertEquals("high", new JSONObject(responsesRequest.getBody().readUtf8()).getJSONObject("reasoning").optString("effort"));
+        await("responses route completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+
+        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", messages.id));
+        await("messages model selected", () -> messages.id.equals(activeSession(latestView()).optString("modelProfileId")));
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "messages"));
+        RecordedRequest messagesRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(messagesRequest);
+        assertEquals("/v1/messages", messagesRequest.getPath());
+        assertEquals(SECRET, messagesRequest.getHeader("x-api-key"));
+        assertEquals("high", new JSONObject(messagesRequest.getBody().readUtf8()).getJSONObject("output_config").optString("effort"));
+        await("messages route completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
     @Test public void newChatContextModeRemembersLastExplicitSelection() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider").put("contextMode", ContextMode.SMART));
