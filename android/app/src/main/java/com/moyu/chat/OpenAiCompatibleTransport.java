@@ -315,9 +315,13 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         return entry.optString("result", "");
     }
 
-    private static void applyContinuationRequest(JSONObject body, String protocol, CanonicalPrompt prompt) throws Exception {
-        if (!RESPONSES.equals(protocol) || prompt == null || !prompt.allowProviderContinuation) return;
-        // Stateless/manual-history continuation needs replayable encrypted reasoning when the provider supports it.
+    private static void applyContinuationRequest(JSONObject body, String protocol, CanonicalPrompt prompt,
+                                                 ChatTurnOptions options) throws Exception {
+        if (!RESPONSES.equals(protocol) || prompt == null) return;
+        boolean sameTurnToolReplay = options != null && options.clientToolsEnabled(RESPONSES);
+        if (!prompt.allowProviderContinuation && !sameTurnToolReplay) return;
+        // Stateless/manual-history replay needs encrypted reasoning both for optional cross-user-turn
+        // continuation and for a client-tool loop inside this same user turn. These are separate policies.
         ensureInclude(body, "reasoning.encrypted_content");
     }
 
