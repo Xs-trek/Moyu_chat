@@ -126,6 +126,9 @@ final class ModelCatalog {
                           int userContext, int userInput, int userOutput) {
         if (profile == null) throw new IllegalArgumentException("model profile required");
         Resolution r = resolve(provider, profile.modelId);
+        if (!r.deploymentResolved) {
+            throw new IllegalArgumentException("Auto catalog has no reviewed deployment overlay for this endpoint/model; use Advanced");
+        }
         profile.catalogKey = r.catalogKey;
         profile.catalogVersion = CATALOG_VERSION;
         profile.catalogSource = r.source;
