@@ -204,7 +204,8 @@ final class ChatCoordinator implements AutoCloseable {
                 profile.modelId = bounded(profile.modelId, 256, "model id");
                 profile.displayName = bounded(profile.displayName == null || profile.displayName.trim().isEmpty() ? profile.modelId : profile.displayName, 128, "model display name");
                 profile.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
-                profile.defaultReasoning = ReasoningPolicy.normalizeEffort(profile.defaultReasoning);
+                ReasoningPolicy.validateLevelsForProvider(provider, profile.reasoningLevels);
+                profile.defaultReasoning = ReasoningPolicy.DEFAULT;
                 profile.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
                 profile.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
                 profile.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
