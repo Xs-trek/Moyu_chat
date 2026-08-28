@@ -1122,7 +1122,9 @@ final class ChatCoordinator implements AutoCloseable {
             streamStage.set("connecting");
             ChatTransport.Turn turn;
             try {
-                turn = transport.stream(provider, key, turnConfig.model, turnConfig.reasoningEffort, mainPrompt, roundOptions, sink);
+                CanonicalPrompt roundPrompt = activeRoundPrompt.get();
+                if (roundPrompt == null) throw new IllegalStateException("provider round prompt unavailable");
+                turn = transport.stream(provider, key, turnConfig.model, turnConfig.reasoningEffort, roundPrompt, roundOptions, sink);
             } catch (Exception startError) {
                 streamTerminal.set(true);
                 providerRoundGeneration.incrementAndGet();
