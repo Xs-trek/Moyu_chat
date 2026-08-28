@@ -715,6 +715,9 @@ final class ChatCoordinator implements AutoCloseable {
         AtomicLong streamProjectionRevision = new AtomicLong(0L);
         JSONArray outputMedia = new JSONArray();
         JSONArray providerContinuationItems = new JSONArray();
+        // Exact provider output/content blocks from completed client-tool rounds. This is same-turn
+        // protocol state only; it is not persisted as durable continuation unless the turn had no client tools.
+        JSONArray providerRoundHistory = new JSONArray();
         java.util.Set<String> providerContinuationKeys = new java.util.HashSet<>();
         int[] providerContinuationChars = new int[]{0};
         boolean[] providerContinuationOverflow = new boolean[]{false};
