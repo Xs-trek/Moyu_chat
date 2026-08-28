@@ -28,7 +28,7 @@ public class ModelCatalogTest {
 
         ModelCatalog.Resolution missingV1 = ModelCatalog.resolve(provider("https://api.openai.com"), "gpt-5.6");
         assertEquals("moyu-base-catalog", missingV1.source);
-        assertEquals(OpenAiCompatibleTransport.CHAT_COMPLETIONS, missingV1.protocol);
+        assertFalse("same model name on an unreviewed endpoint is not an Auto deployment", missingV1.deploymentResolved);
         assertEquals(ClientToolRuntime.NONE, missingV1.clientToolCalling);
     }
 
