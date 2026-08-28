@@ -973,9 +973,15 @@ final class ChatCoordinator implements AutoCloseable {
             } catch (Exception ignored) { } }); }
             @Override public void onCompleted() {
                 streamTerminal.set(true);
+                providerRoundGeneration.incrementAndGet();
                 worker.execute(() -> {
+                try { commitRoundUsage(); persistUsageProjection(); } catch (Exception ignored) { }
                 settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
-                if (!contextPolicy.verifierEnabled) {
+                boolean usedExternalEvidence = webPrepared.hasContext() || usedClientWeb[0] || !webSources.isEmpty();
+                boolean shouldVerify = contextPolicy.verifierEnabled && adaptivePolicy.verifierAvailable
+                        && HarnessPolicyResolver.shouldVerify(session, resolvedTaskProfile, usedExternalEvidence,
+                        mainPrompt.truncated, subagentCount[0] > 0);
+                if (!shouldVerify) {
                     try { attachProviderContinuation(live, turnConfig, providerContinuationItems); } catch (Exception ignored) { }
                     finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], null);
                     return;
@@ -991,12 +997,14 @@ final class ChatCoordinator implements AutoCloseable {
                 final JSONArray continuation = copyArray(providerContinuationItems);
                 final LinkedHashMap<String, JSONObject> candidateSources = copySources(webSources);
                 final String candidateWebBackend = webBackend[0];
+                final String verifierContext = (webPrepared.promptSuffix == null ? "" : webPrepared.promptSuffix)
+                        + clientEvidenceContext.toString();
                 preparationWorker.execute(() -> {
                     turnControl.bindCurrentThread();
                     try {
                         completeSmartTurn(id, streamKey, live, session, provider, key, transport,
                                 mainPrompt, input, candidate, candidateReasoning, candidateMedia, candidateSources,
-                                candidateWebBackend, continuation, webPrepared.promptSuffix, turnConfig, turnControl);
+                                candidateWebBackend, continuation, verifierContext, turnConfig, turnControl);
                     } finally {
                         turnControl.clearCurrentThread();
                     }
@@ -1004,32 +1012,53 @@ final class ChatCoordinator implements AutoCloseable {
             }); }
             @Override public void onError(String code, String summary, boolean retryable) {
                 streamTerminal.set(true);
-                worker.execute(() -> { settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]); finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], new String[]{code, summary}); });
+                providerRoundGeneration.incrementAndGet();
+                worker.execute(() -> {
+                    try { commitRoundUsage(); persistUsageProjection(); } catch (Exception ignored) { }
+                    settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                    finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0], new String[]{code, summary});
+                });
             }
         };
-        ChatTransport.Turn turn;
-        try {
-            turn = transport.stream(provider, key, turnConfig.model, turnConfig.reasoningEffort, prompt, webOptions, sink);
-        } catch (Exception startError) {
-            settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
-            finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0],
-                    new String[]{"transport_start_failed", safe(startError)});
-            return;
-        }
-        // The reader runs asynchronously and may reach a terminal callback before stream() returns.
-        // Never resurrect a turn that finishTurn() has already settled and released.
-        if (streamTerminal.get() || turnControls.get(id) != turnControl) {
-            try { turn.cancel(); } catch (Exception ignored) { }
-            return;
-        }
-        turnControl.bindTransport(turn);
-        if (turnControl.isCancelled()) {
-            try { turn.cancel(); } catch (Exception ignored) { }
-            return; // the transport terminal callback owns durable finalization.
-        }
-        activeTurns.put(id, turn);
-        startingSessions.remove(id);
-        emitStreamingView(id);
+        roundStarter.set(options -> {
+            if (streamTerminal.get() || turnControls.get(id) != turnControl) return;
+            ChatTurnOptions roundOptions = options == null ? ChatTurnOptions.NONE : options;
+            activeRoundOptions.set(roundOptions);
+            roundTextStart[0] = textOut.length();
+            roundReasoningStart[0] = reasoningOut.length();
+            roundMediaStart[0] = outputMedia.length();
+            roundInput[0] = 0; roundOutput[0] = 0; roundCached[0] = 0;
+            roundCacheWrite[0] = 0; roundCacheBase[0] = 0; roundReasoning[0] = 0;
+            long generation = providerRoundGeneration.incrementAndGet();
+            startingSessions.add(id);
+            streamStage.set("connecting");
+            ChatTransport.Turn turn;
+            try {
+                turn = transport.stream(provider, key, turnConfig.model, turnConfig.reasoningEffort, mainPrompt, roundOptions, sink);
+            } catch (Exception startError) {
+                streamTerminal.set(true);
+                providerRoundGeneration.incrementAndGet();
+                settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0],
+                        new String[]{"transport_start_failed", safe(startError)});
+                return;
+            }
+            // A terminal/tool callback can win before stream() returns. Generation protects against
+            // resurrecting the just-finished provider round into activeTurns/TurnControl.
+            if (streamTerminal.get() || turnControls.get(id) != turnControl || providerRoundGeneration.get() != generation) {
+                try { turn.cancel(); } catch (Exception ignored) { }
+                return;
+            }
+            turnControl.bindTransport(turn);
+            if (turnControl.isCancelled()) {
+                try { turn.cancel(); } catch (Exception ignored) { }
+                return;
+            }
+            activeTurns.put(id, turn);
+            startingSessions.remove(id);
+            emitStreamingView(id);
+        });
+        roundStarter.get().accept(webOptions);
     }
 
     private void completeSmartTurn(String id, String streamKey, JSONObject seed, ChatDatabase.Session session,
