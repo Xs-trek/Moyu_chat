@@ -51,14 +51,10 @@ final class ModelCatalog {
             out.catalogKey = model;
             out.source = "moyu-base-catalog";
             out.harnessPreset = HarnessProfile.LEAN;
-            out.contextTokens = 1_050_000;
-            out.maxOutputTokens = 128_000;
         } else if ("gpt-5.6-luna".equals(model)) {
             out.catalogKey = model;
             out.source = "moyu-base-catalog";
             out.harnessPreset = HarnessProfile.BALANCED;
-            out.contextTokens = 1_050_000;
-            out.maxOutputTokens = 128_000;
         } else if ("claude-opus-5".equals(model) || "claude-sonnet-5".equals(model)) {
             out.catalogKey = model;
             out.source = "moyu-base-catalog";
