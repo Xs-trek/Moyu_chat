@@ -26,7 +26,7 @@ final class ProviderEndpoint {
         String fixed;
         if (OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(protocol)) fixed = "/chat/completions";
         else if (OpenAiCompatibleTransport.RESPONSES.equals(protocol)) fixed = "/responses";
-        else if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) fixed = "/v1/messages";
+        else if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) fixed = "/messages";
         else return normalized;
         if (path != null && (path.equals(fixed) || path.endsWith(fixed))) {
             throw new IllegalArgumentException("Base URL must exclude the fixed protocol path " + fixed);
