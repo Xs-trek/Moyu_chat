@@ -24,6 +24,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         /** v0.0.2 session-scoped context policy plus provider-neutral derived control state. */
         public String contextMode, taskProfile, contextCheckpoint, toolCapabilities, webMode;
         /** Session-frozen deployment capabilities; editing a ModelProfile affects new/model-switched turns only. */
+        public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
+        public String authMode = ProviderAuth.BEARER;
+        public String reasoningWire = ReasoningPolicy.WIRE_NONE;
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
         public String continuationMode = ProviderContinuationPolicy.NONE;
         public int thinkingBudgetTokens;
