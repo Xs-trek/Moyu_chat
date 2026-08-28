@@ -165,6 +165,12 @@ document.addEventListener('click', (event) => {
   else if (action === 'toggle-reasoning') postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' });
   else if (action === 'toggle-memory') postIntent('memory.global.set', { enabled: target.dataset.enabled === 'true' });
   else if (action === 'open-session') postIntent('chat.session.open', { localSessionId: target.dataset.sessionId });
+  else if (action === 'rename-session') {
+    const sessionId = target.dataset.sessionId;
+    const title = target.dataset.sessionTitle || window.__moyuChatView?.activeSession?.title || '';
+    if (!sessionId) return;
+    openTextDialog({ title: '重命名会话', value: title, onConfirm: (nextTitle) => postIntent('chat.session.rename', { localSessionId: sessionId, title: nextTitle }) });
+  }
   else if (action === 'delete-session') {
     const sessionId = target.dataset.sessionId;
     if (!sessionId) return;
