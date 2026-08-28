@@ -144,6 +144,7 @@ function conversation(view) {
       button('←', 'nav', { route: 'home' }, 'btn ghost small icon-btn'),
       h('div', { class: 'conversation-title grow' }, h('strong', { class: 'truncate-safe', text: session.title }), h('small', { class: 'muted truncate-safe', text: busyLabel || `${session.providerName} · ${session.modelName || session.model}` })),
       h('span', { class: `badge good conversation-busy${busyLabel ? '' : ' is-hidden'}`, text: busyLabel || '' }),
+      button('重命名', 'rename-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn ghost small icon-action'),
       button(view.ui?.showReasoning ? '隐藏推理' : '显示推理', 'toggle-reasoning', { show: view.ui?.showReasoning ? 'false' : 'true' }, 'btn ghost small icon-action'),
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn ghost small icon-action')),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
