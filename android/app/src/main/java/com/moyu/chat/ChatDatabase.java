@@ -857,6 +857,40 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         p.continuationMode = ProviderContinuationPolicy.NONE; return p;
     }
 
+    static String normalizeProtocol(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(value)
+                || OpenAiCompatibleTransport.RESPONSES.equals(value)
+                || AnthropicMessagesTransport.PROTOCOL.equals(value)) return value;
+        throw new IllegalArgumentException("unsupported protocol");
+    }
+
+    /** Resolve one request-local deployment snapshot from shared account data plus model capabilities. */
+    static Provider deploymentProvider(Provider shared, ModelProfile profile) {
+        if (shared == null || profile == null) throw new IllegalArgumentException("provider/model profile required");
+        Provider out = new Provider();
+        out.id = shared.id; out.displayName = shared.displayName; out.baseUrl = shared.baseUrl; out.model = profile.modelId;
+        out.protocol = normalizeProtocol(profile.protocol);
+        out.authMode = ProviderAuth.normalize(profile.authMode, out.protocol);
+        out.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, out.protocol);
+        out.contextTokens = profile.contextTokens; out.inputTokens = profile.inputTokens; out.maxOutputTokens = profile.maxOutputTokens;
+        out.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); out.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
+        return out;
+    }
+
+    /** Session form is authoritative after creation/model switch so later ModelProfile edits cannot relabel an old Chat. */
+    static Provider deploymentProvider(Provider shared, Session session) {
+        if (shared == null || session == null) throw new IllegalArgumentException("provider/session required");
+        Provider out = new Provider();
+        out.id = shared.id; out.displayName = shared.displayName; out.baseUrl = shared.baseUrl; out.model = session.model;
+        out.protocol = normalizeProtocol(session.protocol);
+        out.authMode = ProviderAuth.normalize(session.authMode, out.protocol);
+        out.reasoningWire = ReasoningPolicy.normalizeWire(session.reasoningWire, out.protocol);
+        out.contextTokens = session.contextTokens; out.inputTokens = session.inputTokens; out.maxOutputTokens = session.maxOutputTokens;
+        out.thinkingMode = ReasoningPolicy.normalizeThinkingMode(session.thinkingMode); out.thinkingBudgetTokens = Math.max(0, session.thinkingBudgetTokens);
+        return out;
+    }
+
     static String normalizeModalities(String raw) {
         String value = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
         if (value.isEmpty()) return "text";
