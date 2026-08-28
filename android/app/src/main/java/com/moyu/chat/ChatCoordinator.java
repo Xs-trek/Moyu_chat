@@ -180,20 +180,59 @@ final class ChatCoordinator implements AutoCloseable {
 
     void saveProvider(ChatDatabase.Provider provider, String apiKey, SaveCallback completion) {
         worker.execute(() -> {
+            String previousSecret = null;
+            boolean secretWritten = false;
             try {
                 if (provider == null || provider.id == null || provider.id.trim().isEmpty()) throw new IllegalArgumentException("provider id required");
                 provider.id = bounded(provider.id, 128, "provider id");
                 provider.displayName = bounded(provider.displayName, 128, "display name");
                 // Provider is the shared account/connection boundary. Protocol/auth/reasoning wire are
-                // model-deployment capabilities and are validated in saveModelProfile instead.
+                // model-deployment capabilities and are validated per Model Profile below.
                 provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
                 provider.model = provider.model == null ? "" : provider.model.trim();
-                db.saveProvider(provider);
-                if (apiKey != null && !apiKey.trim().isEmpty()) {
-                    secrets.put(provider.id, apiKey.trim());
-                    // A replaced credential may point at a different account/tenant even when the URL is unchanged.
-                    // Invalidate all previously captured opaque continuation without persisting any secret-derived value.
-                    ProviderContinuationIdentity.bumpCredentialEpoch(db, provider.id);
+
+                java.util.List<ChatDatabase.ModelProfile> affectedProfiles = db.listModelProfiles(provider.id);
+                for (ChatDatabase.ModelProfile profile : affectedProfiles) {
+                    if (ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(profile.configMode))) {
+                        // Endpoint identity is part of deployment authority. Re-resolve Auto whenever the
+                        // shared endpoint changes so stale official/native capabilities cannot follow it.
+                        ModelCatalog.applyAuto(provider, profile, 0, 0, 0);
+                    }
+                    profile.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
+                    if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("unsupported protocol");
+                    ProviderEndpoint.normalize(provider.baseUrl, profile.protocol);
+                    profile.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
+                    if (!ClientToolRuntime.NONE.equals(profile.clientToolCalling)
+                            && !ClientToolRuntime.compatible(profile.protocol, profile.clientToolCalling)) {
+                        throw new IllegalArgumentException("client tool calling wire is incompatible with selected protocol");
+                    }
+                    profile.authMode = ProviderAuth.normalize(profile.authMode, profile.protocol);
+                    profile.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, profile.protocol);
+                    profile.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
+                    ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, profile), profile.reasoningLevels);
+                    profile.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
+                    profile.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
+                    profile.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
+                    profile.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode);
+                    profile.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
+                    profile.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
+                }
+
+                String nextSecret = apiKey == null ? "" : apiKey.trim();
+                boolean credentialChanged = !nextSecret.isEmpty();
+                if (credentialChanged) {
+                    previousSecret = secrets.get(provider.id);
+                    secrets.put(provider.id, nextSecret);
+                    secretWritten = true;
+                }
+                try {
+                    db.saveProviderAndProfiles(provider, affectedProfiles, credentialChanged);
+                } catch (Exception databaseError) {
+                    if (secretWritten) {
+                        try { secrets.put(provider.id, previousSecret == null ? "" : previousSecret); }
+                        catch (Exception restoreError) { throw new IllegalStateException("provider save failed and previous credential could not be restored", databaseError); }
+                    }
+                    throw databaseError;
                 }
                 emitView();
                 if (completion != null) completion.complete(null);
