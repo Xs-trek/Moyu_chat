@@ -160,6 +160,21 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
             db.execSQL("UPDATE sessions SET thinking_mode=COALESCE((SELECT thinking_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),'provider-default'), thinking_budget_tokens=COALESCE((SELECT thinking_budget_tokens FROM model_profiles WHERE profile_id=sessions.model_profile_id),0), continuation_mode=COALESCE((SELECT continuation_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),'none')");
         }
+        if (oldVersion < 13) {
+            // Provider is now the shared account/endpoint. Transport/auth/reasoning wire belong to the
+            // concrete model deployment and are frozen into each session on create/model switch.
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai-chat-completions'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
+            db.execSQL("UPDATE model_profiles SET protocol=COALESCE((SELECT protocol FROM providers WHERE providers.provider_id=model_profiles.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM providers WHERE providers.provider_id=model_profiles.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM providers WHERE providers.provider_id=model_profiles.provider_id),'none')");
+            // Old Messages semantics used base + /v1/messages. New common-base semantics use base + /messages.
+            // Appending /v1 preserves the exact pre-migration request URL for every old Messages provider.
+            db.execSQL("UPDATE providers SET base_url=RTRIM(base_url,'/') || '/v1' WHERE protocol='anthropic-messages'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai-chat-completions'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
+            db.execSQL("UPDATE sessions SET protocol=COALESCE((SELECT protocol FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT protocol FROM providers WHERE providers.provider_id=sessions.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT auth_mode FROM providers WHERE providers.provider_id=sessions.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT reasoning_wire FROM providers WHERE providers.provider_id=sessions.provider_id),'none')");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
