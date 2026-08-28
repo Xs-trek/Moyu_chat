@@ -1479,7 +1479,8 @@ final class ChatCoordinator implements AutoCloseable {
             view.put("remoteBridge", remote).put("remoteSources", remoteSources).put("importedSources", importedSources).put("handoffs", handoffs)
                     .put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
                             .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("importInProgress", importInProgress.get())
-                            .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode));
+                            .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
+                            .put("standardSubagentMode", standardSubagentMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));
         } catch (Exception error) { host.showMessage("view update failed: " + safe(error)); }
     }
