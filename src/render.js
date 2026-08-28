@@ -393,11 +393,9 @@ function reconcileTimeline(timeline, items, runtimeRunning, sessionId, showReaso
   for (const [key, node] of existing) if (!used.has(key)) node.remove();
 }
 
-function reasoningControl(model) {
+function reasoningCapability(model) {
   const levels = String(model.reasoningLevels || '').split(',').map((x) => x.trim()).filter(Boolean);
-  if (!levels.length) return badge('reasoning · provider default', 'quiet');
-  const values = ['default', ...levels.filter((x) => x !== 'default')];
-  return h('select', { class: 'reasoning-select', dataset: { reasoningSelect: '1' } }, values.map((level) => h('option', { value: level, selected: level === (model.defaultReasoning || 'default'), text: level })));
+  return badge(levels.length ? `深度支持 · ${levels.join(' / ')}` : '深度支持 · Provider 默认', 'quiet');
 }
 
 function contextModeControl(value = 'standard', dataset = { contextModeSelect: '1' }) {
