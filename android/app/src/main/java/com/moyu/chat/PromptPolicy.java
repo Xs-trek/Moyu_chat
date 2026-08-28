@@ -28,12 +28,14 @@ final class PromptPolicy {
         String mode = ContextMode.normalize(session == null ? null : session.contextMode);
         if (ContextMode.MINIMAL.equals(mode)) return minimal(snapshot, contextTruncated);
 
+        HarnessPolicyResolver.Policy adaptive = HarnessPolicyResolver.resolve(session);
         StringBuilder out = new StringBuilder(STANDARD_BASE);
+        if (!adaptive.reliabilityInstructions.isEmpty()) out.append(adaptive.reliabilityInstructions);
         if (ContextMode.SMART.equals(mode)) {
             TaskProfile profile = TaskProfile.fromStored(session == null ? null : session.taskProfile);
             String modules = PromptModules.render(profile);
             if (!modules.isEmpty()) out.append("\n\nTask-adaptation policy selected by Moyu from a bounded task profile:").append(modules);
-            out.append(SMART_EVIDENCE);
+            if (ContextMode.resolve(session, snapshot).evidencePolicyEnabled) out.append(SMART_EVIDENCE);
         }
         appendSnapshotPolicy(out, snapshot);
 
