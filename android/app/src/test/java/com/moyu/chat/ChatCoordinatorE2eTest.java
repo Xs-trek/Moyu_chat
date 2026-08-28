@@ -779,6 +779,14 @@ public class ChatCoordinatorE2eTest {
 
     // ---------- raw input edge cases ----------
 
+    @Test public void importButtonsReachTheNativeDocumentPickerForBothExplicitSources() throws Exception {
+        post("import.file.pick", new JSONObject().put("source", "chatgpt"));
+        await("ChatGPT import picker requested", () -> "chatgpt".equals(host.importPickerSource));
+        host.importPickerSource = null;
+        post("import.file.pick", new JSONObject().put("source", "claude"));
+        await("Claude import picker requested", () -> "claude".equals(host.importPickerSource));
+    }
+
     @Test public void configureNewProviderIntentOpensBlankEditorWithoutError() throws Exception {
         // The WebView sends an empty payload for "new provider"; this used to bind null into SQLite.
         String requestId = post("provider.configure.open", new JSONObject());
