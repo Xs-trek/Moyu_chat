@@ -439,8 +439,10 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
         ChatDatabase.ModelProfile profile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
         if (profile == null) throw new IllegalStateException("model profile not found");
+        ChatDatabase.Provider provider = db.getProvider(session.providerId);
+        if (provider == null) throw new IllegalStateException("provider not found");
         String normalized = ReasoningPolicy.normalizeEffort(effort);
-        if (!ReasoningPolicy.allows(profile.reasoningLevels, normalized)) throw new IllegalArgumentException("reasoning effort not supported by model profile");
+        ReasoningPolicy.validateEffortForProvider(provider, profile.reasoningLevels, normalized);
         session.reasoningEffort = normalized;
         session.updatedAt = Instant.now().toString();
         db.saveSession(session);
