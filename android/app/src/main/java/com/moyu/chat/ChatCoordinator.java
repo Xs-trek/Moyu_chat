@@ -1188,7 +1188,7 @@ final class ChatCoordinator implements AutoCloseable {
                 for (ChatDatabase.ModelProfile m : db.listModelProfiles(p.id)) models.put(new JSONObject()
                         .put("modelProfileId", m.id).put("modelId", m.modelId).put("displayName", m.displayName)
                         .put("contextTokens", m.contextTokens).put("inputTokens", m.inputTokens).put("maxOutputTokens", m.maxOutputTokens)
-                        .put("reasoningLevels", m.reasoningLevels).put("defaultReasoning", m.defaultReasoning)
+                        .put("reasoningLevels", m.reasoningLevels)
                         .put("thinkingMode", ReasoningPolicy.normalizeThinkingMode(m.thinkingMode)).put("thinkingBudgetTokens", Math.max(0, m.thinkingBudgetTokens))
                         .put("continuationMode", ProviderContinuationPolicy.normalize(m.continuationMode))
                         .put("inputModalities", m.inputModalities).put("outputModalities", m.outputModalities)
