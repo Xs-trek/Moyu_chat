@@ -435,7 +435,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             JSONObject block = blocks.remove(index); if (block == null) return;
             String type = block.optString("type", "");
             try {
-                if ("server_tool_use".equals(type)) {
+                if ("tool_use".equals(type) || "server_tool_use".equals(type)) {
                     StringBuilder partial = inputJson.remove(index);
                     if (partial != null && partial.length() > 0) block.put("input", new JSONObject(partial.toString()));
                     if (block.optString("id", "").isEmpty() || block.optString("name", "").isEmpty()) return;
