@@ -426,7 +426,7 @@ final class ChatCoordinator implements AutoCloseable {
         session.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode);
         session.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
         session.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
-        ReasoningPolicy.validateLevelsForProvider(provider, profile.reasoningLevels);
+        ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, session), profile.reasoningLevels);
         String previousEffort = ReasoningPolicy.normalizeEffort(session.reasoningEffort);
         session.reasoningEffort = ReasoningPolicy.allows(profile.reasoningLevels, previousEffort) ? previousEffort : ReasoningPolicy.DEFAULT;
         session.updatedAt = Instant.now().toString();
