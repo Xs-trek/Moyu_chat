@@ -66,6 +66,9 @@ export interface ModelProfileView {
   modelProfileId: string;
   modelId: string;
   displayName: string;
+  protocol: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | string;
+  authMode: 'bearer' | 'x-api-key' | 'api-key' | string;
+  reasoningWire: 'none' | 'openai-responses' | 'openai-chat-effort' | 'anthropic-effort' | string;
   contextTokens: number;
   inputTokens: number;
   maxOutputTokens: number;
