@@ -50,6 +50,9 @@ public class ProviderContinuationReplayTest {
         profile.maxOutputTokens = 4_096;
         profile.reasoningLevels = "";
         profile.defaultReasoning = ReasoningPolicy.DEFAULT;
+        profile.protocol = OpenAiCompatibleTransport.RESPONSES;
+        profile.authMode = ProviderAuth.BEARER;
+        profile.reasoningWire = ReasoningPolicy.WIRE_NONE;
         profile.inputModalities = "text";
         profile.outputModalities = "text";
         profile.continuationMode = ProviderContinuationPolicy.NATIVE;
