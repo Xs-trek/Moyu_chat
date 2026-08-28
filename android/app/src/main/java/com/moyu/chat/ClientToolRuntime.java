@@ -146,6 +146,45 @@ final class ClientToolRuntime {
         return new BatchResult(entries, childCount, childIn, childOut);
     }
 
+    /** Conservative transport-input estimate for cumulative client-tool + exact provider round history. */
+    static int estimateWireHistoryTokens(JSONArray toolHistory, JSONArray providerRoundHistory) {
+        try {
+            JSONArray wire = new JSONArray();
+            if (providerRoundHistory != null) for (int i = 0; i < providerRoundHistory.length(); i++) {
+                JSONObject entry = providerRoundHistory.optJSONObject(i); if (entry == null) continue;
+                JSONObject item = entry.optJSONObject("item"); if (item == null) continue;
+                wire.put(new JSONObject().put("round", Math.max(0, entry.optInt("round", 0)))
+                        .put("item", new JSONObject(item.toString())));
+            }
+            if (toolHistory != null) for (int i = 0; i < toolHistory.length(); i++) {
+                JSONObject entry = toolHistory.optJSONObject(i); if (entry == null) continue;
+                JSONObject copy = new JSONObject().put("round", Math.max(0, entry.optInt("round", 0)))
+                        .put("id", entry.optString("id", "")).put("name", entry.optString("name", ""))
+                        .put("arguments", entry.optJSONObject("arguments") == null ? new JSONObject() : new JSONObject(entry.optJSONObject("arguments").toString()));
+                if (entry.has("error")) copy.put("error", entry.optString("error", ""));
+                else copy.put("result", entry.optString("result", ""));
+                wire.put(copy);
+            }
+            int structural = 32 * wire.length();
+            return new ContextBudgetManager().estimate(wire.toString()) + structural;
+        } catch (Exception error) {
+            throw new IllegalArgumentException("invalid tool/provider history", error);
+        }
+    }
+
+    /** Clip only not-yet-sent tool results; exact provider output items and prior-round results are immutable. */
+    static void clipBatchResults(JSONArray entries, int maxCharsPerResult) {
+        if (entries == null) return;
+        int cap = Math.max(128, maxCharsPerResult);
+        for (int i = 0; i < entries.length(); i++) {
+            JSONObject entry = entries.optJSONObject(i); if (entry == null || entry.has("error")) continue;
+            String result = entry.optString("result", "");
+            if (result.length() <= cap) continue;
+            try { entry.put("result", result.substring(0, cap) + "\n[Tool result truncated by Moyu context budget]").put("resultTruncated", true); }
+            catch (Exception ignored) { }
+        }
+    }
+
     /** Minimal cancellation contract so client-tool code does not depend on ChatCoordinator internals. */
     interface TurnCancellation extends MoyuWebService.CallScope { }
 }
