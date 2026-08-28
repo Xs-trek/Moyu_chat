@@ -84,7 +84,8 @@ final class ContextBuilder {
                                           String pendingUserText, JSONArray pendingMedia, boolean committed) throws Exception {
         ChatDatabase.Snapshot snapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         ContextMode.Policy mode = ContextMode.resolve(session, snapshot);
-        ChatDatabase.Provider provider = db.getProvider(session.providerId);
+        ChatDatabase.Provider sharedProvider = db.getProvider(session.providerId);
+        ChatDatabase.Provider provider = sharedProvider == null ? null : ChatDatabase.deploymentProvider(sharedProvider, session);
         boolean allowContinuation = mode.providerContinuationEnabled && ProviderContinuationPolicy.enabled(session.continuationMode);
         JSONArray inherited = snapshot == null ? new JSONArray() : db.snapshotItems(snapshot.id);
         JSONArray local = db.timeline(session.id);
