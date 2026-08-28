@@ -45,6 +45,10 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (state != null) {
+            pendingImageSessionId = state.getString(STATE_PENDING_IMAGE_SESSION);
+            pendingConversationImportSource = state.getString(STATE_PENDING_IMPORT_SOURCE);
+        }
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         MoyuChatApplication app = (MoyuChatApplication) getApplication();
         runtime = app.chatRuntime();
