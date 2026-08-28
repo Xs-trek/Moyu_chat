@@ -1333,7 +1333,8 @@ public class ChatCoordinatorE2eTest {
         assertEquals(55_555, afterProfile.inputTokens);
         assertEquals(7_777, afterProfile.maxOutputTokens);
         assertEquals("failed Provider save must not alter credential", SECRET, secrets.get("auto-provider"));
-        assertTrue(host.toasts.get(host.toasts.size() - 1).contains("use Advanced"));
+        assertTrue(host.toasts.get(host.toasts.size() - 1).contains("高级配置"));
+        assertTrue(host.toasts.get(host.toasts.size() - 1).contains("不会根据模型名猜测"));
     }
 
     @Test public void anthropicProtocolEndToEnd() throws Exception {
