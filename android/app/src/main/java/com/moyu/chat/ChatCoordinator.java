@@ -714,6 +714,8 @@ final class ChatCoordinator implements AutoCloseable {
         String usageKey = "usage:turn:" + UUID.randomUUID();
         JSONObject usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString()).put("context", prompt.diagnostics());
         boolean[] usagePersisted = new boolean[]{false};
+        int[] roundInput = new int[]{0}, roundOutput = new int[]{0}, roundCached = new int[]{0}, roundCacheWrite = new int[]{0}, roundCacheBase = new int[]{0}, roundReasoning = new int[]{0};
+        int[] mainInput = new int[]{0}, mainOutput = new int[]{0}, mainCached = new int[]{0}, mainCacheWrite = new int[]{0}, mainCacheBase = new int[]{0}, mainReasoning = new int[]{0};
         ChatTransport.Sink sink = new ChatTransport.Sink() {
             private JSONObject liveProjection() throws Exception {
                 JSONObject next = new JSONObject(live.toString()).put("text", textOut.toString()).put("streaming", true).put("streamStage", streamStage.get());
