@@ -209,6 +209,31 @@ public class ChatDatabaseTest {
         assertEquals("legacy assistant", upgraded.timeline(session.id).getJSONObject(1).optString("text"));
     }
 
+    @Test public void upgradeFromV12MovesWireAuthorityToModelAndSessionWithoutChangingRoutes() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(12);
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+
+        ChatDatabase.Provider responsesProvider = upgraded.getProvider("legacy-p");
+        ChatDatabase.ModelProfile responsesProfile = upgraded.findModelProfile("legacy-p", "legacy-model");
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        assertNotNull(responsesProvider); assertNotNull(responsesProfile); assertNotNull(session);
+        assertEquals(OpenAiCompatibleTransport.RESPONSES, responsesProfile.protocol);
+        assertEquals(ProviderAuth.BEARER, responsesProfile.authMode);
+        assertEquals(ReasoningPolicy.WIRE_OPENAI_RESPONSES, responsesProfile.reasoningWire);
+        assertEquals("existing Session must freeze the migrated deployment protocol", OpenAiCompatibleTransport.RESPONSES, session.protocol);
+        assertEquals(ProviderAuth.BEARER, session.authMode);
+        assertEquals(ReasoningPolicy.WIRE_OPENAI_RESPONSES, session.reasoningWire);
+
+        ChatDatabase.Provider messagesProvider = upgraded.getProvider("legacy-a");
+        ChatDatabase.ModelProfile messagesProfile = upgraded.findModelProfile("legacy-a", "legacy-claude");
+        assertNotNull(messagesProvider); assertNotNull(messagesProfile);
+        assertEquals("legacy Messages base must become the common /v1 API root", "https://legacy-anthropic.example/v1", messagesProvider.baseUrl);
+        assertEquals(AnthropicMessagesTransport.PROTOCOL, messagesProfile.protocol);
+        assertEquals(ProviderAuth.X_API_KEY, messagesProfile.authMode);
+        assertEquals(ReasoningPolicy.WIRE_ANTHROPIC_EFFORT, messagesProfile.reasoningWire);
+        upgraded.close();
+    }
+
     @Test public void localBranchesInheritFrozenContextMode() {
         ChatDatabase.Provider provider = provider("p-mode"); db.saveProvider(provider);
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); assertNotNull(profile);
