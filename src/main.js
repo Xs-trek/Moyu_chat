@@ -53,6 +53,7 @@ document.addEventListener('scroll', (event) => {
     const state = noteTimelineScroll(scroller);
     const jump = scroller.querySelector('.jump-latest');
     if (jump) jump.classList.toggle('is-hidden', state.nearBottom && state.followLatest);
+    syncTurnNavigator(scroller);
   });
 }, true);
 
