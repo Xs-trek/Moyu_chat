@@ -216,6 +216,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.maxOutputTokens = profile.maxOutputTokens;
         s.inputModalities = normalizeModalities(profile.inputModalities); s.outputModalities = normalizeModalities(profile.outputModalities);
         s.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
+        s.protocol = normalizeProtocol(profile.protocol); s.authMode = ProviderAuth.normalize(profile.authMode, s.protocol);
+        s.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, s.protocol);
         s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); s.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
         s.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
         s.webMode = ChatTurnOptions.normalizeWebMode(webMode);
