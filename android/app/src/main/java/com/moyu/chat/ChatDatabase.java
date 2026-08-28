@@ -851,6 +851,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         p.inputTokens = Math.max(0, provider.inputTokens);
         p.maxOutputTokens = provider.maxOutputTokens > 0 ? provider.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
         p.reasoningLevels = ""; p.defaultReasoning = ReasoningPolicy.DEFAULT; p.inputModalities = "text"; p.outputModalities = "text";
+        p.protocol = normalizeProtocol(provider.protocol); p.authMode = ProviderAuth.normalize(provider.authMode, p.protocol);
+        p.reasoningWire = ReasoningPolicy.normalizeWire(provider.reasoningWire, p.protocol);
         p.thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT; p.thinkingBudgetTokens = 0;
         p.continuationMode = ProviderContinuationPolicy.NONE; return p;
     }
