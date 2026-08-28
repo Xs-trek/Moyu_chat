@@ -205,10 +205,12 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     }
 
     private void showEditorError(TextView error, String message) {
-        if (error == null) return;
         String text = message == null || message.trim().isEmpty() ? "配置无效，请检查填写内容" : message.trim();
-        error.setText(text);
-        error.setVisibility(View.VISIBLE);
+        if (error != null) {
+            error.setText(text);
+            error.setVisibility(View.VISIBLE);
+        }
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 
     @Override public void openProviderEditor(ChatDatabase.Provider existing) {
