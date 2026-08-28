@@ -63,6 +63,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         /** Explicit thinking capability; provider-default avoids model-name guessing. */
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
         public String continuationMode = ProviderContinuationPolicy.NONE;
+        /** v0.0.4 catalog + adaptive harness metadata. */
+        public String configMode = ModelCatalog.CONFIG_AUTO;
+        public String catalogKey = "unknown", catalogVersion = ModelCatalog.CATALOG_VERSION, catalogSource = "neutral-defaults";
+        public String harnessPreset = HarnessProfile.BALANCED;
+        public String clientToolCalling = ClientToolRuntime.NONE;
         public int thinkingBudgetTokens = 0;
         public int contextTokens, inputTokens, maxOutputTokens;
     }
