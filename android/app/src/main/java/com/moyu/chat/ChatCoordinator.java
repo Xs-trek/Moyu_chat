@@ -1313,6 +1313,17 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception ignored) { return new JSONObject(); }
     }
 
+    static boolean promptContainsLatestUserSuffix(CanonicalPrompt prompt, String suffix) {
+        if (prompt == null || suffix == null || suffix.isEmpty()) return false;
+        JSONArray messages = prompt.messages;
+        for (int i = messages.length() - 1; i >= 0; i--) {
+            JSONObject item = messages.optJSONObject(i);
+            if (item == null || !"user".equals(item.optString("role", ""))) continue;
+            return item.optString("text", "").endsWith(suffix);
+        }
+        return false;
+    }
+
     private static JSONArray copyArray(JSONArray source) {
         try { return source == null ? new JSONArray() : new JSONArray(source.toString()); }
         catch (Exception ignored) { return new JSONArray(); }
