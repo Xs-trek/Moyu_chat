@@ -174,7 +174,11 @@ final class ChatCoordinator implements AutoCloseable {
     void postIntent(String raw) { if (raw == null || raw.length() > 1024 * 1024) return; worker.execute(() -> handle(raw)); }
     void refreshView() { worker.execute(this::emitView); }
 
-    void saveProvider(ChatDatabase.Provider provider, String apiKey) {
+    interface SaveCallback { void complete(String error); }
+
+    void saveProvider(ChatDatabase.Provider provider, String apiKey) { saveProvider(provider, apiKey, null); }
+
+    void saveProvider(ChatDatabase.Provider provider, String apiKey, SaveCallback completion) {
         worker.execute(() -> {
             try {
                 if (provider == null || provider.id == null || provider.id.trim().isEmpty()) throw new IllegalArgumentException("provider id required");
@@ -192,11 +196,17 @@ final class ChatCoordinator implements AutoCloseable {
                     ProviderContinuationIdentity.bumpCredentialEpoch(db, provider.id);
                 }
                 emitView();
-            } catch (Exception error) { host.showMessage(safe(error)); }
+                if (completion != null) completion.complete(null);
+            } catch (Exception error) {
+                String message = safe(error);
+                if (completion != null) completion.complete(message); else host.showMessage(message);
+            }
         });
     }
 
-    void saveModelProfile(ChatDatabase.ModelProfile profile) {
+    void saveModelProfile(ChatDatabase.ModelProfile profile) { saveModelProfile(profile, null); }
+
+    void saveModelProfile(ChatDatabase.ModelProfile profile, SaveCallback completion) {
         worker.execute(() -> {
             try {
                 ChatDatabase.Provider provider = profile == null ? null : db.getProvider(profile.providerId);
@@ -233,7 +243,11 @@ final class ChatCoordinator implements AutoCloseable {
                 profile.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
                 profile.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
                 db.saveModelProfile(profile); emitView();
-            } catch (Exception error) { host.showMessage(safe(error)); }
+                if (completion != null) completion.complete(null);
+            } catch (Exception error) {
+                String message = safe(error);
+                if (completion != null) completion.complete(message); else host.showMessage(message);
+            }
         });
     }
 
