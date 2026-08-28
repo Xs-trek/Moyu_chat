@@ -37,6 +37,7 @@ final class ChatCoordinator implements AutoCloseable {
         final String apiKey, deploymentFingerprint;
         final String providerId, modelProfileId, model, modelName, reasoningEffort;
         final String inputModalities, outputModalities, toolCapabilities, thinkingMode, continuationMode, contextMode, webMode;
+        final String harnessPreset, clientToolCalling, subagentMode;
         final int thinkingBudgetTokens, contextTokens, inputTokens, maxOutputTokens;
         final boolean reasoningAvailable;
 
