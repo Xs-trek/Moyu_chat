@@ -50,6 +50,7 @@ if (!db.includes('CREATE VIRTUAL TABLE knowledge_fts USING fts4') || !db.include
 const contextMode = read('android/app/src/main/java/com/moyu/chat/ContextMode.java');
 const promptPolicy = read('android/app/src/main/java/com/moyu/chat/PromptPolicy.java');
 const modelCatalog = read('android/app/src/main/java/com/moyu/chat/ModelCatalog.java');
+const modelValidator = read('android/app/src/main/java/com/moyu/chat/ModelProfileValidator.java');
 const harnessResolver = read('android/app/src/main/java/com/moyu/chat/HarnessPolicyResolver.java');
 const clientTools = read('android/app/src/main/java/com/moyu/chat/ClientToolRuntime.java');
 const focusedSubagent = read('android/app/src/main/java/com/moyu/chat/FocusedSubagentService.java');
