@@ -878,6 +878,13 @@ final class ChatCoordinator implements AutoCloseable {
                             webSources, webBackend[0], new String[]{"invalid_tool_call", "Provider emitted an empty client tool batch"}));
                     return;
                 }
+                if (batchCalls.length() > ClientToolRuntime.MAX_TOOL_CALLS_PER_BATCH) {
+                    streamTerminal.set(true);
+                    providerRoundGeneration.incrementAndGet();
+                    worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+                            webSources, webBackend[0], new String[]{"tool_batch_limit", "Client tool batch limit exceeded"}));
+                    return;
+                }
 
                 // A tool batch is terminal for this provider round, not for the user turn. Invalidate
                 // the just-finished round immediately so a very fast callback cannot re-bind its old Call.
