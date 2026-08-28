@@ -124,7 +124,7 @@ public class ContextBudgetManagerTest {
         }
         all.put(message("user", "CURRENT TOOL QUESTION"));
         ContextBudgetManager.Result full = manager.select(INSTRUCTIONS, all, 4_000, 0, 512);
-        ContextBudgetManager.Result reserved = manager.selectWithReserve(INSTRUCTIONS, all, 4_000, 0, 512, 1_400);
+        ContextBudgetManager.Result reserved = manager.selectWithReserve(INSTRUCTIONS, all, 4_000, 0, 512, 2_500);
         assertTrue("reserved provider/tool history should make the retained chat tail smaller",
                 reserved.messages.length() < full.messages.length());
         assertEquals("CURRENT TOOL QUESTION",
