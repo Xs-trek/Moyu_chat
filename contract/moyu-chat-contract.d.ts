@@ -186,6 +186,9 @@ export interface SessionView {
   thinkingMode: 'provider-default' | 'adaptive' | 'disabled' | 'manual';
   thinkingBudgetTokens: number;
   continuationMode: 'none' | 'native';
+  harnessPreset: 'lean' | 'balanced' | 'reinforced';
+  clientToolCalling: 'none' | 'openai-chat-tools' | 'openai-responses-tools' | 'anthropic-tools';
+  subagentMode: SubagentMode;
   contextMode: ContextMode;
   effectiveContextMode: 'minimal' | 'standard' | 'smart';
   inputModalities: string;
