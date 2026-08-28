@@ -222,7 +222,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                     }
                     if (!event.optString("type", "").isEmpty()) lastSemantic = now;
                     else if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
-                    if (parse(event, sink, continuation)) return;
+                    if (parse(event, sink, continuation, clientTools)) return;
                 }
             }
             if (sawData) { continuation.flush(); sink.onCompleted(); }
