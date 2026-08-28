@@ -59,7 +59,8 @@ final class ContextBuilder {
         ChatDatabase.Snapshot snapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         ContextMode.Policy mode = ContextMode.resolve(session, snapshot);
         if (!mode.checkpointEnabled) return null;
-        ChatDatabase.Provider provider = db.getProvider(session.providerId);
+        ChatDatabase.Provider sharedProvider = db.getProvider(session.providerId);
+        ChatDatabase.Provider provider = sharedProvider == null ? null : ChatDatabase.deploymentProvider(sharedProvider, session);
         boolean allowContinuation = mode.providerContinuationEnabled && ProviderContinuationPolicy.enabled(session.continuationMode);
 
         JSONArray durable = durableProjection(session, snapshot, provider, allowContinuation);
