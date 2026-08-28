@@ -35,10 +35,16 @@ final class ReasoningPolicy {
 
     static String normalizeWire(String value, String protocol) {
         String v = value == null ? "" : value.trim();
-        if (v.isEmpty()) return defaultWireForProtocol(protocol);
-        if (WIRE_NONE.equals(v) || WIRE_OPENAI_RESPONSES.equals(v)
-                || WIRE_OPENAI_CHAT_EFFORT.equals(v) || WIRE_ANTHROPIC_EFFORT.equals(v)) return v;
-        throw new IllegalArgumentException("unsupported reasoning wire format");
+        if (v.isEmpty()) v = defaultWireForProtocol(protocol);
+        if (!(WIRE_NONE.equals(v) || WIRE_OPENAI_RESPONSES.equals(v)
+                || WIRE_OPENAI_CHAT_EFFORT.equals(v) || WIRE_ANTHROPIC_EFFORT.equals(v))) {
+            throw new IllegalArgumentException("unsupported reasoning wire format");
+        }
+        if (WIRE_NONE.equals(v)) return v;
+        if (OpenAiCompatibleTransport.RESPONSES.equals(protocol) && WIRE_OPENAI_RESPONSES.equals(v)) return v;
+        if (OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(protocol) && WIRE_OPENAI_CHAT_EFFORT.equals(v)) return v;
+        if (AnthropicMessagesTransport.PROTOCOL.equals(protocol) && WIRE_ANTHROPIC_EFFORT.equals(v)) return v;
+        throw new IllegalArgumentException("reasoning wire is incompatible with selected protocol");
     }
 
     static String normalizeThinkingMode(String value) {
