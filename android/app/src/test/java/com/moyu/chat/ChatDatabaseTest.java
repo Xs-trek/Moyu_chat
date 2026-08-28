@@ -258,8 +258,13 @@ public class ChatDatabaseTest {
         assertEquals("model-b", session.model); assertEquals(128_000, session.contextTokens); assertEquals(96_000, session.inputTokens);
         assertEquals(8_192, session.maxOutputTokens); assertEquals("xhigh", session.reasoningEffort);
         assertEquals("text,image", session.inputModalities); assertEquals("text,image", session.outputModalities);
+        assertEquals(OpenAiCompatibleTransport.CHAT_COMPLETIONS, session.protocol);
+        assertEquals(ProviderAuth.BEARER, session.authMode);
+        assertEquals(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, session.reasoningWire);
 
-        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; second.inputModalities = "text"; db.saveModelProfile(second);
+        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; second.inputModalities = "text";
+        second.protocol = OpenAiCompatibleTransport.RESPONSES; second.authMode = ProviderAuth.API_KEY;
+        second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES; db.saveModelProfile(second);
         ChatDatabase.Session reloaded = db.getSession(session.id);
         assertEquals("session keeps resolved model limits after profile edits", 128_000, reloaded.contextTokens);
         assertEquals(96_000, reloaded.inputTokens); assertEquals("xhigh", reloaded.reasoningEffort);
