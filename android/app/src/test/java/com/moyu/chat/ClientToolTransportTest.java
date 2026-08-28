@@ -111,4 +111,74 @@ public class ClientToolTransportTest {
         assertEquals("web_fetch", tool.optString("name"));
         assertEquals("object", tool.getJSONObject("input_schema").optString("type"));
     }
+
+    @Test public void responsesSecondRoundReplaysExactReasoningAndFunctionCallBeforeToolOutput() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"done\"}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
+        JSONArray toolHistory = new JSONArray().put(new JSONObject().put("round", 1).put("id", "call_2")
+                .put("name", "delegate_subtask").put("arguments", new JSONObject().put("task", "inspect A"))
+                .put("result", "child finding"));
+        JSONArray providerHistory = new JSONArray()
+                .put(new JSONObject().put("round", 1).put("item", new JSONObject()
+                        .put("id", "rs_1").put("type", "reasoning").put("encrypted_content", "cipher-1")))
+                .put(new JSONObject().put("round", 1).put("item", new JSONObject()
+                        .put("type", "function_call").put("call_id", "call_2").put("name", "delegate_subtask")
+                        .put("arguments", "{\"task\":\"inspect A\"}")));
+        ChatTurnOptions roundTwo = new ChatTurnOptions("", ChatTurnOptions.WEB_OFF,
+                ClientToolRuntime.OPENAI_RESPONSES, ClientToolRuntime.DELEGATE_SUBTASK, toolHistory, providerHistory);
+        ToolSink sink = new ToolSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "key", "model", ReasoningPolicy.DEFAULT,
+                prompt(), roundTwo, sink);
+        sink.await();
+        assertNull(sink.error); assertTrue(sink.completed);
+        JSONArray input = requestBody().getJSONArray("input");
+        int reasoningIndex = -1, callIndex = -1, outputIndex = -1, callCount = 0;
+        for (int i = 0; i < input.length(); i++) {
+            JSONObject item = input.optJSONObject(i); if (item == null) continue;
+            String type = item.optString("type", "");
+            if ("reasoning".equals(type) && "rs_1".equals(item.optString("id"))) reasoningIndex = i;
+            if ("function_call".equals(type) && "call_2".equals(item.optString("call_id"))) { callIndex = i; callCount++; }
+            if ("function_call_output".equals(type) && "call_2".equals(item.optString("call_id"))) {
+                outputIndex = i; assertEquals("child finding", item.optString("output"));
+            }
+        }
+        assertTrue(reasoningIndex >= 0); assertTrue(callIndex > reasoningIndex); assertTrue(outputIndex > callIndex);
+        assertEquals("original function_call must not be duplicated", 1, callCount);
+    }
+
+    @Test public void anthropicSecondRoundReplaysThinkingAndToolUseBeforeToolResult() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n" +
+                "data: {\"type\":\"message_stop\"}\n\n"));
+        JSONArray toolHistory = new JSONArray().put(new JSONObject().put("round", 1).put("id", "toolu_1")
+                .put("name", "web_fetch").put("arguments", new JSONObject().put("url", "https://example.com"))
+                .put("result", "page text"));
+        JSONArray providerHistory = new JSONArray()
+                .put(new JSONObject().put("round", 1).put("item", new JSONObject()
+                        .put("type", "thinking").put("thinking", "private thought").put("signature", "sig-1")))
+                .put(new JSONObject().put("round", 1).put("item", new JSONObject()
+                        .put("type", "tool_use").put("id", "toolu_1").put("name", "web_fetch")
+                        .put("input", new JSONObject().put("url", "https://example.com"))));
+        ChatTurnOptions roundTwo = new ChatTurnOptions("", ChatTurnOptions.WEB_OFF,
+                ClientToolRuntime.ANTHROPIC_TOOLS, ClientToolRuntime.WEB_FETCH, toolHistory, providerHistory);
+        ToolSink sink = new ToolSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "key", "model", ReasoningPolicy.DEFAULT,
+                prompt(), roundTwo, sink);
+        sink.await();
+        assertNull(sink.error); assertTrue(sink.completed);
+        JSONArray messages = requestBody().getJSONArray("messages");
+        assertTrue(messages.length() >= 3);
+        JSONObject assistant = messages.getJSONObject(messages.length() - 2);
+        JSONObject user = messages.getJSONObject(messages.length() - 1);
+        JSONArray assistantContent = assistant.getJSONArray("content");
+        assertEquals("thinking", assistantContent.getJSONObject(0).optString("type"));
+        assertEquals("sig-1", assistantContent.getJSONObject(0).optString("signature"));
+        assertEquals("tool_use", assistantContent.getJSONObject(1).optString("type"));
+        assertEquals("toolu_1", assistantContent.getJSONObject(1).optString("id"));
+        JSONArray userContent = user.getJSONArray("content");
+        assertEquals("tool_result", userContent.getJSONObject(0).optString("type"));
+        assertEquals("toolu_1", userContent.getJSONObject(0).optString("tool_use_id"));
+        assertEquals("page text", userContent.getJSONObject(0).optString("content"));
+    }
 }
