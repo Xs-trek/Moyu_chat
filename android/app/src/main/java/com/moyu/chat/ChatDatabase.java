@@ -184,6 +184,19 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
             db.execSQL("UPDATE sessions SET protocol=COALESCE((SELECT protocol FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT protocol FROM providers WHERE providers.provider_id=sessions.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT auth_mode FROM providers WHERE providers.provider_id=sessions.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT reasoning_wire FROM providers WHERE providers.provider_id=sessions.provider_id),'none')");
         }
+        if (oldVersion < 14) {
+            // Existing v0.0.3 profiles are authoritative manual deployments. Do not silently replace
+            // their wire/capabilities with catalog guesses during migration.
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN config_mode TEXT NOT NULL DEFAULT 'legacy-manual'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_key TEXT NOT NULL DEFAULT 'unknown'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_version TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_source TEXT NOT NULL DEFAULT 'legacy-v0.0.3'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
+            db.execSQL("ALTER TABLE model_profiles ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
+            db.execSQL("ALTER TABLE sessions ADD COLUMN subagent_mode TEXT NOT NULL DEFAULT 'off'");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
