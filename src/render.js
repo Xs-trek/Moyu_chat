@@ -253,7 +253,7 @@ function conversation(view) {
       h('div', { class: 'timeline' }, timelineProjection(session.messages).map((item) => timelineItem(item, session.state === 'running', session.localSessionId, Boolean(view.ui?.showReasoning))).filter(Boolean)),
       button('↓ 回到底部', 'jump-latest', {}, 'btn small jump-latest is-hidden')),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
-      mediaGallery(session.draftMedia, true, session.localSessionId),
+      draftMediaStrip(session.draftMedia, session.localSessionId),
       h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', placeholder: session.canSend ? (imageInput ? '输入消息，或添加图片' : '输入消息') : session.contextPreparing ? '正在整理上下文' : session.webPreparingStage ? '正在联网检索' : '等待当前回合结束', 'aria-label': '消息' }),
       h('div', { class: 'composer-actions' },
         h('button', { type: 'button', class: 'composer-icon attachment-btn', disabled: !session.canAttachImage, title: imageInput ? '添加图片' : '当前模型未声明图片输入能力', 'aria-label': imageInput ? '添加图片' : '当前模型不支持图片输入', dataset: { action: 'pick-attachment', sessionId: session.localSessionId }, text: '＋' }),
