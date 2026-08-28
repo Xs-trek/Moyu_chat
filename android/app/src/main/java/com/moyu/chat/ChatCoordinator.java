@@ -148,6 +148,7 @@ final class ChatCoordinator implements AutoCloseable {
     private boolean crossChatMemoryEnabled;
     private String defaultContextMode;
     private String defaultWebMode;
+    private String standardSubagentMode;
     private JSONArray remoteSources = new JSONArray();
 
     ChatCoordinator(MoyuChatApplication app, Host host) { this(app, host, app.secrets(), new AndroidRemoteDataBridge(app)); }
