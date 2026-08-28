@@ -182,6 +182,35 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         }
     }
 
+    private boolean configEditorAlreadyOpen() {
+        AlertDialog current = activeConfigDialog;
+        if (current == null || !current.isShowing()) return false;
+        Toast.makeText(this, "已有配置窗口打开，请先完成或取消当前编辑", Toast.LENGTH_SHORT).show();
+        return true;
+    }
+
+    private void ownConfigDialog(AlertDialog dialog) {
+        activeConfigDialog = dialog;
+        dialog.setOnDismissListener(ignored -> { if (activeConfigDialog == dialog) activeConfigDialog = null; });
+    }
+
+    private TextView errorBanner(LinearLayout form) {
+        TextView error = new TextView(this);
+        error.setTextColor(Color.rgb(190, 32, 32));
+        error.setTextSize(13);
+        error.setPadding(0, 8, 0, 4);
+        error.setVisibility(View.GONE);
+        form.addView(error, new LinearLayout.LayoutParams(-1, -2));
+        return error;
+    }
+
+    private void showEditorError(TextView error, String message) {
+        if (error == null) return;
+        String text = message == null || message.trim().isEmpty() ? "配置无效，请检查填写内容" : message.trim();
+        error.setText(text);
+        error.setVisibility(View.VISIBLE);
+    }
+
     @Override public void openProviderEditor(ChatDatabase.Provider existing) {
         runOnUiThread(() -> {
             ChatDatabase.Provider p = existing == null ? new ChatDatabase.Provider() : existing;
