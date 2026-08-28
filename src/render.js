@@ -46,6 +46,28 @@ export function openConfirmDialog({ title, message, confirmText = '确认', dang
   confirm.focus();
 }
 
+export function openTextDialog({ title, value = '', confirmText = '保存', onConfirm }) {
+  document.querySelector('.modal-backdrop[data-moyu-modal]')?.remove();
+  const input = h('input', { class: 'modal-input', type: 'text', value, maxlength: '200', autocomplete: 'off', 'aria-label': title || '输入内容' });
+  const cancel = button('取消', 'modal-cancel', {}, 'btn');
+  const confirm = button(confirmText, 'modal-confirm', {}, 'btn primary');
+  const overlay = h('div', { class: 'modal-backdrop', dataset: { moyuModal: '1' } },
+    h('section', { class: 'modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': title || '编辑' },
+      h('h2', { text: title || '编辑' }), input, h('div', { class: 'modal-actions' }, cancel, confirm)));
+  const close = () => overlay.remove();
+  const submit = () => {
+    const next = String(input.value || '').trim();
+    if (!next) { input.focus(); return; }
+    close(); onConfirm?.(next);
+  };
+  cancel.addEventListener('click', close);
+  confirm.addEventListener('click', submit);
+  input.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } });
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) close(); });
+  document.body.append(overlay);
+  input.focus(); input.select();
+}
+
 function shell(view, body) {
   const routes = [['home','Chat'],['imports','分支'],['providers','Provider'],['handoffs','回传'],['settings','设置']];
   const routeTitles = { home: 'Chat', imports: '分支', providers: 'Provider', handoffs: '回传', settings: '设置' };
