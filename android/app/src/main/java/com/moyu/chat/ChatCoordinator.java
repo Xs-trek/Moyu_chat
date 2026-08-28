@@ -195,8 +195,13 @@ final class ChatCoordinator implements AutoCloseable {
                 profile.providerId = bounded(profile.providerId, 128, "provider id");
                 profile.modelId = bounded(profile.modelId, 256, "model id");
                 profile.displayName = bounded(profile.displayName == null || profile.displayName.trim().isEmpty() ? profile.modelId : profile.displayName, 128, "model display name");
+                profile.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
+                if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("unsupported protocol");
+                profile.authMode = ProviderAuth.normalize(profile.authMode, profile.protocol);
+                profile.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, profile.protocol);
+                ProviderEndpoint.normalize(provider.baseUrl, profile.protocol);
                 profile.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
-                ReasoningPolicy.validateLevelsForProvider(provider, profile.reasoningLevels);
+                ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, profile), profile.reasoningLevels);
                 profile.defaultReasoning = ReasoningPolicy.DEFAULT;
                 profile.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
                 profile.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
