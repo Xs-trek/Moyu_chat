@@ -37,7 +37,8 @@ final class ModelCatalog {
     static String normalizeConfigMode(String raw) {
         String value = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
         if (CONFIG_AUTO.equals(value) || CONFIG_MANUAL.equals(value) || CONFIG_LEGACY_MANUAL.equals(value)) return value;
-        return CONFIG_AUTO;
+        // Unknown/corrupt values must fail conservative: Auto may enable optional deployment capabilities.
+        return CONFIG_MANUAL;
     }
 
     static Resolution resolve(ChatDatabase.Provider provider, String modelId) {
