@@ -128,7 +128,7 @@ final class ModelCatalog {
         if (profile == null) throw new IllegalArgumentException("model profile required");
         Resolution r = resolve(provider, profile.modelId);
         if (!r.deploymentResolved) {
-            throw new IllegalArgumentException("Auto catalog has no reviewed deployment overlay for this endpoint/model; use Advanced");
+            throw new IllegalArgumentException("无法自动配置此模型：Moyu 内置目录未识别当前 Base URL + Model ID 组合。请切换到“高级配置”并明确填写协议与能力；Moyu 不会根据模型名猜测第三方 endpoint 能力。");
         }
         profile.catalogKey = r.catalogKey;
         profile.catalogVersion = CATALOG_VERSION;
