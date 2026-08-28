@@ -278,7 +278,13 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                         p.clientToolCalling = clientToolCalling.getText().toString().trim();
                         p.catalogKey = "unknown"; p.catalogVersion = ""; p.catalogSource = "manual";
                     }
-                    coordinator.saveModelProfile(p); dialog.dismiss();
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                    coordinator.saveModelProfile(p, error -> runOnUiThread(() -> {
+                        if (!dialog.isShowing()) return;
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                        if (error == null) dialog.dismiss();
+                        else Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                    }));
                 } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
             }));
             dialog.show();
