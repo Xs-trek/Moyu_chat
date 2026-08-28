@@ -442,7 +442,7 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.Provider provider = db.getProvider(session.providerId);
         if (provider == null) throw new IllegalStateException("provider not found");
         String normalized = ReasoningPolicy.normalizeEffort(effort);
-        ReasoningPolicy.validateEffortForProvider(provider, profile.reasoningLevels, normalized);
+        ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, session), profile.reasoningLevels, normalized);
         session.reasoningEffort = normalized;
         session.updatedAt = Instant.now().toString();
         db.saveSession(session);
