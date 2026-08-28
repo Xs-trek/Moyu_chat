@@ -20,6 +20,20 @@ final class ProviderEndpoint {
         return normalized;
     }
 
+    static String normalize(String raw, String protocol) {
+        String normalized = normalize(raw);
+        String path = HttpUrl.parse(normalized).encodedPath();
+        String fixed;
+        if (OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(protocol)) fixed = "/chat/completions";
+        else if (OpenAiCompatibleTransport.RESPONSES.equals(protocol)) fixed = "/responses";
+        else if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) fixed = "/v1/messages";
+        else return normalized;
+        if (path != null && (path.equals(fixed) || path.endsWith(fixed))) {
+            throw new IllegalArgumentException("Base URL must exclude the fixed protocol path " + fixed);
+        }
+        return normalized;
+    }
+
     /** Cloud endpoints are HTTPS-only; plain HTTP is reserved for loopback local model servers (ARCHITECTURE.md §7). */
     private static boolean allowedScheme(HttpUrl url) {
         if ("https".equals(url.scheme())) return true;
