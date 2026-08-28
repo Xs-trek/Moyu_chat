@@ -196,7 +196,8 @@ final class ChatCoordinator implements AutoCloseable {
                     if (ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(profile.configMode))) {
                         // Endpoint identity is part of deployment authority. Re-resolve Auto whenever the
                         // shared endpoint changes so stale official/native capabilities cannot follow it.
-                        ModelCatalog.applyAuto(provider, profile, 0, 0, 0);
+                        ModelCatalog.applyAuto(provider, profile,
+                                profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
                     }
                     profile.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
                     if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("unsupported protocol");
