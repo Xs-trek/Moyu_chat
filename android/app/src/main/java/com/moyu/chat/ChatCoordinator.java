@@ -70,7 +70,7 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     /** One cancellation owner spans accepted-send preparation, provider streaming and Smart post-processing. */
-    private static final class TurnControl implements MoyuWebService.CallScope {
+    private static final class TurnControl implements ClientToolRuntime.TurnCancellation {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private final AtomicReference<Thread> taskThread = new AtomicReference<>();
         private final AtomicReference<ChatTransport.Turn> transportTurn = new AtomicReference<>();
