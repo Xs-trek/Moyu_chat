@@ -431,17 +431,6 @@ function assistantFooter(item, finalized, sessionId) {
       button('分支', 'branch-message', { sessionId, localSeq: item.localSeq }, 'btn ghost small')) : null);
 }
 
-function contextModeBadge(item) {
-  if (item?.role !== 'assistant') return null;
-  const mode = String(item.contextMode || '').trim();
-  if (!mode) return null;
-  const labels = { minimal: '极简', standard: '标准', auto: '标准', smart: '智能' };
-  const label = labels[mode] || mode;
-  const effective = String(item.effectiveContextMode || '').trim();
-  const title = effective && effective !== mode ? `上下文模式：${label} · 实际 ${effective}` : `上下文模式：${label}`;
-  return h('span', { class: `badge context-mode ${mode}`, title, text: label });
-}
-
 function timelineItem(item, runtimeRunning = false, sessionId = '', showReasoning = false) {
   if (item.kind === 'message') {
     const finalized = !item.streaming && !runtimeRunning && Number(item.localSeq) > 0 && (item.role === 'user' || item.role === 'assistant');
