@@ -115,6 +115,36 @@ public class ContextBudgetManagerTest {
     }
 
     @Test
+    public void reservedToolHistoryBudgetDropsOlderTurnsButKeepsCurrentTurn() throws Exception {
+        ContextBudgetManager manager = new ContextBudgetManager();
+        JSONArray all = new JSONArray();
+        for (int i = 0; i < 20; i++) {
+            all.put(message("user", "old user " + i + " padding padding padding padding padding"));
+            all.put(message("assistant", "old assistant " + i + " padding padding padding padding padding"));
+        }
+        all.put(message("user", "CURRENT TOOL QUESTION"));
+        ContextBudgetManager.Result full = manager.select(INSTRUCTIONS, all, 4_000, 0, 512);
+        ContextBudgetManager.Result reserved = manager.select(INSTRUCTIONS, all, 4_000, 0, 512, 1_400);
+        assertTrue("reserved provider/tool history should make the retained chat tail smaller",
+                reserved.messages.length() < full.messages.length());
+        assertEquals("CURRENT TOOL QUESTION",
+                reserved.messages.getJSONObject(reserved.messages.length() - 1).optString("text"));
+        assertTrue(reserved.estimatedTokens + 1_400 <= manager.effectiveInputBudget(4_000, 0, 512));
+    }
+
+    @Test
+    public void reservedToolHistoryFailsInsteadOfDroppingCurrentTurn() throws Exception {
+        ContextBudgetManager manager = new ContextBudgetManager();
+        JSONArray all = new JSONArray().put(message("user", "CURRENT"));
+        try {
+            manager.select(INSTRUCTIONS, all, 2_048, 0, 512, 10_000);
+            fail("oversized mandatory provider/tool history must fail loudly");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("additional provider/tool input"));
+        }
+    }
+
+    @Test
     public void estimatorIsConservativeForCjkAndLatin() {
         ContextBudgetManager manager = new ContextBudgetManager();
         // 10 CJK chars = 30 UTF-8 bytes -> at least 10 tokens (bytes/3), never below code points.
