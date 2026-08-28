@@ -44,7 +44,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         TerminalSink guarded = new TerminalSink(sink);
         if (provider == null || apiKey == null || apiKey.isEmpty()) { guarded.onError("provider_not_configured", "Provider 或 API Key 未配置", false); return () -> {}; }
         try {
-            String base = ProviderEndpoint.normalize(provider.baseUrl);
+            String base = ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
             JSONObject body = body(model, prompt, provider.maxOutputTokens);
             applyHostedTools(body, options == null ? ChatTurnOptions.NONE : options);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
