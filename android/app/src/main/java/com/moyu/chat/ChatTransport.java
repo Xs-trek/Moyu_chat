@@ -16,6 +16,8 @@ interface ChatTransport {
         default void onToolActivity(String tool, String state) { }
         /** A provider-attributed public web source. Raw fetched/search content is never persisted here. */
         default void onWebSource(String url, String title) { }
+        /** Terminal for one provider round that requested one or more client-executed tools. */
+        default void onClientToolBatch(org.json.JSONArray calls) { onError("unsupported_tool_call", "Provider requested a client tool but this caller has no tool runtime", false); }
         void onUsage(Integer inputTokens, Integer outputTokens);
         /**
          * Provider-neutral cache usage details. cacheHitBaseTokens is the logical denominator for
