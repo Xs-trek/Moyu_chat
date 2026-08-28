@@ -81,6 +81,10 @@ final class ClientToolRuntime {
                                     String model, String effort, TurnCancellation cancellation) {
         JSONArray entries = new JSONArray();
         if (calls == null || calls.length() == 0) return new BatchResult(entries, 0, 0, 0);
+        java.util.LinkedHashSet<String> allowed = new java.util.LinkedHashSet<>();
+        if (allowedToolNames != null) for (String raw : allowedToolNames.split(",")) {
+            String value = raw.trim(); if (!value.isEmpty()) allowed.add(value);
+        }
         ArrayList<Future<JSONObject>> futures = new ArrayList<>();
         int delegated = 0;
         for (int i = 0; i < calls.length(); i++) {
