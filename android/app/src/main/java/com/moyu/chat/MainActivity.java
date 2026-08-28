@@ -148,7 +148,8 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             pendingImageSessionId = sessionId;
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*");
             intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/jpeg", "image/png", "image/webp", "image/gif"});
-            startActivityForResult(intent, REQUEST_IMAGE);
+            try { startActivityForResult(intent, REQUEST_IMAGE); }
+            catch (Exception error) { pendingImageSessionId = null; Toast.makeText(this, "无法打开系统文件选择器：" + (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()), Toast.LENGTH_LONG).show(); }
         });
     }
 
