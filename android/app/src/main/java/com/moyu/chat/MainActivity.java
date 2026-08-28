@@ -228,6 +228,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                 try {
                     if (p.id == null) p.id = "model-" + UUID.randomUUID();
                     p.providerId = provider.id; p.modelId = model.getText().toString().trim(); p.displayName = name.getText().toString().trim();
+                    p.protocol = protocol.getText().toString().trim(); p.authMode = auth.getText().toString().trim(); p.reasoningWire = reasoningWire.getText().toString().trim();
                     p.inputModalities = inputModalities.getText().toString().trim(); p.outputModalities = outputModalities.getText().toString().trim();
                     p.toolCapabilities = toolCapabilities.getText().toString().trim();
                     p.contextTokens = Integer.parseInt(context.getText().toString().trim()); p.inputTokens = Integer.parseInt(input.getText().toString().trim()); p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
