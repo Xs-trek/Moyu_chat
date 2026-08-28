@@ -1,110 +1,162 @@
 # Moyu Chat architecture
 
-## 1. Boundary
+## 1. Product boundary
 
-Moyu Remote remains the primary remote-control product. Moyu Chat is a supplemental APK whose core path must work with no PC, no Moyu Server, no EasyTier and no Remote database.
+Moyu Chat is a supplemental Android-local Chat application. It must remain usable with no PC, no Moyu Server and no EasyTier connection. Moyu Remote remains a separate PC-runtime remote-control product; the two applications do not share a SQLite database.
 
 ```text
-                         shared interaction style
-                                  |
-                    +-------------+-------------+
-                    |                           |
-             Moyu Remote APK              Moyu Chat APK
-             Remote runtime               Local chat runtime
-                    |                           |
-              Remote private DB            Chat private DB
-                    |                           |
-           EasyTier + Moyu Server      ProviderTransportRegistry
-                    |                           |
-       Claude/Codex/OpenCode                  model API
-                    |
-          RemoteDataBridge (optional)
-                    |
-             Snapshot / Handoff
+Moyu Chat WebView UI
+        |
+versioned intents / view models
+        |
+ChatCoordinator
+  |        |           |             |
+Chat DB  Context    Tool runtime   RemoteDataBridge (optional)
+  |        |           |             |
+Session  Memory/     web_search      immutable Snapshot /
+History  Snapshot    web_fetch       explicit Handoff
+         Checkpoint  delegate_subtask
+              \        /
+              Provider transports
+     Chat Completions / Responses / Messages
 ```
 
-The applications do not share a SQLite file. They share only a versioned exchange contract.
+The product is Chat + bounded feasible tools, not an Android agent executor.
 
-## 2. Layers
+## 2. Authority layers
 
 ### WebView UI
 
-Presentation only. It receives a complete/patched view model and posts versioned intents using `window.MoyuHost.postMessage`. It never owns credentials, database access, provider networking or Remote bridge access.
+Presentation only. It posts versioned intents through `window.MoyuHost.postMessage` and receives full/patch view projections. Credentials, database access, provider networking, tool execution and Remote bridge access remain native.
 
-### Android glue
+### ChatCoordinator
 
-`ChatCoordinator` is the single UI host coordinator. It owns routing, intent validation, local persistence, provider execution and optional Remote exchange. It should remain smaller than the Remote `AppCoordinator`; provider protocol parsing is delegated to transports and snapshot shaping is delegated to a context builder.
+Owns intent validation, local session lifecycle, turn cancellation/runtime ownership, context preparation, bounded client-tool rounds, Smart post-processing and optional Remote exchange. Provider-specific wire parsing belongs to transports.
 
-### Chat domain
+### Durable Chat domain
 
-`ChatDatabase` owns Moyu-native sessions, timeline rows, immutable snapshots and handoff drafts. Provider-native conversation ids are not the source of truth.
+`ChatDatabase` owns Providers, Model Profiles, Sessions, timeline rows, immutable snapshots and handoff drafts. The durable visible transcript is the product source of truth; provider-native conversation/reasoning state is optional derived metadata.
 
-### Provider transport
+## 3. Provider / Model / Session separation
 
-The transport registry is keyed by protocol, not vendor. v0.0.1 includes `openai-responses`, `openai-chat-completions`, and `anthropic-messages`. A provider configuration is data: display name, base URL, model, context/output budget and protocol. Secrets are stored separately.
+### Provider
 
-Adding another compatible protocol later should mean adding a transport implementation and registry entry, not changing session storage, prompt semantics or UI message identity.
-
-### RemoteDataBridge
-
-Optional Android inter-app contract. Chat may:
-
-1. detect bridge availability;
-2. list safe local Remote source summaries;
-3. stream one immutable normalized snapshot;
-4. submit a bounded handoff package.
-
-Chat may not query arbitrary Remote tables, read node/account credentials, mutate Remote sessions, or send directly to a PC runtime.
-
-## 3. Session model
-
-A Chat session is always local-owned:
+Shared account/connection only:
 
 ```text
-ChatSession
-- localSessionId
-- title
-- providerId
-- model
-- state
-- originSnapshotId?   // non-null means branch
-- parentSessionId?    // local-chat branch provenance only
-- draft
-- updatedAt
+providerId
+displayName
+baseUrl
+API key (secure store, not SQLite)
 ```
 
-A branch is not a second storage type. It is a normal Chat session with an immutable origin snapshot.
+### Model Profile
 
-## 4. Snapshot model
+One concrete deployment:
 
-Snapshots freeze the source state at branch creation. A branch must not continue to dereference Remote data after import.
+```text
+modelId
+protocol
+authMode
+reasoningWire + reasoningLevels
+context/input/output limits
+input/output modalities
+hosted-Web capability declaration
+thinking mode/budget
+provider continuation mode
+client-tool calling wire
+Harness preset
+Catalog provenance/config mode
+```
 
-The context projector includes user/assistant messages and bounded useful tool results. It excludes Remote transport diagnostics, approvals, usage bookkeeping and hidden reasoning by default.
+### Session
 
-## 5. Handoff
+Freezes the resolved deployment fields on creation/model switch. Changing the Model Profile later changes future sessions or explicitly switched sessions only. Branches preserve the source session's frozen deployment.
 
-Handoff is explicit export, not synchronization. A handoff remains a local draft until the user deliberately submits it. Remote remains responsible for choosing the final target runtime/session and for sending anything to the PC.
+`Protocol != Capability`: the protocol names define wire format and never imply reasoning, thinking, images, hosted Web, continuation or client-tool support.
 
-## 6. Offline semantics
+## 4. Model Catalog
 
-There is no global `remoteConnectionState` gate in Chat. A session's `canSend` is derived from local provider configuration and current turn state. Remote bridge availability only controls import/export affordances.
+Auto configuration is a reviewed deployment-overlay mechanism, not model-name inference.
 
-## 7. Security
+- Base-model entries may provide only reviewed behavior/Harness priors.
+- Protocol/auth/reasoning/tool/continuation properties require a reviewed endpoint + model overlay.
+- Context/input/output limits remain explicit user/deployment inputs.
+- If Auto does not resolve a concrete deployment, saving requires Advanced/manual configuration.
+- Provider endpoint changes revalidate affected Auto profiles in the same save transaction. A change that makes an Auto deployment unresolved is rejected.
+- v0.0.3 profiles migrate as `legacy-manual` and are not silently rewritten.
 
-- WebView is local-assets-only; no fetch/XHR/WebSocket.
-- Provider API keys are entered through native UI and stored with Android Keystore wrapping.
-- Cloud base URLs must be HTTPS; loopback HTTP can be allowed for local model servers.
-- Remote bridge must be protected by a signature-level permission on the Remote side.
-- Snapshot and handoff payloads are size bounded.
-- No background resend of failed model inputs or handoffs.
+## 5. Context and Harness
 
-## 8. Deliberately excluded from first implementation
+Minimal is the native baseline. Standard adds context management, optional Memory/RAG and explicit provider continuation without Router/verifier. Smart adds adaptive Router/evidence/verifier behavior. `lean / balanced / reinforced` controls how much reviewed reliability assistance is selected; it is not a model benchmark ranking.
 
-- agent/tool execution;
-- MCP/plugin marketplace;
-- RAG/vector database;
-- cross-device sync/CRDT;
-- arbitrary provider scripting;
-- automatic model discovery;
-- automatic Remote writeback;
-- shared SQLite files between APKs.
+Prompt context is disposable. Durable history is not deleted by budgeting. Complete newest user-led turns are retained; older whole turns are omitted when context pressure requires it. Standard/Smart checkpoint compaction triggers at 50% of effective input and targets roughly 30%.
+
+## 6. Client tools
+
+The provider-neutral tool vocabulary in v0.0.4 is intentionally small:
+
+- `web_search`
+- `web_fetch`
+- `delegate_subtask`
+
+A deployment must explicitly declare a compatible client-tool wire:
+
+- `openai-chat-tools`
+- `openai-responses-tools`
+- `anthropic-tools`
+
+Hard bounds:
+
+```text
+max client tool calls / batch = 8
+max provider tool rounds / user turn = 4
+max parallel subagents = 4
+subagent depth = 1
+```
+
+`delegate_subtask` invokes an isolated copy of the same selected model. It receives a bounded subtask and has no recursive client-tool loop, shell, filesystem write, Android control or computer-use authority.
+
+## 7. Same-turn provider state
+
+Client-tool rounds need protocol state that is distinct from cross-user-turn durable continuation.
+
+- Responses retains/replays exact prior response output items for the current user turn before the corresponding `function_call_output`.
+- Messages retains/replays applicable exact content blocks, including thinking/redacted-thinking and tool-use blocks, before `tool_result`.
+- Tool definitions, tool history and exact same-turn provider state are reserved in the input budget.
+- Already-sent tool/protocol state is immutable. Only a newly produced unsent tool result can be clipped if necessary.
+- If mandatory tool/protocol history cannot fit, the turn fails explicitly.
+
+A turn that used client tools does not persist a partial provider-private continuation chain for the next user turn, because the non-durable tool history needed to replay that chain is intentionally scoped to the current turn.
+
+## 8. Web capability plane
+
+Hosted Web is deployment capability, not protocol inference.
+
+- Responses accepts the explicitly declared generic hosted `web_search` capability supported by this build.
+- Messages requires a supported exact Anthropic Web tool wire version; generic `web_search`/`web_fetch` aliases are not guessed into Messages schemas.
+- When provider-native Web is absent, explicit client tools may supply Moyu `web_search` / `web_fetch`.
+- A bounded deterministic Exa/HTTPS fallback remains available for deployments without client-tool support.
+
+Fetched/search material is untrusted ephemeral context, not durable user text.
+
+## 9. Endpoint ownership
+
+Provider stores the shared API root. Transports own final paths:
+
+```text
+openai-chat-completions -> /chat/completions
+openai-responses        -> /responses
+anthropic-messages      -> /messages
+```
+
+Official Anthropic shared root is `https://api.anthropic.com/v1`.
+
+## 10. Security and execution exclusions
+
+- WebView is local-assets-only and does not receive API keys.
+- Provider API keys use native secure storage.
+- Cloud endpoints require HTTPS; approved loopback HTTP is treated separately by endpoint validation.
+- Remote imports are immutable bounded snapshots; handoff is explicit.
+- Failed model inputs/handoffs are not autonomously resent.
+- No shell, computer use, arbitrary filesystem mutation, Android device control, recursive subagents or autonomous agent planning loop is part of the v0.0.4 Chat runtime.
