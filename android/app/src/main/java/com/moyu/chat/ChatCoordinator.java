@@ -247,26 +247,13 @@ final class ChatCoordinator implements AutoCloseable {
                     ModelCatalog.applyAuto(provider, profile,
                             profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
                 }
-                profile.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
-                profile.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
-                profile.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
-                if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("unsupported protocol");
-                if (!ClientToolRuntime.NONE.equals(profile.clientToolCalling)
-                        && !ClientToolRuntime.compatible(profile.protocol, profile.clientToolCalling)) {
-                    throw new IllegalArgumentException("client tool calling wire is incompatible with selected protocol");
+                ChatDatabase.ModelProfile duplicate = db.findModelProfile(profile.providerId, profile.modelId);
+                if (duplicate != null && !profile.id.equals(duplicate.id)) {
+                    throw new IllegalArgumentException("此 Provider 已存在 Model ID “" + profile.modelId + "”。请编辑已有模型，或填写不同的 Model ID。");
                 }
-                profile.authMode = ProviderAuth.normalize(profile.authMode, profile.protocol);
-                profile.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, profile.protocol);
-                ProviderEndpoint.normalize(provider.baseUrl, profile.protocol);
-                profile.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
-                ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, profile), profile.reasoningLevels);
+                ModelProfileValidator.validateResolvedProfile(provider, profile);
+                if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
                 profile.defaultReasoning = ReasoningPolicy.DEFAULT;
-                profile.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
-                profile.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
-                profile.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
-                profile.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode);
-                profile.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
-                profile.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
                 db.saveModelProfile(profile); emitView();
                 if (completion != null) completion.complete(null);
             } catch (Exception error) {
