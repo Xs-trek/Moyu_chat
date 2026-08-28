@@ -174,6 +174,23 @@ final class MoyuWebService implements AutoCloseable {
         return new Prepared(suffix.toString(), sourceArray, backend, true);
     }
 
+    ToolResult executeSearch(String query, CallScope callScope) throws Exception {
+        String result = searchExa(query, callScope == null ? NO_CANCEL : callScope);
+        if (result == null || result.trim().isEmpty()) throw new IllegalStateException("Exa returned no search context");
+        String bounded = limit(result, MAX_SEARCH_CHARS);
+        LinkedHashMap<String, JSONObject> sources = new LinkedHashMap<>();
+        collectSearchSources(bounded, sources);
+        JSONArray sourceArray = new JSONArray();
+        for (JSONObject source : sources.values()) sourceArray.put(source);
+        return new ToolResult("[Untrusted web search reference data]\n" + bounded, sourceArray);
+    }
+
+    ToolResult executeFetch(String url, CallScope callScope) throws Exception {
+        FetchResult result = fetch(url, callScope == null ? NO_CANCEL : callScope);
+        JSONArray sources = new JSONArray().put(new JSONObject().put("url", result.url).put("title", result.title).put("backend", "moyu-fetch"));
+        return new ToolResult("[Untrusted fetched page reference data]\nURL: " + result.url + "\nTitle: " + result.title + "\n" + result.text, sources);
+    }
+
     private String searchExa(String query, CallScope callScope) throws Exception {
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) throw new IllegalArgumentException("search query is empty");
