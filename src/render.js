@@ -135,6 +135,84 @@ function reasoningChoiceField(session) {
         h('button', { type: 'button', class: `choice-option${value === (session.reasoningEffort || 'default') ? ' selected' : ''}`, dataset: { action: 'session-reasoning-set', sessionId: session.localSessionId, reasoningEffort: value }, text: display(value) }))));
 }
 
+function turnPromptPreview(item) {
+  let text = String(item?.text || '').replace(/\s+/g, ' ').trim();
+  if (!text && (item?.attachments || []).some((attachment) => attachment?.kind === 'image')) text = '图片消息';
+  if (!text) text = '（空消息）';
+  return text.length > 48 ? `${text.slice(0, 48)}…` : text;
+}
+
+function userTurnEntries(items = []) {
+  return timelineProjection(items)
+    .filter((item) => item?.kind === 'message' && item?.role === 'user' && Number(item.localSeq) > 0)
+    .map((item, index) => ({
+      key: timelineKey(item),
+      number: index + 1,
+      preview: turnPromptPreview(item),
+    }));
+}
+
+function turnNavigator(session, open = false) {
+  const turns = userTurnEntries(session?.messages || []);
+  if (turns.length < TURN_NAV_MIN_TURNS) return null;
+  const signature = JSON.stringify(turns.map((turn) => [turn.key, turn.preview]));
+  return h('aside', {
+      class: `turn-nav${open ? ' open' : ''}`,
+      dataset: { turnNav: '1', turnNavSignature: signature },
+      'aria-label': '会话导航'
+    },
+    h('button', {
+      type: 'button',
+      class: 'turn-nav-toggle',
+      dataset: { action: 'toggle-turn-nav' },
+      'aria-expanded': open ? 'true' : 'false',
+      'aria-label': `会话导航，共 ${turns.length} 个用户回合`,
+      title: `会话导航 · ${turns.length} 个用户回合`,
+      text: '≡'
+    }),
+    h('div', { class: 'turn-nav-list' },
+      turns.map((turn) => h('button', {
+        type: 'button',
+        class: 'turn-nav-item',
+        dataset: { action: 'jump-turn', turnKey: turn.key },
+        title: `${String(turn.number).padStart(2, '0')} · ${turn.preview}`,
+        'aria-label': `第 ${turn.number} 个用户回合：${turn.preview}`
+      },
+        h('span', { class: 'turn-nav-index', text: String(turn.number).padStart(2, '0') }),
+        h('span', { class: 'turn-nav-label', text: turn.preview })
+      ))
+    )
+  );
+}
+
+function reconcileTurnNavigator(layout, session) {
+  const existing = layout?.querySelector('.turn-nav[data-turn-nav]');
+  const desired = turnNavigator(session, Boolean(existing?.classList.contains('open')));
+  if (!desired) { existing?.remove(); return; }
+  if (!existing) { layout.append(desired); return; }
+  if (existing.dataset.turnNavSignature !== desired.dataset.turnNavSignature) existing.replaceWith(desired);
+}
+
+export function syncTurnNavigator(scroller = document.querySelector('.timeline-scroll')) {
+  const nav = document.querySelector('.turn-nav[data-turn-nav]');
+  if (!nav || !scroller) return false;
+  const anchors = [...scroller.querySelectorAll('.timeline [data-turn-anchor="user"]')];
+  if (!anchors.length) return false;
+  const line = scroller.getBoundingClientRect().top + 12;
+  let activeKey = anchors[0].dataset.itemKey || '';
+  for (const anchor of anchors) {
+    if (anchor.getBoundingClientRect().top <= line) activeKey = anchor.dataset.itemKey || activeKey;
+    else break;
+  }
+  nav.querySelectorAll('.turn-nav-item').forEach((item) => {
+    const active = item.dataset.turnKey === activeKey;
+    item.classList.toggle('active', active);
+    if (active) item.setAttribute('aria-current', 'true');
+    else item.removeAttribute('aria-current');
+  });
+  return true;
+}
+
 function conversation(view) {
   const session = view.activeSession;
   if (!session) return home(view);
