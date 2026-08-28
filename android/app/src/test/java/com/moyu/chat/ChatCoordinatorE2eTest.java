@@ -49,10 +49,12 @@ public class ChatCoordinatorE2eTest {
         final List<String> toasts = Collections.synchronizedList(new ArrayList<>());
         volatile ChatDatabase.Provider editorProvider;
         volatile boolean editorOpened;
+        volatile String importPickerSource;
         volatile boolean runtimeLeaseAllowed = true;
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
         @Override public void openProviderEditor(ChatDatabase.Provider existing) { editorProvider = existing; editorOpened = true; }
         @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
+        @Override public void openConversationImportPicker(String source) { importPickerSource = source; }
         @Override public boolean setTurnRuntimeActive(String sessionId, boolean active) { return !active || runtimeLeaseAllowed; }
         @Override public void showMessage(String text) { toasts.add(text); }
     }
