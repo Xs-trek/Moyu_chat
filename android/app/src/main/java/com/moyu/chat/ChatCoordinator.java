@@ -840,6 +840,127 @@ final class ChatCoordinator implements AutoCloseable {
                 if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = providerWebBackend(provider.protocol);
                 JSONObject projection = liveProjection(); db.replaceTimelineBody(streamKey, projection); emitStreamingPatch(id, projection);
             } catch (Exception ignored) { } }); }
+            @Override public void onClientToolBatch(JSONArray calls) {
+                if (streamTerminal.get()) return;
+                ChatTurnOptions emittedOptions = activeRoundOptions.get();
+                if (emittedOptions == null || !emittedOptions.clientToolsEnabled(provider.protocol)) {
+                    streamTerminal.set(true);
+                    providerRoundGeneration.incrementAndGet();
+                    worker.execute(() -> {
+                        settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                        finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0],
+                                new String[]{"unexpected_tool_call", "Provider requested a client tool after tools were disabled"});
+                    });
+                    return;
+                }
+                JSONArray batchCalls = copyArray(calls);
+                if (batchCalls.length() == 0) {
+                    streamTerminal.set(true);
+                    providerRoundGeneration.incrementAndGet();
+                    worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+                            webSources, webBackend[0], new String[]{"invalid_tool_call", "Provider emitted an empty client tool batch"}));
+                    return;
+                }
+
+                // A tool batch is terminal for this provider round, not for the user turn. Invalidate
+                // the just-finished round immediately so a very fast callback cannot re-bind its old Call.
+                providerRoundGeneration.incrementAndGet();
+                ChatTransport.Turn completedRound = activeTurns.remove(id);
+                turnControl.clearTransport(completedRound);
+                int batchNumber = (int) clientToolBatchCount.incrementAndGet();
+                if (batchNumber > MAX_CLIENT_TOOL_ROUNDS) {
+                    streamTerminal.set(true);
+                    worker.execute(() -> finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+                            webSources, webBackend[0], new String[]{"tool_round_limit", "Client tool round limit exceeded"}));
+                    return;
+                }
+
+                // Text/reasoning/images emitted only while deciding to call tools are intermediate
+                // protocol state, not the final assistant answer shown in the transcript.
+                if (textOut.length() > roundTextStart[0]) textOut.setLength(roundTextStart[0]);
+                if (reasoningOut.length() > roundReasoningStart[0]) reasoningOut.setLength(roundReasoningStart[0]);
+                while (outputMedia.length() > roundMediaStart[0]) outputMedia.remove(outputMedia.length() - 1);
+                streamStage.set("tool");
+                markProjectionDirty();
+
+                worker.execute(() -> {
+                    try { commitRoundUsage(); clearIntermediateContinuation(); persistUsageProjection(); }
+                    catch (Exception ignored) { }
+                    if (turnControl.isCancelled()) {
+                        streamTerminal.set(true);
+                        settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                        finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia, webSources, webBackend[0],
+                                new String[]{"cancelled", "Generation stopped"});
+                        return;
+                    }
+                    try {
+                        preparationWorker.execute(() -> {
+                            turnControl.bindCurrentThread();
+                            try {
+                                ClientToolRuntime.BatchResult batch = ClientToolRuntime.executeBatch(batchCalls, batchNumber, clientToolCsv,
+                                        clientToolWorker, webService, focusedSubagent, transport, provider, key, turnConfig.model,
+                                        turnConfig.reasoningEffort, turnControl);
+                                worker.execute(() -> {
+                                    try {
+                                        if (turnControl.isCancelled()) {
+                                            streamTerminal.set(true);
+                                            settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                                            finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+                                                    webSources, webBackend[0], new String[]{"cancelled", "Generation stopped"});
+                                            return;
+                                        }
+                                        for (int i = 0; i < batch.historyEntries.length(); i++) {
+                                            JSONObject entry = batch.historyEntries.optJSONObject(i); if (entry == null) continue;
+                                            clientToolHistory.put(new JSONObject(entry.toString()));
+                                            String toolName = entry.optString("name", "");
+                                            if (ClientToolRuntime.WEB_SEARCH.equals(toolName) || ClientToolRuntime.WEB_FETCH.equals(toolName)) {
+                                                usedClientWeb[0] = true;
+                                                if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = "Moyu client Web";
+                                                JSONArray sources = entry.optJSONArray("sources");
+                                                if (sources != null) for (int j = 0; j < sources.length() && webSources.size() < 16; j++) {
+                                                    JSONObject source = sources.optJSONObject(j); if (source == null) continue;
+                                                    String sourceUrl = source.optString("url", "");
+                                                    if (!sourceUrl.isEmpty() && !webSources.containsKey(sourceUrl)) webSources.put(sourceUrl, new JSONObject(source.toString()));
+                                                }
+                                            }
+                                            String toolResult = entry.optString("result", "").trim();
+                                            if (!toolResult.isEmpty() && clientEvidenceContext.length() < 24_000) {
+                                                int remaining = 24_000 - clientEvidenceContext.length();
+                                                String clipped = toolResult.length() > Math.min(6_000, remaining)
+                                                        ? toolResult.substring(0, Math.min(6_000, remaining)) : toolResult;
+                                                clientEvidenceContext.append("\n\n[").append(toolName).append(" result]\n").append(clipped);
+                                            }
+                                        }
+                                        childInputTokens[0] += batch.childInputTokens;
+                                        childOutputTokens[0] += batch.childOutputTokens;
+                                        subagentCount[0] += batch.subagentCount;
+                                        persistUsageProjection();
+                                        ChatTurnOptions nextOptions = webOptions.withToolHistory(clientToolHistory);
+                                        if (batchNumber >= MAX_CLIENT_TOOL_ROUNDS) nextOptions = nextOptions.withoutClientTools();
+                                        streamStage.set("connecting");
+                                        JSONObject projection = liveProjection();
+                                        db.replaceTimelineBody(streamKey, projection);
+                                        emitStreamingPatch(id, projection);
+                                        java.util.function.Consumer<ChatTurnOptions> starter = roundStarter.get();
+                                        if (starter == null) throw new IllegalStateException("provider round starter unavailable");
+                                        starter.accept(nextOptions);
+                                    } catch (Exception toolResultError) {
+                                        streamTerminal.set(true);
+                                        settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                                        finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+                                                webSources, webBackend[0], new String[]{"tool_result_failed", safe(toolResultError)});
+                                    }
+                                });
+                            } finally { turnControl.clearCurrentThread(); }
+                        });
+                    } catch (Exception schedulingError) {
+                        streamTerminal.set(true);
+                        settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                        finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+                                webSources, webBackend[0], new String[]{"tool_execution_failed", safe(schedulingError)});
+                    }
+                });
+            }
             @Override public void onUsage(Integer in, Integer out) { onUsageDetails(in, out, null, null, null, null); }
             @Override public void onUsageDetails(Integer in, Integer out, Integer cached, Integer cacheWrite, Integer cacheBase, Integer reasoningTokens) { worker.execute(() -> { try {
                 if (in != null) roundInput[0] = Math.max(roundInput[0], Math.max(0, in));
