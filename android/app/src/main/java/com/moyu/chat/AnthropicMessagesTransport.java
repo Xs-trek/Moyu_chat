@@ -149,26 +149,49 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         body.put("tool_choice", new JSONObject().put("type", "auto"));
     }
 
-    private static void appendToolHistory(JSONObject body, JSONArray history) throws Exception {
-        if (history == null || history.length() == 0) return;
+    private static void appendToolHistory(JSONObject body, JSONArray history, JSONArray providerRoundHistory) throws Exception {
+        if ((history == null || history.length() == 0)
+                && (providerRoundHistory == null || providerRoundHistory.length() == 0)) return;
         JSONArray messages = body.optJSONArray("messages"); if (messages == null) return;
-        java.util.TreeMap<Integer, JSONArray> rounds = new java.util.TreeMap<>();
-        for (int i = 0; i < history.length(); i++) {
+        java.util.TreeMap<Integer, JSONArray> toolRounds = new java.util.TreeMap<>();
+        if (history != null) for (int i = 0; i < history.length(); i++) {
             JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
             int round = Math.max(0, entry.optInt("round", 0));
-            JSONArray group = rounds.get(round); if (group == null) { group = new JSONArray(); rounds.put(round, group); }
+            JSONArray group = toolRounds.get(round); if (group == null) { group = new JSONArray(); toolRounds.put(round, group); }
             group.put(entry);
         }
-        for (JSONArray entries : rounds.values()) {
+        java.util.TreeMap<Integer, JSONArray> providerRounds = new java.util.TreeMap<>();
+        if (providerRoundHistory != null) for (int i = 0; i < providerRoundHistory.length(); i++) {
+            JSONObject entry = providerRoundHistory.optJSONObject(i); if (entry == null) continue;
+            JSONObject item = entry.optJSONObject("item"); if (item == null) continue;
+            int round = Math.max(0, entry.optInt("round", 0));
+            JSONArray group = providerRounds.get(round); if (group == null) { group = new JSONArray(); providerRounds.put(round, group); }
+            group.put(item);
+        }
+        java.util.TreeSet<Integer> roundIds = new java.util.TreeSet<>();
+        roundIds.addAll(toolRounds.keySet()); roundIds.addAll(providerRounds.keySet());
+        for (Integer round : roundIds) {
             JSONArray assistantContent = new JSONArray();
+            java.util.HashSet<String> replayedToolIds = new java.util.HashSet<>();
+            JSONArray providerItems = providerRounds.get(round);
+            if (providerItems != null) for (int i = 0; i < providerItems.length(); i++) {
+                JSONObject item = providerItems.optJSONObject(i); if (item == null) continue;
+                JSONObject copy = new JSONObject(item.toString());
+                assistantContent.put(copy);
+                if ("tool_use".equals(copy.optString("type", ""))) {
+                    String id = copy.optString("id", "").trim(); if (!id.isEmpty()) replayedToolIds.add(id);
+                }
+            }
+            JSONArray entries = toolRounds.get(round);
             JSONArray userContent = new JSONArray();
-            for (int i = 0; i < entries.length(); i++) {
+            if (entries != null) for (int i = 0; i < entries.length(); i++) {
                 JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
-                assistantContent.put(new JSONObject().put("type", "tool_use").put("id", entry.optString("id"))
+                String toolId = entry.optString("id", "");
+                if (!replayedToolIds.contains(toolId)) assistantContent.put(new JSONObject().put("type", "tool_use").put("id", toolId)
                         .put("name", entry.optString("name"))
                         .put("input", entry.optJSONObject("arguments") == null ? new JSONObject() : entry.optJSONObject("arguments")));
                 String error = entry.optString("error", "").trim();
-                JSONObject result = new JSONObject().put("type", "tool_result").put("tool_use_id", entry.optString("id"))
+                JSONObject result = new JSONObject().put("type", "tool_result").put("tool_use_id", toolId)
                         .put("content", error.isEmpty() ? entry.optString("result", "") : "Tool error: " + error);
                 if (!error.isEmpty()) result.put("is_error", true);
                 userContent.put(result);
