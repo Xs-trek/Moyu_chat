@@ -226,9 +226,12 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         body.put("tool_choice", "auto").put("parallel_tool_calls", true);
     }
 
-    private static void appendToolHistory(JSONObject body, String protocol, JSONArray history) throws Exception {
-        if (history == null || history.length() == 0) return;
+    private static void appendToolHistory(JSONObject body, String protocol, JSONArray history,
+                                          JSONArray providerRoundHistory) throws Exception {
+        if ((history == null || history.length() == 0)
+                && (providerRoundHistory == null || providerRoundHistory.length() == 0)) return;
         if (CHAT_COMPLETIONS.equals(protocol)) {
+            if (history == null || history.length() == 0) return;
             JSONArray messages = body.optJSONArray("messages"); if (messages == null) return;
             java.util.TreeMap<Integer, JSONArray> rounds = groupToolHistory(history);
             for (JSONArray entries : rounds.values()) {
@@ -248,24 +251,59 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             }
         } else if (RESPONSES.equals(protocol)) {
             JSONArray input = body.optJSONArray("input"); if (input == null) return;
-            for (int i = 0; i < history.length(); i++) {
-                JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
-                input.put(new JSONObject().put("type", "function_call").put("call_id", entry.optString("id"))
-                        .put("name", entry.optString("name"))
-                        .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString()));
-                input.put(new JSONObject().put("type", "function_call_output").put("call_id", entry.optString("id"))
-                        .put("output", toolResultText(entry)));
+            java.util.TreeMap<Integer, JSONArray> toolRounds = groupToolHistory(history == null ? new JSONArray() : history);
+            java.util.TreeMap<Integer, JSONArray> providerRounds = groupProviderRoundHistory(providerRoundHistory);
+            java.util.TreeSet<Integer> roundIds = new java.util.TreeSet<>();
+            roundIds.addAll(toolRounds.keySet()); roundIds.addAll(providerRounds.keySet());
+            for (Integer round : roundIds) {
+                java.util.HashSet<String> replayedCalls = new java.util.HashSet<>();
+                JSONArray providerItems = providerRounds.get(round);
+                if (providerItems != null) for (int i = 0; i < providerItems.length(); i++) {
+                    JSONObject item = providerItems.optJSONObject(i); if (item == null) continue;
+                    JSONObject copy = new JSONObject(item.toString());
+                    input.put(copy);
+                    if ("function_call".equals(copy.optString("type", ""))) {
+                        String callId = copy.optString("call_id", "").trim(); if (!callId.isEmpty()) replayedCalls.add(callId);
+                    }
+                }
+                JSONArray entries = toolRounds.get(round);
+                if (entries == null) continue;
+                for (int i = 0; i < entries.length(); i++) {
+                    JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
+                    String callId = entry.optString("id", "");
+                    // Compatible gateways should expose the original function_call output item. Fallback
+                    // synthesis keeps simpler gateways usable without duplicating a call that was replayed.
+                    if (!replayedCalls.contains(callId)) input.put(new JSONObject().put("type", "function_call").put("call_id", callId)
+                            .put("name", entry.optString("name"))
+                            .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString()));
+                    input.put(new JSONObject().put("type", "function_call_output").put("call_id", callId)
+                            .put("output", toolResultText(entry)));
+                }
             }
         }
     }
 
     private static java.util.TreeMap<Integer, JSONArray> groupToolHistory(JSONArray history) {
         java.util.TreeMap<Integer, JSONArray> rounds = new java.util.TreeMap<>();
+        if (history == null) return rounds;
         for (int i = 0; i < history.length(); i++) {
             JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
             int round = Math.max(0, entry.optInt("round", 0));
             JSONArray group = rounds.get(round); if (group == null) { group = new JSONArray(); rounds.put(round, group); }
             group.put(entry);
+        }
+        return rounds;
+    }
+
+    private static java.util.TreeMap<Integer, JSONArray> groupProviderRoundHistory(JSONArray history) {
+        java.util.TreeMap<Integer, JSONArray> rounds = new java.util.TreeMap<>();
+        if (history == null) return rounds;
+        for (int i = 0; i < history.length(); i++) {
+            JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
+            JSONObject item = entry.optJSONObject("item"); if (item == null) continue;
+            int round = Math.max(0, entry.optInt("round", 0));
+            JSONArray group = rounds.get(round); if (group == null) { group = new JSONArray(); rounds.put(round, group); }
+            group.put(item);
         }
         return rounds;
     }
