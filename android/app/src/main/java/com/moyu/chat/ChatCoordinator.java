@@ -935,8 +935,18 @@ final class ChatCoordinator implements AutoCloseable {
                 markProjectionDirty();
 
                 worker.execute(() -> {
-                    try { commitRoundUsage(); clearIntermediateContinuation(); persistUsageProjection(); }
-                    catch (Exception ignored) { }
+                    try {
+                        commitRoundUsage();
+                        if (providerContinuationOverflow[0]) {
+                            streamTerminal.set(true);
+                            settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
+                            finishTurn(id, streamKey, live, textOut.toString(), reasoningOut.toString(), outputMedia,
+                                    webSources, webBackend[0], new String[]{"provider_round_state_overflow", "Provider round state is too large to replay safely"});
+                            return;
+                        }
+                        clearIntermediateContinuation();
+                        persistUsageProjection();
+                    } catch (Exception ignored) { }
                     if (turnControl.isCancelled()) {
                         streamTerminal.set(true);
                         settleUsage(id, usageKey, usageState, usagePersisted, requestStartedNanos, firstOutputNanos[0]);
