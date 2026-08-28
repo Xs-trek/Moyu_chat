@@ -19,6 +19,7 @@ final class ClientToolRuntime {
     static final String WEB_FETCH = "web_fetch";
     static final String DELEGATE_SUBTASK = "delegate_subtask";
     static final int MAX_PARALLEL_SUBAGENTS = 4;
+    static final int MAX_TOOL_CALLS_PER_BATCH = 8;
 
     static final class BatchResult {
         final JSONArray historyEntries;
