@@ -102,8 +102,7 @@ final class ChatCoordinator implements AutoCloseable {
             cancelled.set(true);
             ChatTransport.Turn turn = transportTurn.get();
             if (turn != null) try { turn.cancel(); } catch (Exception ignored) { }
-            okhttp3.Call call = webCall.get();
-            if (call != null) try { call.cancel(); } catch (Exception ignored) { }
+            for (okhttp3.Call call : webCalls) if (call != null) try { call.cancel(); } catch (Exception ignored) { }
             Thread thread = taskThread.get();
             if (thread != null) thread.interrupt();
         }
