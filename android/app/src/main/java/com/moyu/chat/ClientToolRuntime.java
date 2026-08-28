@@ -132,7 +132,7 @@ final class ClientToolRuntime {
         for (Future<JSONObject> future : futures) {
             try {
                 JSONObject entry = future.get(); entries.put(entry);
-                if (DELEGATE_SUBTASK.equals(entry.optString("name"))) {
+                if (DELEGATE_SUBTASK.equals(entry.optString("name")) && !entry.has("error")) {
                     childCount++;
                     childIn += Math.max(0, entry.optInt("childInputTokens", 0));
                     childOut += Math.max(0, entry.optInt("childOutputTokens", 0));
