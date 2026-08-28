@@ -815,6 +815,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         v.put("thinking_mode", ReasoningPolicy.normalizeThinkingMode(s.thinkingMode));
         v.put("thinking_budget_tokens", Math.max(0, s.thinkingBudgetTokens));
         v.put("continuation_mode", ProviderContinuationPolicy.normalize(s.continuationMode));
+        v.put("harness_preset", HarnessProfile.normalize(s.harnessPreset));
+        v.put("client_tool_calling", ClientToolRuntime.normalizeCalling(s.clientToolCalling));
+        v.put("subagent_mode", HarnessPolicyResolver.normalizeSubagentMode(s.subagentMode));
         v.put("web_mode", ChatTurnOptions.normalizeWebMode(s.webMode));
         v.put("state", s.state); v.put("updated_at", s.updatedAt); v.put("draft", s.draft == null ? "" : s.draft);
         v.put("draft_media", s.draftMedia == null || s.draftMedia.trim().isEmpty() ? "[]" : s.draftMedia);
