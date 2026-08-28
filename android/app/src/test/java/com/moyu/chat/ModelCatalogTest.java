@@ -72,7 +72,8 @@ public class ModelCatalogTest {
                     profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
             fail("unreviewed endpoint must require Advanced instead of guessing Chat Completions");
         } catch (IllegalArgumentException expected) {
-            assertTrue(expected.getMessage().contains("use Advanced"));
+            assertTrue(expected.getMessage().contains("高级配置"));
+            assertTrue(expected.getMessage().contains("不会根据模型名猜测"));
         }
 
         ModelCatalog.applyAuto(provider("https://api.openai.com/v1"), profile,
