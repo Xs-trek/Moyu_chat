@@ -294,15 +294,18 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             });
             refreshCatalog.run();
             AlertDialog dialog = new AlertDialog.Builder(this).setTitle((existing == null ? "新增模型 · " : "编辑模型 · ") + provider.displayName).setView(scroll(form)).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+            ownConfigDialog(dialog);
             dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 try {
+                    formError.setVisibility(View.GONE);
                     if (p.id == null) p.id = "model-" + UUID.randomUUID();
                     p.providerId = provider.id; p.modelId = model.getText().toString().trim(); p.displayName = name.getText().toString().trim();
-                    if (p.modelId.isEmpty()) throw new IllegalArgumentException("Model ID required");
+                    if (p.modelId.isEmpty()) throw new IllegalArgumentException("Model ID 不能为空");
                     // Limits are explicit deployment/user inputs in both modes; Catalog never guesses them.
-                    p.contextTokens = Integer.parseInt(context.getText().toString().trim());
-                    p.inputTokens = Integer.parseInt(input.getText().toString().trim());
-                    p.maxOutputTokens = Integer.parseInt(output.getText().toString().trim());
+                    p.contextTokens = ModelProfileValidator.parseInteger("Context Window", context.getText().toString());
+                    p.inputTokens = ModelProfileValidator.parseInteger("Max Input", input.getText().toString());
+                    p.maxOutputTokens = ModelProfileValidator.parseInteger("Max Output", output.getText().toString());
+                    ModelProfileValidator.validateLimits(p.contextTokens, p.inputTokens, p.maxOutputTokens);
                     p.configMode = autoConfig.isChecked() ? ModelCatalog.CONFIG_AUTO : ModelCatalog.CONFIG_MANUAL;
                     if (autoConfig.isChecked()) {
                         // Coordinator resolves reviewed wire/capability/Harness metadata while preserving limits above.
@@ -312,7 +315,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                         p.inputModalities = inputModalities.getText().toString().trim(); p.outputModalities = outputModalities.getText().toString().trim();
                         p.toolCapabilities = toolCapabilities.getText().toString().trim();
                         p.reasoningLevels = levels.getText().toString().trim(); p.defaultReasoning = ReasoningPolicy.DEFAULT;
-                        p.thinkingMode = thinkingMode.getText().toString().trim(); p.thinkingBudgetTokens = Integer.parseInt(thinkingBudget.getText().toString().trim());
+                        p.thinkingMode = thinkingMode.getText().toString().trim(); p.thinkingBudgetTokens = ModelProfileValidator.parseInteger("Manual thinking budget", thinkingBudget.getText().toString());
                         p.continuationMode = continuationMode.getText().toString().trim();
                         p.harnessPreset = harnessPreset.getText().toString().trim();
                         p.clientToolCalling = clientToolCalling.getText().toString().trim();
@@ -323,9 +326,9 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                         if (!dialog.isShowing()) return;
                         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                         if (error == null) dialog.dismiss();
-                        else Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                        else showEditorError(formError, error);
                     }));
-                } catch (Exception error) { Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show(); }
+                } catch (Exception error) { showEditorError(formError, error.getMessage()); }
             }));
             dialog.show();
         });
