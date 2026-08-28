@@ -538,6 +538,7 @@ final class ChatCoordinator implements AutoCloseable {
         // context preparation, Web retrieval, or provider startup fails.
         ChatDatabase.Snapshot originSnapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         ContextMode.Policy contextPolicy = ContextMode.resolve(session, originSnapshot);
+        HarnessPolicyResolver.Policy adaptivePolicy = HarnessPolicyResolver.resolve(session);
         TaskProfile profile = TaskProfile.fromStored(session.taskProfile);
         boolean needsRouter = contextPolicy.routerEnabled && profile == null;
         // Deterministic Standard/Smart compaction cannot be disabled by the model-authored TaskProfile.
