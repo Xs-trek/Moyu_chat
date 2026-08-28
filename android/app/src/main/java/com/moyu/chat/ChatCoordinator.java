@@ -212,7 +212,6 @@ final class ChatCoordinator implements AutoCloseable {
                 profile.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode);
                 profile.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
                 profile.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
-                if (!ReasoningPolicy.allows(profile.reasoningLevels, profile.defaultReasoning)) throw new IllegalArgumentException("default reasoning not supported by model profile");
                 db.saveModelProfile(profile); emitView();
             } catch (Exception error) { host.showMessage(safe(error)); }
         });
