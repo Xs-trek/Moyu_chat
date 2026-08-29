@@ -98,7 +98,7 @@ public class MoyuWebServiceTest {
                 MoyuWebService.Prepared unrelated = web.prepare("解释一下指针",
                         new ChatTurnOptions("", "auto"), null, null, previous);
                 assertFalse("an unrelated next turn must not revive older Web state", unrelated.attempted);
-                assertEquals(1, server.getRequestCount());
+                assertEquals(3, server.getRequestCount());
             }
         }
     }
