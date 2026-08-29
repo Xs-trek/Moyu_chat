@@ -653,6 +653,26 @@ public class ChatCoordinatorE2eTest {
         await("second normal turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
     }
 
+    @Test public void webFollowUpContextUsesOnlyImmediatelyPreviousWebBackedAssistant() throws Exception {
+        JSONArray timeline = new JSONArray()
+                .put(new JSONObject().put("kind", "message").put("role", "user").put("text", "检索主题"))
+                .put(new JSONObject().put("kind", "message").put("role", "assistant").put("text", "result")
+                        .put("webBackend", "Exa").put("sources", new JSONArray().put(new JSONObject()
+                                .put("url", "https://example.com/a").put("title", "A"))))
+                .put(new JSONObject().put("kind", "usage"))
+                .put(new JSONObject().put("kind", "message").put("role", "user").put("text", "继续看看"))
+                .put(new JSONObject().put("kind", "message").put("role", "assistant").put("streaming", true));
+        MoyuWebService.FollowUpContext previous = ChatCoordinator.webFollowUpContext(timeline);
+        assertTrue(previous.previousTurnUsedWeb);
+        assertEquals("检索主题", previous.previousUserText);
+        assertEquals(1, previous.sources.length());
+
+        timeline.put(new JSONObject().put("kind", "message").put("role", "assistant").put("text", "plain answer"));
+        MoyuWebService.FollowUpContext broken = ChatCoordinator.webFollowUpContext(timeline);
+        assertFalse("an intervening non-Web assistant must break inheritance", broken.previousTurnUsedWeb);
+        assertEquals(0, broken.sources.length());
+    }
+
     @Test public void clientWebToolsRemainExposedOnLaterUserTurns() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
