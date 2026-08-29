@@ -55,6 +55,11 @@ final class MoyuWebService implements AutoCloseable {
     private static final Pattern HTML_TITLE = Pattern.compile("(?is)<title[^>]*>(.*?)</title>");
     private static final Pattern SEARCH_HINT = Pattern.compile(
             "(?i)(搜索|检索|联网|查一下|查找|查证|最新|今天|昨日|昨天|现在|当前|近期|新闻|官网|价格|版本|发布|社区|网页|链接|\\bweb\\b|\\bsearch\\b|\\blatest\\b|\\btoday\\b|\\bcurrent\\b|\\brecent\\b|\\bnews\\b|\\bprice\\b|\\brelease\\b|\\blookup\\b|\\bbrowse\\b|find online)");
+    /** Follow-up wording only extends an immediately preceding Web-backed turn; it never enables Web globally. */
+    private static final Pattern FOLLOW_UP_HINT = Pattern.compile(
+            "(?i)(继续|接着|再查|再搜|再找|再看看|更多|进一步|刚才|上面|这些来源|那些来源|continue|more|again|follow[- ]?up|keep searching|check more)");
+    private static final Pattern FETCH_FOLLOW_UP_HINT = Pattern.compile(
+            "(?i)(读一下|打开|原文|这个网页|那个网页|刚才.*(?:链接|来源|网页)|read (?:it|that|the source)|open (?:it|that|the source)|fetch (?:it|that|the source))");
 
     static final class Prepared {
         final String promptSuffix;
