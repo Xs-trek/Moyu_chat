@@ -63,9 +63,7 @@ public class MoyuWebServiceTest {
     @Test public void autoSearchesFreshnessRequestsButNotOrdinaryText() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
-            server.enqueue(new MockResponse().setResponseCode(200)
-                    .addHeader("Content-Type", "text/event-stream")
-                    .setBody("data: " + exaResponse("Title: Current\nURL: https://example.com/current\nFresh") + "\n\n"));
+            installExaMcp(server, "Title: Current\nURL: https://example.com/current\nFresh");
             try (MoyuWebService web = new MoyuWebService(server.url("/mcp").toString())) {
                 MoyuWebService.Prepared ordinary = web.prepare("explain pointers", new ChatTurnOptions("", "auto"), null);
                 assertFalse(ordinary.attempted);
