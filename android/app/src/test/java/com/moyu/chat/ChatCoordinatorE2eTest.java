@@ -673,6 +673,41 @@ public class ChatCoordinatorE2eTest {
         assertEquals(0, broken.sources.length());
     }
 
+    @Test public void sessionWebModeCanSwitchFromOffToAutoAndActivateDeterministicFetchFallback() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("web-off session created", () -> activeSession(latestView()) != null
+                && ChatTurnOptions.WEB_OFF.equals(activeSession(latestView()).optString("webMode")));
+        String sessionId = latestView().optString("activeLocalSessionId");
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId)
+                .put("text", "read https://127.0.0.1/private").put("webMode", ChatTurnOptions.WEB_OFF));
+        RecordedRequest offRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(offRequest);
+        assertFalse("Web off must not inject Moyu Web context", offRequest.getBody().readUtf8().contains("Moyu Web Context"));
+        await("web-off turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+
+        post("chat.session.web.set", new JSONObject().put("localSessionId", sessionId).put("webMode", ChatTurnOptions.WEB_AUTO));
+        await("session Web mode switched to auto", () -> ChatTurnOptions.WEB_AUTO.equals(activeSession(latestView()).optString("webMode")));
+        assertEquals(ChatTurnOptions.WEB_AUTO, app.database().getSession(sessionId).webMode);
+
+        post("nav.open", new JSONObject().put("route", "home"));
+        await("home opened", () -> "home".equals(latestView().optString("route")));
+        post("chat.session.open", new JSONObject().put("localSessionId", sessionId));
+        await("same session reopened with Web auto", () -> activeSession(latestView()) != null
+                && ChatTurnOptions.WEB_AUTO.equals(activeSession(latestView()).optString("webMode")));
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId)
+                .put("text", "read https://127.0.0.1/private").put("webMode", ChatTurnOptions.WEB_AUTO));
+        RecordedRequest autoRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(autoRequest);
+        String autoBody = autoRequest.getBody().readUtf8();
+        assertTrue("Web auto must activate deterministic URL fetch fallback without client tool calling",
+                autoBody.contains("Moyu Web Context"));
+        assertTrue("blocked URL becomes an explicit fetch diagnostic rather than a false no-Web claim",
+                autoBody.contains("Fetch failed for https://127.0.0.1/private"));
+        await("web-auto turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
     @Test public void clientWebToolsRemainExposedOnLaterUserTurns() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
