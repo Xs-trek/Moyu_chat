@@ -303,6 +303,7 @@ final class ChatCoordinator implements AutoCloseable {
                     // reasoning.set bridge message is still persisted normally, but Send must not rely
                     // on cross-bridge scheduling order to know what the user selected for this turn.
                     if (p.has("reasoningEffort")) setSessionReasoning(sessionId, p.optString("reasoningEffort", ReasoningPolicy.DEFAULT));
+                    if (p.has("webMode")) setSessionWebMode(sessionId, p.optString("webMode", ChatTurnOptions.WEB_AUTO));
                     final String asyncRequestId = requestId;
                     // All user-selected wire/session capabilities plus provider config/secret/credential epoch
                     // are frozen while this serialized intent worker owns the turn. UI navigation or profile
