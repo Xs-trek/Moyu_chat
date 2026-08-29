@@ -225,9 +225,9 @@ final class MoyuWebService implements AutoCloseable {
     }
 
     ToolResult executeFetch(String url, CallScope callScope) throws Exception {
-        FetchResult result = fetch(url, callScope == null ? NO_CANCEL : callScope);
-        JSONArray sources = new JSONArray().put(new JSONObject().put("url", result.url).put("title", result.title).put("backend", "moyu-fetch"));
-        return new ToolResult("[Untrusted fetched page reference data]\nURL: " + result.url + "\nTitle: " + result.title + "\n" + result.text, sources);
+        FetchResult result = fetchResilient(url, callScope == null ? NO_CANCEL : callScope);
+        JSONArray sources = new JSONArray().put(new JSONObject().put("url", result.url).put("title", result.title).put("backend", result.sourceBackend));
+        return new ToolResult("[Untrusted fetched page reference data]\nURL: " + result.url + "\nTitle: " + result.title + "\nBackend: " + result.displayBackend + "\n" + result.text, sources);
     }
 
     private String searchExa(String query, CallScope callScope) throws Exception {
