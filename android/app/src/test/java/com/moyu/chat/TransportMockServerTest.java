@@ -736,6 +736,12 @@ public class TransportMockServerTest {
         assertEquals("test-key", request.getHeader("x-api-key"));
     }
 
+    @Test public void socketReadTimeoutNeverPreemptsSemanticIdlePolicy() {
+        assertTrue(OpenAiCompatibleTransport.READ_TIMEOUT_SECONDS > OpenAiCompatibleTransport.SEMANTIC_IDLE_SECONDS);
+        assertTrue(AnthropicMessagesTransport.READ_TIMEOUT_SECONDS > AnthropicMessagesTransport.SEMANTIC_IDLE_SECONDS);
+        assertEquals("both provider transports should expose the same background-stream tolerance", OpenAiCompatibleTransport.READ_TIMEOUT_SECONDS, AnthropicMessagesTransport.READ_TIMEOUT_SECONDS);
+    }
+
     // ---------- HTTP error mapping ----------
 
     @Test public void httpErrorsMapToCodeAndRetryability() throws Exception {
