@@ -392,7 +392,8 @@ final class MoyuWebService implements AutoCloseable {
                     if (titleMatch.find()) title = cleanText(titleMatch.group(1));
                     text = htmlToText(raw);
                 } else text = raw.trim();
-                return new FetchResult(current.toString(), title == null || title.isEmpty() ? current.toString() : title, limit(text, MAX_FETCH_CHARS));
+                return new FetchResult(current.toString(), title == null || title.isEmpty() ? current.toString() : title,
+                        limit(text, MAX_FETCH_CHARS), "Moyu Fetch", "moyu-fetch");
             } finally {
                 callScope.clear(call);
             }
