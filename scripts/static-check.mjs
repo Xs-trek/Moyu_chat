@@ -149,7 +149,9 @@ const registry = read('android/app/src/main/java/com/moyu/chat/ChatTransportRegi
 for (const protocol of ['CHAT_COMPLETIONS', 'RESPONSES', 'AnthropicMessagesTransport.PROTOCOL']) if (!registry.includes(protocol)) fail(`transport registry missing ${protocol}`);
 
 const webService = read('android/app/src/main/java/com/moyu/chat/MoyuWebService.java');
-if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_search_exa')) fail('Moyu Exa fallback backend missing');
+if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_search_exa') || !webService.includes('web_fetch_exa')
+    || !webService.includes('"method", "initialize"') || !webService.includes('notifications/initialized')
+    || !webService.includes('Mcp-Session-Id')) fail('Moyu Exa fallback must use a real MCP initialize/session lifecycle with search + fetch tools');
 if (!webService.includes('Moyu Fetch only allows HTTPS URLs') || !webService.includes('publicDns') || !webService.includes('validateHttpsUri')) fail('Moyu Fetch HTTPS/SSRF boundary missing');
 if (!webService.includes('untrusted reference material') || !webService.includes('not instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
 if (!webService.includes('MoyuChat/0.0.4')) fail('Moyu Fetch User-Agent version must match v0.0.4');
