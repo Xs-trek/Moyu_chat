@@ -79,6 +79,46 @@ public class MoyuWebServiceTest {
         }
     }
 
+    @Test public void autoContinuesImmediatelyPreviousWebSearchButNotUnrelatedTurns() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(exaResponse("Title: More\nURL: https://example.com/more\nMore context")));
+            MoyuWebService.FollowUpContext previous = new MoyuWebService.FollowUpContext(
+                    "检索一下 GPT 最新变化",
+                    new org.json.JSONArray().put(new JSONObject().put("url", "https://example.com/first")), true);
+            try (MoyuWebService web = new MoyuWebService(server.url("/mcp").toString())) {
+                MoyuWebService.Prepared continued = web.prepare("继续看看更多讨论",
+                        new ChatTurnOptions("", "auto"), null, null, previous);
+                assertTrue(continued.attempted);
+                assertTrue(continued.hasContext());
+                RecordedRequest request = server.takeRequest();
+                String body = request.getBody().readUtf8();
+                assertTrue(body.contains("GPT 最新变化"));
+                assertTrue(body.contains("继续看看更多讨论"));
+
+                MoyuWebService.Prepared unrelated = web.prepare("解释一下指针",
+                        new ChatTurnOptions("", "auto"), null, null, previous);
+                assertFalse("an unrelated next turn must not revive older Web state", unrelated.attempted);
+                assertEquals(1, server.getRequestCount());
+            }
+        }
+    }
+
+    @Test public void followUpFetchReusesPreviousSourceUrl() {
+        try (MoyuWebService web = new MoyuWebService("http://127.0.0.1:1/mcp")) {
+            MoyuWebService.FollowUpContext previous = new MoyuWebService.FollowUpContext(
+                    "查一下这个问题", new org.json.JSONArray().put(new JSONObject()
+                    .put("url", "https://127.0.0.1/private").put("title", "Previous source")), true);
+            MoyuWebService.Prepared prepared = web.prepare("打开刚才那个网页",
+                    new ChatTurnOptions("", "auto"), null, null, previous);
+            assertTrue("follow-up should attempt the inherited source instead of claiming no Web ability", prepared.attempted);
+            assertEquals("unavailable", prepared.backend);
+            assertTrue(prepared.promptSuffix.contains("Fetch failed for https://127.0.0.1/private"));
+        }
+    }
+
     @Test public void privateHttpsFetchIsRejectedWithoutNetworkAccess() {
         try (MoyuWebService web = new MoyuWebService("http://127.0.0.1:1/mcp")) {
             MoyuWebService.Prepared prepared = web.prepare(
