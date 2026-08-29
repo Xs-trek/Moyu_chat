@@ -127,8 +127,8 @@ public class MoyuWebServiceTest {
                         new ChatTurnOptions("", "auto"), null, null, previous);
                 assertTrue(prepared.attempted);
                 assertEquals("Exa", prepared.backend);
-                assertEquals(1, server.getRequestCount());
-                String body = server.takeRequest().getBody().readUtf8();
+                assertEquals(3, server.getRequestCount());
+                String body = takeToolCall(server).getBody().readUtf8();
                 assertTrue(body.contains("检索一个主题"));
                 assertTrue(body.contains("打开刚才网页"));
             }
