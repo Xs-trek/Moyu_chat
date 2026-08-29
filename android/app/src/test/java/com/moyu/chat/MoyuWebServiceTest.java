@@ -80,9 +80,7 @@ public class MoyuWebServiceTest {
     @Test public void autoContinuesImmediatelyPreviousWebSearchButNotUnrelatedTurns() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
-            server.enqueue(new MockResponse().setResponseCode(200)
-                    .addHeader("Content-Type", "application/json")
-                    .setBody(exaResponse("Title: More\nURL: https://example.com/more\nMore context")));
+            installExaMcp(server, "Title: More\nURL: https://example.com/more\nMore context");
             MoyuWebService.FollowUpContext previous = new MoyuWebService.FollowUpContext(
                     "检索一下 GPT 最新变化",
                     new org.json.JSONArray().put(new JSONObject().put("url", "https://example.com/first")), true);
