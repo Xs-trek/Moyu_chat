@@ -24,7 +24,9 @@ import okhttp3.Response;
 final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     static final String PROTOCOL = "anthropic-messages";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-    private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.MINUTES.toNanos(5);
+    static final long SEMANTIC_IDLE_SECONDS = 300L;
+    static final long READ_TIMEOUT_SECONDS = 360L;
+    private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.SECONDS.toNanos(SEMANTIC_IDLE_SECONDS);
     private final OkHttpClient http = new OkHttpClient.Builder()
             .fastFallback(true)
             .retryOnConnectionFailure(false)
