@@ -142,7 +142,9 @@ public class MoyuWebServiceTest {
             assertTrue(prepared.attempted);
             assertFalse(prepared.hasContext() && prepared.sources.length() > 0);
             assertEquals("unavailable", prepared.backend);
-            assertTrue(prepared.promptSuffix.contains("Fetch failed"));
+            assertTrue(prepared.promptSuffix.contains("non-public IP literals are blocked"));
+            assertFalse("private URLs must be rejected before any Exa fallback can receive them",
+                    prepared.promptSuffix.contains("Exa fetch failed"));
         }
     }
 
