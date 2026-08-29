@@ -131,15 +131,32 @@ final class MoyuWebService implements AutoCloseable {
     }
 
     Prepared prepare(String userText, ChatTurnOptions nativeOptions, StageSink stages, CallScope calls) {
+        return prepare(userText, nativeOptions, stages, calls, FollowUpContext.none());
+    }
+
+    Prepared prepare(String userText, ChatTurnOptions nativeOptions, StageSink stages, CallScope calls,
+                     FollowUpContext previous) {
         ChatTurnOptions options = nativeOptions == null ? ChatTurnOptions.NONE : nativeOptions;
         CallScope callScope = calls == null ? NO_CANCEL : calls;
+        FollowUpContext followUp = previous == null ? FollowUpContext.none() : previous;
         if (callScope.isCancelled()) return Prepared.none();
         if (!options.webEnabled()) return Prepared.none();
         String input = userText == null ? "" : userText;
         List<String> urls = extractUrls(input);
+        boolean followUpHint = followUp.previousTurnUsedWeb && FOLLOW_UP_HINT.matcher(input).find();
+        boolean fetchFollowUp = followUp.previousTurnUsedWeb && urls.isEmpty()
+                && FETCH_FOLLOW_UP_HINT.matcher(input).find();
+        if (fetchFollowUp) {
+            for (int i = 0; i < followUp.sources.length() && urls.size() < MAX_URLS; i++) {
+                JSONObject source = followUp.sources.optJSONObject(i); if (source == null) continue;
+                String priorUrl = source.optString("url", "").trim();
+                if (priorUrl.startsWith("https://") && !urls.contains(priorUrl)) urls.add(priorUrl);
+            }
+        }
         boolean needFetch = !urls.isEmpty() && !options.supports(ChatTurnOptions.WEB_FETCH);
+        boolean explicitSearch = SEARCH_HINT.matcher(input).find();
         boolean needSearch = !options.supports(ChatTurnOptions.WEB_SEARCH)
-                && (options.forceFallback() || SEARCH_HINT.matcher(input).find());
+                && (options.forceFallback() || explicitSearch || (followUpHint && !fetchFollowUp));
         if (!needFetch && !needSearch) return Prepared.none();
 
         StringBuilder context = new StringBuilder();
