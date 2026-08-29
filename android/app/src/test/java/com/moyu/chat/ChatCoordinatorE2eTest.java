@@ -653,6 +653,35 @@ public class ChatCoordinatorE2eTest {
         await("second normal turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
     }
 
+    @Test public void clientWebToolsRemainExposedOnLaterUserTurns() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        assertNotNull(profile);
+        profile.configMode = ModelCatalog.CONFIG_MANUAL;
+        profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
+        app.database().saveModelProfile(profile);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_AUTO));
+        await("client-tool session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first ordinary turn"));
+        RecordedRequest first = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(first);
+        JSONObject firstBody = new JSONObject(first.getBody().readUtf8());
+        assertTrue("first turn must expose client tools", firstBody.has("tools"));
+        assertTrue(firstBody.toString().contains("web_search"));
+        assertTrue(firstBody.toString().contains("web_fetch"));
+        await("first client-tool-capable turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second ordinary turn"));
+        RecordedRequest second = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(second);
+        JSONObject secondBody = new JSONObject(second.getBody().readUtf8());
+        assertTrue("client tools are a frozen session capability and must still be exposed on the next user turn", secondBody.has("tools"));
+        assertTrue(secondBody.toString().contains("web_search"));
+        assertTrue(secondBody.toString().contains("web_fetch"));
+        await("second client-tool-capable turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
     @Test public void interruptKeepsPartialAnswerAndUnlocksSession() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
