@@ -117,9 +117,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         } catch (IOException error) {
             if (call.isCanceled()) sink.onError("cancelled", "已中断", false);
             else if (error instanceof java.net.SocketTimeoutException) {
-                if (!responseStarted) sink.onError("response_start_timeout", "Provider did not return HTTP response headers within 120 seconds", true);
-                else if (!sawData) sink.onError("stream_first_event_timeout", "Provider returned HTTP headers but no SSE data within 120 seconds", true);
-                else sink.onError("stream_timeout", "Provider stream stopped producing bytes for 120 seconds", true);
+                if (!responseStarted) sink.onError("response_start_timeout", "Provider did not return HTTP response headers within " + READ_TIMEOUT_SECONDS + " seconds", true);
+                else if (!sawData) sink.onError("stream_first_event_timeout", "Provider returned HTTP headers but no SSE data within " + READ_TIMEOUT_SECONDS + " seconds", true);
+                else sink.onError("stream_timeout", "Provider stream stopped producing bytes for " + READ_TIMEOUT_SECONDS + " seconds", true);
             } else sink.onError("network_error", safe(error), true);
         }
     }
