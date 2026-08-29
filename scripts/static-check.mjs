@@ -186,6 +186,7 @@ if (!coordinator.includes('此 Provider 已存在 Model ID') || !coordinator.inc
 const styles = read('src/styles.css');
 for (const marker of ['overflow-x:hidden', 'conversation-active', '100dvh', 'timeline-scroll']) if (!styles.includes(marker)) fail(`native-feeling viewport/scroll constraint missing: ${marker}`);
 if (!styles.includes('html[data-route="conversation"]') || !styles.includes('touch-action:pan-y') || !styles.includes('overflow-y:scroll')) fail('Android WebView vertical scroll ownership must be explicit for document pages and the conversation timeline');
+if (!styles.includes('#app { min-height:100%; -webkit-user-select:none; user-select:none; }') || !styles.includes('[data-selection-scope],[data-selection-scope] *,textarea,input') || !styles.includes('[data-selection-scope] button,[data-selection-scope] .md-code-head')) fail('UI chrome must be non-selectable while conversation text/reasoning and editable controls remain selectable');
 const bridge = read('src/bridge.js');
 const stateJs = read('src/state.js');
 if (!bridge.includes('MAX_MESSAGE_BYTES = 1024 * 1024') || !bridge.includes('revision <= getState().revision')) fail('WebView Host bridge size/revision guards missing');
