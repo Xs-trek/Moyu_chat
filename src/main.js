@@ -215,6 +215,13 @@ document.addEventListener('click', (event) => {
     setOptimisticReasoningEffort(sessionId, reasoningEffort);
     postIntent('chat.session.reasoning.set', { localSessionId: sessionId, reasoningEffort });
   }
+  else if (action === 'session-web-set') {
+    closeChoiceField(target.closest('.choice-field'));
+    const sessionId = target.dataset.sessionId;
+    const webMode = target.dataset.webMode;
+    setOptimisticWebMode(sessionId, webMode);
+    postIntent('chat.session.web.set', { localSessionId: sessionId, webMode });
+  }
   else if (action === 'nav') postIntent('nav.open', { route: target.dataset.route });
   else if (action === 'theme') postIntent('appearance.set', { theme: target.dataset.theme });
   else if (action === 'toggle-reasoning') postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' });
