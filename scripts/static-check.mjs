@@ -194,7 +194,7 @@ const renderGate = read('src/render-gate.js');
 const render = read('src/render.js');
 const mainUi = read('src/main.js');
 if (!renderGate.includes('pointerActive') || !renderGate.includes('composing') || !renderGate.includes('document.activeElement')) fail('destructive render gate missing interaction guards');
-if (!mainUi.includes('selectionScopeForNode') || !mainUi.includes('pointerMaySelectText') || !mainUi.includes('pointerUp(pointerMaySelectText ? 160 : 0)')) fail('ordinary taps must bypass text-selection grace like moyu_ui v0.0.4');
+if (!mainUi.includes('selectionScopeForNode') || !mainUi.includes('editableTextControlForNode') || !mainUi.includes("document.addEventListener('selectstart'") || !mainUi.includes('pointerMaySelectText') || !mainUi.includes('pointerUp(pointerMaySelectText ? 160 : 0)')) fail('text selection must be limited to conversation content/editable text while ordinary chrome taps bypass selection grace');
 if (mainUi.includes("['pointerdown', 'touchstart']") || mainUi.includes("['pointerup', 'pointercancel', 'touchend', 'touchcancel']")) fail('duplicate global touch/pointer render leases must not return');
 if (!mainUi.includes('positionChoiceMenu') || !mainUi.includes('window.visualViewport')) fail('choice menus must clamp to the Android visual viewport');
 if (!styles.includes('.choice-scrim') || !styles.includes('background:transparent')) fail('mobile model/reasoning sheet must not dim the entire conversation');
