@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 /** Short-lived foreground data-transfer service used only while a user-started model turn is active. */
 public final class ChatTurnService extends Service {
