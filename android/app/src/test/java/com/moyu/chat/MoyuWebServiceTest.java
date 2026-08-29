@@ -146,6 +146,26 @@ public class MoyuWebServiceTest {
         }
     }
 
+    @Test public void publicUrlLocalFailureFallsBackToExaFetchWithRealMcpHandshake() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            installExaMcp(server, "Fetched markdown body from Exa");
+            try (MoyuWebService web = new MoyuWebService(server.url("/mcp").toString())) {
+                MoyuWebService.ToolResult result = web.executeFetch("https://does-not-exist.invalid/page", null);
+                assertTrue(result.text.contains("Fetched markdown body from Exa"));
+                assertTrue(result.text.contains("Backend: Exa Fetch"));
+                assertEquals(1, result.sources.length());
+                assertEquals("exa-fetch", result.sources.getJSONObject(0).optString("backend"));
+                assertEquals(3, server.getRequestCount());
+                RecordedRequest toolCall = takeToolCall(server);
+                String body = toolCall.getBody().readUtf8();
+                assertTrue(body.contains("web_fetch_exa"));
+                assertTrue(body.contains("https://does-not-exist.invalid/page"));
+                assertEquals("test-session", toolCall.getHeader("Mcp-Session-Id"));
+            }
+        }
+    }
+
     private static void installExaMcp(MockWebServer server, String toolText) {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
