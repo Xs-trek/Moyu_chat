@@ -16,6 +16,9 @@ import android.os.PowerManager;
 public final class ChatTurnService extends Service {
     private static final String CHANNEL_ID = "moyu_chat_generation";
     private static final int NOTIFICATION_ID = 2411;
+    /** Safety cap; normal release happens much earlier when the last active user turn finishes. */
+    static final long WAKE_LOCK_TIMEOUT_MS = 2L * 60L * 60L * 1000L;
+    private PowerManager.WakeLock wakeLock;
 
     /** Returns false when Android refuses the foreground-service start; callers must not silently assume a lease exists. */
     static boolean start(Context context) {
