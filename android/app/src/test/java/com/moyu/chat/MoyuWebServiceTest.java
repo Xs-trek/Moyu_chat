@@ -89,7 +89,8 @@ public class MoyuWebServiceTest {
                         new ChatTurnOptions("", "auto"), null, null, previous);
                 assertTrue(continued.attempted);
                 assertTrue(continued.hasContext());
-                RecordedRequest request = server.takeRequest();
+                assertEquals(3, server.getRequestCount());
+                RecordedRequest request = takeToolCall(server);
                 String body = request.getBody().readUtf8();
                 assertTrue(body.contains("GPT 最新变化"));
                 assertTrue(body.contains("继续看看更多讨论"));
