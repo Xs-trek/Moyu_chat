@@ -106,7 +106,7 @@ public class MoyuWebServiceTest {
         }
     }
 
-    @Test public void followUpFetchReusesPreviousSourceUrl() {
+    @Test public void followUpFetchReusesPreviousSourceUrl() throws Exception {
         try (MoyuWebService web = new MoyuWebService("http://127.0.0.1:1/mcp")) {
             MoyuWebService.FollowUpContext previous = new MoyuWebService.FollowUpContext(
                     "查一下这个问题", new org.json.JSONArray().put(new JSONObject()
