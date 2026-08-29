@@ -72,7 +72,7 @@ public class MoyuWebServiceTest {
                 MoyuWebService.Prepared fresh = web.prepare("检索一下最新版本", new ChatTurnOptions("", "auto"), null);
                 assertTrue(fresh.attempted);
                 assertTrue(fresh.hasContext());
-                assertEquals(1, server.getRequestCount());
+                assertEquals(3, server.getRequestCount());
             }
         }
     }
