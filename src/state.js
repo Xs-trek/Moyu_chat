@@ -54,6 +54,21 @@ export function setOptimisticReasoningEffort(sessionId, reasoningEffort) {
   return true;
 }
 
+/** Web mode is also a future-turn session setting; reflect the user's selection immediately. */
+export function setOptimisticWebMode(sessionId, webMode) {
+  const view = state.view;
+  const current = view?.activeSession;
+  if (!view || !current || current.localSessionId !== sessionId) return false;
+  const nextSession = { ...current, webMode };
+  const sessions = Array.isArray(view.sessions)
+    ? view.sessions.map((entry) => entry?.localSessionId === sessionId ? { ...entry, webMode } : entry)
+    : view.sessions;
+  const nextView = { ...view, activeSession: nextSession, sessions };
+  state = { ...state, view: nextView };
+  emit({ scope: 'stream' });
+  return true;
+}
+
 export function setNotice(notice) {
   state = { ...state, notice };
   emit({ scope: 'toast' });
