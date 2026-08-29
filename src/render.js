@@ -713,7 +713,9 @@ export function render() {
   document.documentElement.dataset.route = view.route || 'home';
   root.replaceChildren(shell(view, body));
   if (view.route === 'conversation' && sessionId) requestAnimationFrame(() => {
-    if (anchor) restoreTimelineAnchor(anchor, sessionId);
+    // Opening a conversation from a non-conversation route has no prior anchor: default to the
+    // newest turn. A same-session anchor still preserves an intentional historical reading position.
+    restoreTimelineAnchor(anchor, sessionId);
     syncTurnNavigator(document.querySelector('.timeline-scroll'));
   });
   renderNotice();
