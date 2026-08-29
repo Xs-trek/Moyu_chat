@@ -17,8 +17,18 @@ function selectionScopeForNode(node) {
   const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
   return element?.closest?.('[data-selection-scope]') || null;
 }
+function editableTextControlForNode(node) {
+  const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  return element?.closest?.('textarea,input') || null;
+}
+// Native chat chrome is not document content. Only conversation text/reasoning and editable text
+// controls may start a selection; badges, metrics, headers and buttons remain interaction-only.
+document.addEventListener('selectstart', (event) => {
+  if (selectionScopeForNode(event.target) || editableTextControlForNode(event.target)) return;
+  event.preventDefault();
+}, true);
 document.addEventListener('pointerdown', (event) => {
-  pointerMaySelectText = Boolean(selectionScopeForNode(event.target));
+  pointerMaySelectText = Boolean(selectionScopeForNode(event.target) || editableTextControlForNode(event.target));
   renderGate.pointerDown(pointerMaySelectText);
 }, true);
 document.addEventListener('pointerup', () => {
