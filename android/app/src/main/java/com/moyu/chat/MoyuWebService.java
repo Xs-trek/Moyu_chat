@@ -540,9 +540,20 @@ final class MoyuWebService implements AutoCloseable {
         return message == null || message.trim().isEmpty() ? (error == null ? "unknown" : error.getClass().getSimpleName()) : message.trim();
     }
 
+    private static final class McpHttpResult {
+        final String body, sessionId;
+        McpHttpResult(String body, String sessionId) {
+            this.body = body == null ? "" : body;
+            this.sessionId = sessionId == null ? "" : sessionId;
+        }
+    }
+
     private static final class FetchResult {
-        final String url, title, text;
-        FetchResult(String url, String title, String text) { this.url = url; this.title = title; this.text = text; }
+        final String url, title, text, displayBackend, sourceBackend;
+        FetchResult(String url, String title, String text, String displayBackend, String sourceBackend) {
+            this.url = url; this.title = title; this.text = text;
+            this.displayBackend = displayBackend; this.sourceBackend = sourceBackend;
+        }
     }
 
     @Override public void close() {
