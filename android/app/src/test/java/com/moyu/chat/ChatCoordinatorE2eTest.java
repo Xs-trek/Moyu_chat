@@ -703,7 +703,7 @@ public class ChatCoordinatorE2eTest {
         String autoBody = autoRequest.getBody().readUtf8();
         assertTrue("Web auto must activate deterministic URL fetch fallback without client tool calling",
                 autoBody.contains("Moyu Web Context"));
-        assertTrue("blocked URL becomes an explicit fetch diagnostic rather than a false no-Web claim",
+        assertTrue("blocked URL becomes an explicit fetch diagnostic rather than a false no-Web claim; actual=" + autoBody,
                 autoBody.contains("Fetch failed for https://test.local/private: local hosts are blocked"));
         await("web-auto turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
     }
