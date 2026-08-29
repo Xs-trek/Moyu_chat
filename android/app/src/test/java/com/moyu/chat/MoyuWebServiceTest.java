@@ -119,9 +119,7 @@ public class MoyuWebServiceTest {
     @Test public void followUpWithoutPreviousSourceFallsBackToSearch() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
-            server.enqueue(new MockResponse().setResponseCode(200)
-                    .addHeader("Content-Type", "application/json")
-                    .setBody(exaResponse("Title: Recovered\nURL: https://example.com/recovered\nRecovered context")));
+            installExaMcp(server, "Title: Recovered\nURL: https://example.com/recovered\nRecovered context");
             MoyuWebService.FollowUpContext previous = new MoyuWebService.FollowUpContext(
                     "检索一个主题", new org.json.JSONArray(), true);
             try (MoyuWebService web = new MoyuWebService(server.url("/mcp").toString())) {
