@@ -338,6 +338,25 @@ final class MoyuWebService implements AutoCloseable {
         } catch (Exception ignored) { return null; }
     }
 
+    private FetchResult fetchResilient(String rawUrl, CallScope callScope) throws Exception {
+        URI validated = validateHttpsUri(rawUrl);
+        try {
+            return fetch(validated.toString(), callScope);
+        } catch (IllegalArgumentException policyError) {
+            throw policyError;
+        } catch (Exception localError) {
+            if (callScope.isCancelled()) throw new java.io.InterruptedIOException("cancelled");
+            try {
+                String exaText = fetchExa(validated.toString(), callScope);
+                if (exaText == null || exaText.trim().isEmpty()) throw new IllegalStateException("Exa returned no fetch context");
+                String title = validated.getHost() == null ? validated.toString() : validated.getHost();
+                return new FetchResult(validated.toString(), title, limit(exaText.trim(), MAX_FETCH_CHARS), "Exa Fetch", "exa-fetch");
+            } catch (Exception exaError) {
+                throw new IllegalStateException("local fetch failed: " + safe(localError) + "; Exa fetch failed: " + safe(exaError));
+            }
+        }
+    }
+
     private FetchResult fetch(String rawUrl, CallScope callScope) throws Exception {
         URI current = validateHttpsUri(rawUrl);
         for (int redirects = 0; redirects <= 5; redirects++) {
