@@ -682,7 +682,7 @@ public class ChatCoordinatorE2eTest {
         String sessionId = latestView().optString("activeLocalSessionId");
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId)
-                .put("text", "read https://127.0.0.1/private").put("webMode", ChatTurnOptions.WEB_OFF));
+                .put("text", "read https://web-test.local/private").put("webMode", ChatTurnOptions.WEB_OFF));
         RecordedRequest offRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(offRequest);
         assertFalse("Web off must not inject Moyu Web context", offRequest.getBody().readUtf8().contains("Moyu Web Context"));
         await("web-off turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
