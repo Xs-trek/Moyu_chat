@@ -698,7 +698,7 @@ public class ChatCoordinatorE2eTest {
                 && ChatTurnOptions.WEB_AUTO.equals(activeSession(latestView()).optString("webMode")));
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId)
-                .put("text", "read https://web-test.local/private").put("webMode", ChatTurnOptions.WEB_AUTO));
+                .put("text", "read https://test.local/private").put("webMode", ChatTurnOptions.WEB_AUTO));
         RecordedRequest autoRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(autoRequest);
         String autoBody = autoRequest.getBody().readUtf8();
         assertTrue("Web auto must activate deterministic URL fetch fallback without client tool calling",
