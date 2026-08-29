@@ -51,8 +51,21 @@ public final class ChatTurnService extends Service {
                 .build();
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         else startForeground(NOTIFICATION_ID, notification);
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        if (power != null) {
+            wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, getPackageName() + ":chat-generation");
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS);
+        }
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_NOT_STICKY; }
     @Override public IBinder onBind(Intent intent) { return null; }
+
+    @Override public void onDestroy() {
+        PowerManager.WakeLock held = wakeLock;
+        wakeLock = null;
+        if (held != null && held.isHeld()) try { held.release(); } catch (RuntimeException ignored) { }
+        super.onDestroy();
+    }
 }
