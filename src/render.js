@@ -154,6 +154,21 @@ function reasoningChoiceField(session) {
         h('button', { type: 'button', class: `choice-option${value === (session.reasoningEffort || 'default') ? ' selected' : ''}`, dataset: { action: 'session-reasoning-set', sessionId: session.localSessionId, reasoningEffort: value }, text: display(value) }))));
 }
 
+function webChoiceField(session) {
+  const mode = ['off','auto','on'].includes(session.webMode) ? session.webMode : 'auto';
+  const labels = { off: '关闭', auto: '自动', on: '开启' };
+  const backend = String(session.effectiveWebBackend || '').trim();
+  return h('div', { class: 'choice-field web-choice', dataset: { choiceField: 'web' } },
+    h('button', { type: 'button', class: 'choice-trigger', disabled: !session.canConfigureTurn,
+      title: backend ? `当前联网后端：${backend}` : '联网模式', dataset: { action: 'toggle-choice', choice: 'web' },
+      'aria-expanded': 'false', text: `联网 · ${labels[mode]}` }),
+    h('div', { class: 'choice-menu', dataset: { choiceMenu: 'web' } },
+      h('div', { class: 'choice-menu-title', text: backend ? `联网模式 · ${backend}` : '联网模式' }),
+      ['off','auto','on'].map((value) =>
+        h('button', { type: 'button', class: `choice-option${value === mode ? ' selected' : ''}`,
+          dataset: { action: 'session-web-set', sessionId: session.localSessionId, webMode: value }, text: labels[value] }))));
+}
+
 function turnPromptPreview(item) {
   let text = String(item?.text || '').replace(/\s+/g, ' ').trim();
   if (!text && (item?.attachments || []).some((attachment) => attachment?.kind === 'image')) text = '图片消息';
