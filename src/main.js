@@ -2,7 +2,7 @@ import { bindHost, postIntent } from './bridge.js';
 import { createRenderGate } from './render-gate.js';
 import { openConfirmDialog, openTextDialog, patchConversation, render, renderNotice, syncTurnNavigator } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
-import { getState, setNotice, setOptimisticReasoningEffort, setView, subscribe } from './state.js';
+import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
 
 const renderGate = createRenderGate(render);
 subscribe((_state, change) => {
