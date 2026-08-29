@@ -234,26 +234,78 @@ final class MoyuWebService implements AutoCloseable {
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) throw new IllegalArgumentException("search query is empty");
         if (q.length() > 4_000) q = q.substring(0, 4_000);
-        JSONObject body = new JSONObject().put("jsonrpc", "2.0").put("id", 1).put("method", "tools/call")
-                .put("params", new JSONObject().put("name", "web_search_exa")
-                        .put("arguments", new JSONObject().put("query", q).put("type", "auto")
-                                .put("numResults", 6).put("livecrawl", "fallback").put("contextMaxCharacters", MAX_SEARCH_CHARS)));
-        Request request = new Request.Builder().url(exaEndpoint)
+        return callExaTool("web_search_exa", new JSONObject().put("query", q).put("type", "auto")
+                .put("numResults", 6).put("livecrawl", "fallback").put("contextMaxCharacters", MAX_SEARCH_CHARS), callScope);
+    }
+
+    private String fetchExa(String url, CallScope callScope) throws Exception {
+        return callExaTool("web_fetch_exa", new JSONObject().put("urls", new JSONArray().put(url)), callScope);
+    }
+
+    /** Minimal Streamable-HTTP MCP lifecycle. Exa is an MCP server, not a raw JSON-RPC tool endpoint. */
+    private String callExaTool(String toolName, JSONObject arguments, CallScope callScope) throws Exception {
+        if (callScope.isCancelled()) throw new java.io.InterruptedIOException("cancelled");
+        JSONObject initialize = new JSONObject().put("jsonrpc", "2.0").put("id", 1).put("method", "initialize")
+                .put("params", new JSONObject().put("protocolVersion", "2025-06-18").put("capabilities", new JSONObject())
+                        .put("clientInfo", new JSONObject().put("name", "moyu-chat").put("version", "0.0.4")));
+        McpHttpResult initialized = postExaMcp(initialize, "", callScope, true);
+        String sessionId = initialized.sessionId;
+        JSONObject notification = new JSONObject().put("jsonrpc", "2.0").put("method", "notifications/initialized");
+        postExaMcp(notification, sessionId, callScope, false);
+        JSONObject toolCall = new JSONObject().put("jsonrpc", "2.0").put("id", 2).put("method", "tools/call")
+                .put("params", new JSONObject().put("name", toolName).put("arguments", arguments == null ? new JSONObject() : arguments));
+        McpHttpResult result = postExaMcp(toolCall, sessionId, callScope, true);
+        String parsed = parseMcpText(result.body);
+        if (parsed == null || parsed.trim().isEmpty()) {
+            String rpcError = parseMcpError(result.body);
+            throw new IllegalStateException(rpcError.isEmpty() ? "Exa response did not contain tool text" : rpcError);
+        }
+        return parsed;
+    }
+
+    private McpHttpResult postExaMcp(JSONObject body, String sessionId, CallScope callScope, boolean readBody) throws Exception {
+        Request.Builder builder = new Request.Builder().url(exaEndpoint)
                 .header("Accept", "application/json, text/event-stream")
-                .post(RequestBody.create(JSON, body.toString())).build();
-        okhttp3.Call call = searchHttp.newCall(request);
+                .header("MCP-Protocol-Version", "2025-06-18")
+                .post(RequestBody.create(JSON, body.toString()));
+        if (sessionId != null && !sessionId.trim().isEmpty()) builder.header("Mcp-Session-Id", sessionId.trim());
+        okhttp3.Call call = searchHttp.newCall(builder.build());
         callScope.bind(call);
         if (callScope.isCancelled()) call.cancel();
         try (Response response = call.execute()) {
-            if (!response.isSuccessful()) throw new IllegalStateException("Exa HTTP " + response.code());
-            if (response.body() == null) throw new IllegalStateException("Exa returned an empty response");
-            String raw = new String(readBounded(response.body().byteStream(), MAX_HTTP_BYTES), StandardCharsets.UTF_8);
-            String parsed = parseMcpText(raw);
-            if (parsed == null) throw new IllegalStateException("Exa response did not contain tool text");
-            return parsed;
+            if (!response.isSuccessful()) throw new IllegalStateException("Exa MCP HTTP " + response.code());
+            String nextSessionId = response.header("Mcp-Session-Id", sessionId == null ? "" : sessionId);
+            String raw = "";
+            if (readBody && response.body() != null) raw = new String(readBounded(response.body().byteStream(), MAX_HTTP_BYTES), StandardCharsets.UTF_8);
+            return new McpHttpResult(raw, nextSessionId == null ? "" : nextSessionId);
         } finally {
             callScope.clear(call);
         }
+    }
+
+    private static String parseMcpError(String raw) {
+        if (raw == null) return "";
+        for (String candidate : mcpJsonCandidates(raw)) {
+            try {
+                JSONObject root = new JSONObject(candidate);
+                JSONObject error = root.optJSONObject("error");
+                if (error != null) return "Exa MCP error: " + error.optString("message", "unknown error");
+            } catch (Exception ignored) { }
+        }
+        return "";
+    }
+
+    private static List<String> mcpJsonCandidates(String raw) {
+        ArrayList<String> out = new ArrayList<>();
+        String trimmed = raw == null ? "" : raw.trim();
+        if (trimmed.startsWith("{")) out.add(trimmed);
+        for (String line : (raw == null ? "" : raw).split("\\r?\\n")) {
+            if (line.startsWith("data:")) {
+                String value = line.substring(5).trim();
+                if (value.startsWith("{")) out.add(value);
+            }
+        }
+        return out;
     }
 
     static String parseMcpText(String raw) {
