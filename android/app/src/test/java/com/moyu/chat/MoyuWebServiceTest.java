@@ -152,6 +152,41 @@ public class MoyuWebServiceTest {
         }
     }
 
+    private static void installExaMcp(MockWebServer server, String toolText) {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+                try {
+                    String body = request.getBody().clone().readUtf8();
+                    if (body.contains("\"method\":\"initialize\"")) {
+                        return new MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json")
+                                .addHeader("Mcp-Session-Id", "test-session")
+                                .setBody(new JSONObject().put("jsonrpc", "2.0").put("id", 1)
+                                        .put("result", new JSONObject().put("protocolVersion", "2025-06-18")
+                                                .put("capabilities", new JSONObject())
+                                                .put("serverInfo", new JSONObject().put("name", "exa-test").put("version", "1"))).toString());
+                    }
+                    if (body.contains("notifications/initialized")) return new MockResponse().setResponseCode(202);
+                    if (body.contains("\"method\":\"tools/call\"")) {
+                        return new MockResponse().setResponseCode(200).addHeader("Content-Type", "application/json")
+                                .setBody(exaResponse(toolText));
+                    }
+                    return new MockResponse().setResponseCode(400);
+                } catch (Exception error) {
+                    return new MockResponse().setResponseCode(500).setBody(error.toString());
+                }
+            }
+        });
+    }
+
+    private static RecordedRequest takeToolCall(MockWebServer server) throws Exception {
+        for (int i = 0; i < 3; i++) {
+            RecordedRequest request = server.takeRequest();
+            if (request.getBody().clone().readUtf8().contains("\"method\":\"tools/call\"")) return request;
+        }
+        fail("MCP tools/call request not observed");
+        return null;
+    }
+
     private static String exaResponse(String text) throws Exception {
         return new JSONObject().put("jsonrpc", "2.0").put("id", 1)
                 .put("result", new JSONObject().put("content", new org.json.JSONArray()
