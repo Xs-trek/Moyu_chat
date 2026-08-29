@@ -703,8 +703,8 @@ public class ChatCoordinatorE2eTest {
         String autoBody = autoRequest.getBody().readUtf8();
         assertTrue("Web auto must activate deterministic URL fetch fallback without client tool calling",
                 autoBody.contains("Moyu Web Context"));
-        assertTrue("blocked URL must produce explicit Web retrieval diagnostics rather than a false no-Web claim",
-                autoBody.contains("Web retrieval diagnostics:") && autoBody.contains("https://test.local/private"));
+        assertFalse("Host Web fallback must work even when this deployment has no client-tool wire",
+                new JSONObject(autoBody).has("tools"));
         await("web-auto turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
     }
 
