@@ -513,6 +513,15 @@ final class ChatCoordinator implements AutoCloseable {
         db.saveSession(session);
     }
 
+    /** Web mode is a durable future-turn session setting; it never changes model capability declarations. */
+    private void setSessionWebMode(String sessionId, String webMode) {
+        if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before changing Web mode");
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+        session.webMode = ChatTurnOptions.normalizeWebMode(webMode);
+        session.updatedAt = Instant.now().toString();
+        db.saveSession(session);
+    }
+
     /** System back follows the same route state as UI navigation; only home exits the Activity. */
     void handleSystemBack(Runnable exitApp) {
         worker.execute(() -> {
