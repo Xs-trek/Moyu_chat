@@ -293,6 +293,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.rename": renameSession(required(p, "localSessionId"), required(p, "title")); break;
                 case "chat.session.model.set": setSessionModel(required(p, "localSessionId"), required(p, "modelProfileId")); break;
                 case "chat.session.reasoning.set": setSessionReasoning(required(p, "localSessionId"), required(p, "reasoningEffort")); break;
+                case "chat.session.web.set": setSessionWebMode(required(p, "localSessionId"), required(p, "webMode")); break;
                 case "chat.session.send": {
                     final String sessionId = required(p, "localSessionId");
                     final String message = p.optString("text", "");
