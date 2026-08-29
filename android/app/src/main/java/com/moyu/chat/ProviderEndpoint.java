@@ -9,11 +9,16 @@ final class ProviderEndpoint {
 
     static String normalize(String raw) {
         String value = raw == null ? "" : raw.trim();
-        if (value.isEmpty() || value.length() > MAX_URL_CHARS) throw new IllegalArgumentException("invalid provider base URL");
+        if (value.isEmpty()) throw new IllegalArgumentException("Base URL 不能为空。请填写 API 根地址，例如 https://example.com/v1。");
+        if (value.length() > MAX_URL_CHARS) throw new IllegalArgumentException("Base URL 过长，请检查是否误粘贴了请求路径、参数或其它内容。");
         HttpUrl url = HttpUrl.parse(value);
-        if (url == null || url.host().isEmpty() || !allowedScheme(url)) throw new IllegalArgumentException("provider base URL must use HTTPS (HTTP is only allowed for loopback local model servers)");
-        if (!url.username().isEmpty() || !url.password().isEmpty() || url.query() != null || url.fragment() != null) {
-            throw new IllegalArgumentException("provider base URL must not contain credentials, query, or fragment");
+        if (url == null || url.host().isEmpty()) throw new IllegalArgumentException("Base URL 格式无效。请填写完整地址，例如 https://example.com/v1。");
+        if (!allowedScheme(url)) throw new IllegalArgumentException("Base URL 必须使用 HTTPS；仅 localhost / 127.0.0.1 / ::1 本地模型服务允许 HTTP。");
+        if (!url.username().isEmpty() || !url.password().isEmpty()) {
+            throw new IllegalArgumentException("Base URL 不应包含用户名或密码；API Key 请填写在独立的 API Key 字段。");
+        }
+        if (url.query() != null || url.fragment() != null) {
+            throw new IllegalArgumentException("Base URL 必须是 API 根地址，不能包含 ?query 或 #fragment。");
         }
         String normalized = url.toString();
         while (normalized.endsWith("/") && normalized.length() > HTTPS_PREFIX.length()) normalized = normalized.substring(0, normalized.length() - 1);
