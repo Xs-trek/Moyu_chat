@@ -144,7 +144,7 @@ final class MoyuWebService implements AutoCloseable {
         String input = userText == null ? "" : userText;
         List<String> urls = extractUrls(input);
         boolean followUpHint = followUp.previousTurnUsedWeb && FOLLOW_UP_HINT.matcher(input).find();
-        boolean fetchFollowUp = followUp.previousTurnUsedWeb && urls.isEmpty()
+        boolean fetchFollowUp = followUp.previousTurnUsedWeb && followUp.sources.length() > 0 && urls.isEmpty()
                 && FETCH_FOLLOW_UP_HINT.matcher(input).find();
         if (fetchFollowUp) {
             for (int i = 0; i < followUp.sources.length() && urls.size() < MAX_URLS; i++) {
