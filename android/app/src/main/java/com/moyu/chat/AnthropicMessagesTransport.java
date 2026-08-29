@@ -32,7 +32,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             .retryOnConnectionFailure(false)
             .connectTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .callTimeout(30, TimeUnit.MINUTES)
             .build();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
