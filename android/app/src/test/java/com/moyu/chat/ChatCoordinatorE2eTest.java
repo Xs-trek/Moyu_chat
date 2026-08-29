@@ -802,7 +802,11 @@ public class ChatCoordinatorE2eTest {
         assertTrue(usage.has("requestDurationMs")); assertTrue(usage.has("outputTokensPerSecond"));
         assertFalse("reasoning display defaults off", latestView().optJSONObject("ui").optBoolean("showReasoning"));
         post("chat.reasoning.visibility.set", new JSONObject().put("show", true));
-        await("reasoning visibility toggled", () -> latestView().optJSONObject("ui").optBoolean("showReasoning"));
+        await("reasoning visibility enabled", () -> latestView().optJSONObject("ui").optBoolean("showReasoning"));
+        post("chat.reasoning.visibility.set", new JSONObject().put("show", false));
+        await("reasoning visibility disabled", () -> !latestView().optJSONObject("ui").optBoolean("showReasoning"));
+        post("chat.reasoning.visibility.set", new JSONObject().put("show", true));
+        await("reasoning visibility can be enabled again", () -> latestView().optJSONObject("ui").optBoolean("showReasoning"));
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second"));
         RecordedRequest second = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(second);
