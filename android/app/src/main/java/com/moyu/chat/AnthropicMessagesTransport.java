@@ -222,6 +222,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         AnthropicContinuationCollector continuation = new AnthropicContinuationCollector(sink);
         AnthropicClientToolCollector clientTools = new AnthropicClientToolCollector();
         try (Response response = call.execute()) {
+            responseStarted = true;
             if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return; }
             sink.onStage("connected");
             if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
