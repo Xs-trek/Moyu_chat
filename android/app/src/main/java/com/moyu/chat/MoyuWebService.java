@@ -61,6 +61,21 @@ final class MoyuWebService implements AutoCloseable {
     private static final Pattern FETCH_FOLLOW_UP_HINT = Pattern.compile(
             "(?i)(读一下|打开|原文|这个网页|那个网页|刚才.*(?:链接|来源|网页)|read (?:it|that|the source)|open (?:it|that|the source)|fetch (?:it|that|the source))");
 
+    static final class FollowUpContext {
+        final String previousUserText;
+        final JSONArray sources;
+        final boolean previousTurnUsedWeb;
+
+        FollowUpContext(String previousUserText, JSONArray sources, boolean previousTurnUsedWeb) {
+            this.previousUserText = previousUserText == null ? "" : previousUserText.trim();
+            try { this.sources = sources == null ? new JSONArray() : new JSONArray(sources.toString()); }
+            catch (Exception error) { throw new IllegalArgumentException("invalid previous Web sources"); }
+            this.previousTurnUsedWeb = previousTurnUsedWeb;
+        }
+
+        static FollowUpContext none() { return new FollowUpContext("", new JSONArray(), false); }
+    }
+
     static final class Prepared {
         final String promptSuffix;
         final JSONArray sources;
