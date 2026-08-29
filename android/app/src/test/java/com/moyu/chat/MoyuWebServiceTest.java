@@ -119,6 +119,27 @@ public class MoyuWebServiceTest {
         }
     }
 
+    @Test public void followUpWithoutPreviousSourceFallsBackToSearch() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            server.enqueue(new MockResponse().setResponseCode(200)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(exaResponse("Title: Recovered\nURL: https://example.com/recovered\nRecovered context")));
+            MoyuWebService.FollowUpContext previous = new MoyuWebService.FollowUpContext(
+                    "检索一个主题", new org.json.JSONArray(), true);
+            try (MoyuWebService web = new MoyuWebService(server.url("/mcp").toString())) {
+                MoyuWebService.Prepared prepared = web.prepare("打开刚才网页",
+                        new ChatTurnOptions("", "auto"), null, null, previous);
+                assertTrue(prepared.attempted);
+                assertEquals("Exa", prepared.backend);
+                assertEquals(1, server.getRequestCount());
+                String body = server.takeRequest().getBody().readUtf8();
+                assertTrue(body.contains("检索一个主题"));
+                assertTrue(body.contains("打开刚才网页"));
+            }
+        }
+    }
+
     @Test public void privateHttpsFetchIsRejectedWithoutNetworkAccess() {
         try (MoyuWebService web = new MoyuWebService("http://127.0.0.1:1/mcp")) {
             MoyuWebService.Prepared prepared = web.prepare(
