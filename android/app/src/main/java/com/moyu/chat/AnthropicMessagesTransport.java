@@ -217,6 +217,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     private void run(Call call, ChatTransport.Sink sink) {
         boolean sawData = false;
         boolean sawUnexpectedPayload = false;
+        boolean responseStarted = false;
         long lastSemantic = System.nanoTime();
         AnthropicContinuationCollector continuation = new AnthropicContinuationCollector(sink);
         AnthropicClientToolCollector clientTools = new AnthropicClientToolCollector();
