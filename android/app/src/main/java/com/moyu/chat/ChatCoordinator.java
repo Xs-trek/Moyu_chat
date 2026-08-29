@@ -1292,6 +1292,41 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception ignored) { return new JSONObject(); }
     }
 
+    /**
+     * Deterministic Web follow-up context comes only from the immediately preceding finalized
+     * assistant turn. The current accepted user + live assistant rows are ignored, and an intervening
+     * non-Web assistant deliberately breaks inheritance so old search state cannot revive later.
+     */
+    static MoyuWebService.FollowUpContext webFollowUpContext(JSONArray timeline) {
+        if (timeline == null || timeline.length() == 0) return MoyuWebService.FollowUpContext.none();
+        JSONObject previousAssistant = null;
+        int assistantIndex = -1;
+        for (int i = timeline.length() - 1; i >= 0; i--) {
+            JSONObject item = timeline.optJSONObject(i);
+            if (item == null || !"message".equals(item.optString("kind", ""))) continue;
+            if (!"assistant".equals(item.optString("role", "")) || item.optBoolean("streaming", false)) continue;
+            previousAssistant = item;
+            assistantIndex = i;
+            break;
+        }
+        if (previousAssistant == null) return MoyuWebService.FollowUpContext.none();
+        JSONArray sources = previousAssistant.optJSONArray("sources");
+        String backend = previousAssistant.optString("webBackend", "").trim();
+        boolean usedWeb = (sources != null && sources.length() > 0) || !backend.isEmpty();
+        if (!usedWeb) return MoyuWebService.FollowUpContext.none();
+        String previousUserText = "";
+        for (int i = assistantIndex - 1; i >= 0; i--) {
+            JSONObject item = timeline.optJSONObject(i);
+            if (item == null || !"message".equals(item.optString("kind", "")) || item.optBoolean("streaming", false)) continue;
+            if ("user".equals(item.optString("role", ""))) {
+                previousUserText = item.optString("text", "");
+                break;
+            }
+        }
+        return new MoyuWebService.FollowUpContext(previousUserText,
+                sources == null ? new JSONArray() : sources, true);
+    }
+
     static boolean promptContainsLatestUserSuffix(CanonicalPrompt prompt, String suffix) {
         if (prompt == null || suffix == null || suffix.isEmpty()) return false;
         JSONArray messages = prompt.messages;
