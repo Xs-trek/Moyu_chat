@@ -409,6 +409,11 @@ final class MoyuWebService implements AutoCloseable {
             if (uri.getUserInfo() != null) throw new IllegalArgumentException("URL credentials are not allowed");
             String host = uri.getHost().toLowerCase(Locale.ROOT);
             if ("localhost".equals(host) || host.endsWith(".localhost") || host.endsWith(".local")) throw new IllegalArgumentException("local hosts are blocked");
+            String literal = host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
+            if (literal.indexOf(':') >= 0 || literal.matches("\\d{1,3}(?:\\.\\d{1,3}){3}")) {
+                InetAddress address = InetAddress.getByName(literal);
+                if (!isPublicAddress(address)) throw new IllegalArgumentException("non-public IP literals are blocked");
+            }
             return uri;
         } catch (IllegalArgumentException error) { throw error; }
         catch (Exception error) { throw new IllegalArgumentException("invalid HTTPS URL"); }
