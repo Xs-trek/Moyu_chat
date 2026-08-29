@@ -28,7 +28,7 @@ import okhttp3.Response;
 
 /**
  * Moyu-owned Web fallback for models without provider-native hosted Web capability.
- * Search uses Exa's public hosted MCP endpoint; direct URL fetch stays local and is SSRF-bounded.
+ * Search uses Exa's public hosted MCP endpoint; direct URL fetch is SSRF-bounded locally and may fall back to Exa Fetch for public URLs.
  * Raw Web payloads are ephemeral and are never written to the durable transcript.
  */
 final class MoyuWebService implements AutoCloseable {
