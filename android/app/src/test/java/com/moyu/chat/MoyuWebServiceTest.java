@@ -50,7 +50,8 @@ public class MoyuWebServiceTest {
                 assertEquals("Exa", on.backend);
                 assertEquals(1, on.sources.length());
                 assertEquals("web_search", stages.get(0));
-                RecordedRequest request = server.takeRequest();
+                assertEquals(3, server.getRequestCount());
+                RecordedRequest request = takeToolCall(server);
                 String body = request.getBody().readUtf8();
                 assertTrue(body.contains("web_search_exa"));
                 assertTrue(body.contains("\"numResults\":6"));
