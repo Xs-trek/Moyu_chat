@@ -170,10 +170,10 @@ final class MoyuWebService implements AutoCloseable {
                 if (callScope.isCancelled()) break;
                 String url = urls.get(i);
                 try {
-                    FetchResult result = fetch(url, callScope);
+                    FetchResult result = fetchResilient(url, callScope);
                     appendBounded(context, "\n\n[FETCH " + result.url + "]\n" + result.text, MAX_CONTEXT_CHARS);
-                    putSource(sources, result.url, result.title, "moyu-fetch");
-                    if (!backends.contains("Moyu Fetch")) backends.add("Moyu Fetch");
+                    putSource(sources, result.url, result.title, result.sourceBackend);
+                    if (!backends.contains(result.displayBackend)) backends.add(result.displayBackend);
                 } catch (Exception error) {
                     failures.add("Fetch failed for " + url + ": " + safe(error));
                 }
