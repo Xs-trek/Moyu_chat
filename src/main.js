@@ -384,10 +384,11 @@ document.addEventListener('submit', (event) => {
   clearTimeout(draftTimer);
   draftTimer = 0;
   advanceDraftGeneration(sessionId);
-  const reasoningEffort = getState().view?.activeSession?.localSessionId === sessionId
-    ? getState().view.activeSession.reasoningEffort
-    : undefined;
-  const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text, ...(reasoningEffort ? { reasoningEffort } : {}) });
+  const activeSession = getState().view?.activeSession?.localSessionId === sessionId ? getState().view.activeSession : null;
+  const reasoningEffort = activeSession?.reasoningEffort;
+  const webMode = activeSession?.webMode;
+  const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text,
+    ...(reasoningEffort ? { reasoningEffort } : {}), ...(webMode ? { webMode } : {}) });
   if (requestId && input) {
     input.value = '';
     resizeComposerTextarea(input);
