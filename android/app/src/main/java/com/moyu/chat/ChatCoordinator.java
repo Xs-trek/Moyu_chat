@@ -297,7 +297,10 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.send": {
                     final String sessionId = required(p, "localSessionId");
                     final String message = p.optString("text", "");
-                    if (sessionBusy(sessionId)) throw new IllegalStateException("session busy");
+                    if (sessionBusy(sessionId)) {
+                        if (!message.trim().isEmpty()) db.setDraft(sessionId, message);
+                        throw new IllegalStateException("session busy; message kept as next draft");
+                    }
                     if (message.trim().isEmpty() && db.draftMedia(sessionId).length() == 0) break;
                     // Send is self-contained with respect to the visible turn setting. A preceding
                     // reasoning.set bridge message is still persisted normally, but Send must not rely
