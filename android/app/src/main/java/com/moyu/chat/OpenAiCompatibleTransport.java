@@ -555,10 +555,11 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
 
     private static String refusalEventKey(JSONObject event) {
         String itemId = event == null ? "" : event.optString("item_id", "").trim();
-        if (!itemId.isEmpty()) return "refusal:item:" + itemId;
         int outputIndex = event == null ? -1 : event.optInt("output_index", -1);
         int contentIndex = event == null ? -1 : event.optInt("content_index", -1);
-        return "refusal:index:" + outputIndex + ":" + contentIndex;
+        return itemId.isEmpty()
+                ? "refusal:index:" + outputIndex + ":" + contentIndex
+                : "refusal:item:" + itemId + ":" + contentIndex;
     }
 
     private static void emitResponseRefusals(JSONObject response, ChatTransport.Sink sink, Set<String> emitted) {
