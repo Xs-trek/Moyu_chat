@@ -52,13 +52,31 @@ final class ContextBudgetManager {
         return selectWithinBudget(instructions, chronological, budget);
     }
 
-    /** Select against a percentage of the effective input window. Mandatory floor still applies. */
+    /**
+     * Select against an approximate percentage of the effective input window. The target is soft:
+     * the newest complete user-led turn is mandatory and may exceed the percentage as long as it
+     * still fits the real input window. Compaction must never reject an otherwise valid current turn.
+     */
     Result selectPercent(String instructions, JSONArray chronological, int contextTokens, int inputTokens,
                          int outputTokens, int percent) {
         int full = effectiveInputBudget(contextTokens, inputTokens, outputTokens);
         int bounded = Math.max(1, Math.min(100, percent));
         int target = Math.max(MIN_INPUT_BUDGET, (int) Math.floor(full * (bounded / 100.0d)));
-        return selectWithinBudget(instructions, chronological, target);
+        int mandatory = minimumLatestTurnBudget(instructions, chronological);
+        int softTarget = Math.min(full, Math.max(target, mandatory));
+        return selectWithinBudget(instructions, chronological, softTarget);
+    }
+
+    private int minimumLatestTurnBudget(String instructions, JSONArray chronological) {
+        int required = estimate(instructions) + MESSAGE_OVERHEAD_TOKENS;
+        ArrayList<ArrayList<JSONObject>> groups = groupTurns(chronological);
+        for (int i = groups.size() - 1; i >= 0; i--) {
+            ArrayList<JSONObject> group = groups.get(i);
+            if (group.isEmpty() || !"user".equals(group.get(0).optString("role"))) continue;
+            for (JSONObject item : group) required += messageCost(item);
+            break;
+        }
+        return required;
     }
 
     /** True when the supplied raw active context has crossed a percentage of the usable input window. */
