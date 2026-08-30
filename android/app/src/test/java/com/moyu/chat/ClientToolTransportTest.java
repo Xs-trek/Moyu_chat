@@ -116,7 +116,10 @@ public class ClientToolTransportTest {
         assertEquals("https://example.com", sink.calls.getJSONObject(0).getJSONObject("arguments").optString("url"));
         JSONObject tool = requestBody().getJSONArray("tools").getJSONObject(0);
         assertEquals("web_fetch", tool.optString("name"));
-        assertEquals("object", tool.getJSONObject("input_schema").optString("type"));
+        assertTrue(tool.optBoolean("strict"));
+        JSONObject inputSchema = tool.getJSONObject("input_schema");
+        assertEquals("object", inputSchema.optString("type"));
+        assertEquals("^https://[^\\s]+$", inputSchema.getJSONObject("properties").getJSONObject("url").optString("pattern"));
     }
 
     @Test public void responsesSecondRoundReplaysExactReasoningAndFunctionCallBeforeToolOutput() throws Exception {
