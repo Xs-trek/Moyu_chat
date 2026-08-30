@@ -503,12 +503,10 @@ final class ChatCoordinator implements AutoCloseable {
     private void setSessionReasoning(String sessionId, String effort) {
         if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before changing reasoning effort");
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
-        ChatDatabase.ModelProfile profile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
-        if (profile == null) throw new IllegalStateException("model profile not found");
         ChatDatabase.Provider provider = db.getProvider(session.providerId);
         if (provider == null) throw new IllegalStateException("provider not found");
         String normalized = ReasoningPolicy.normalizeEffort(effort);
-        ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, session), profile.reasoningLevels, normalized);
+        ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, session), session.reasoningLevels, normalized);
         session.reasoningEffort = normalized;
         session.updatedAt = Instant.now().toString();
         db.saveSession(session);
