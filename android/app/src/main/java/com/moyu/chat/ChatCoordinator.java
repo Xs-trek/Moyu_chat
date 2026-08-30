@@ -488,12 +488,13 @@ final class ChatCoordinator implements AutoCloseable {
         session.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
         session.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
         session.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
+        session.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
         session.subagentMode = ContextMode.MINIMAL.equals(ContextMode.normalize(session.contextMode)) ? HarnessPolicyResolver.SUBAGENT_OFF
                 : ContextMode.SMART.equals(ContextMode.normalize(session.contextMode)) ? HarnessPolicyResolver.SUBAGENT_AUTO
                 : standardSubagentMode;
-        ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, session), profile.reasoningLevels);
+        ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, session), session.reasoningLevels);
         String previousEffort = ReasoningPolicy.normalizeEffort(session.reasoningEffort);
-        session.reasoningEffort = ReasoningPolicy.allows(profile.reasoningLevels, previousEffort) ? previousEffort : ReasoningPolicy.DEFAULT;
+        session.reasoningEffort = ReasoningPolicy.allows(session.reasoningLevels, previousEffort) ? previousEffort : ReasoningPolicy.DEFAULT;
         session.updatedAt = Instant.now().toString();
         db.saveSession(session);
     }
