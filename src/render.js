@@ -260,6 +260,7 @@ function conversation(view) {
       h('span', { class: `badge good conversation-busy${busyLabel ? '' : ' is-hidden'}`, text: busyLabel || '' }),
       button('重命名', 'rename-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn ghost small icon-action'),
       h('button', { type: 'button', class: 'btn ghost small icon-action', dataset: { action: 'toggle-reasoning', show: view.ui?.showReasoning ? 'false' : 'true' }, 'aria-pressed': view.ui?.showReasoning ? 'true' : 'false', text: view.ui?.showReasoning ? '隐藏推理' : '显示推理' }),
+      h('button', { type: 'button', class: 'btn ghost small icon-action', disabled: !session.canConfigureTurn, title: '创建回传草稿', dataset: { action: 'handoff', sessionId: session.localSessionId }, text: '回传' }),
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn ghost small icon-action')),
     turnNavigator(session),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
