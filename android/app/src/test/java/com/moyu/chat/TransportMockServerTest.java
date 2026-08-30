@@ -264,6 +264,21 @@ public class TransportMockServerTest {
         assertTrue(body.optBoolean("stream"));
     }
 
+    @Test public void responsesRefusalIsVisibleInsteadOfBecomingEmptyOutput() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"response.refusal.delta\",\"item_id\":\"msg_refuse\",\"output_index\":0,\"content_index\":0,\"delta\":\"I cannot \"}\n\n" +
+                "data: {\"type\":\"response.refusal.delta\",\"item_id\":\"msg_refuse\",\"output_index\":0,\"content_index\":0,\"delta\":\"help with that.\"}\n\n" +
+                "data: {\"type\":\"response.refusal.done\",\"item_id\":\"msg_refuse\",\"output_index\":0,\"content_index\":0,\"refusal\":\"I cannot help with that.\"}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"msg_refuse\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"I cannot help with that.\"}]}]}}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "test-model", prompt("user", "unsafe request"), sink);
+        sink.awaitTerminal();
+        assertTrue(sink.completed);
+        assertNull(sink.errorCode);
+        assertEquals("I cannot help with that.", sink.text.toString());
+        assertEquals(1, sink.terminals.get());
+    }
+
     @Test public void responsesEncodesImageInputAsInputImagePart() throws Exception {
         server.enqueue(new MockResponse().setBody("data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
         RecordingSink sink = new RecordingSink();
