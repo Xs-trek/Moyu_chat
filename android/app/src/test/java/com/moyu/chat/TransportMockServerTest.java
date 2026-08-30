@@ -532,6 +532,21 @@ public class TransportMockServerTest {
         assertEquals(1, sink.terminals.get());
     }
 
+    @Test public void anthropicStopReasonStillWinsWhenCompatibleStreamOmitsMessageStop() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial eof\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":32}}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertEquals("partial eof", sink.text.toString());
+        assertEquals("response_incomplete", sink.errorCode);
+        assertFalse(sink.completed);
+        assertEquals(1, sink.terminals.get());
+    }
+
     @Test public void anthropicPauseTurnContinuesWithExactAssistantContent() throws Exception {
         server.enqueue(new MockResponse().setBody(
                 "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
