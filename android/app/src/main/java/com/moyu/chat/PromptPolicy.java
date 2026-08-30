@@ -39,6 +39,7 @@ final class PromptPolicy {
             if (!modules.isEmpty()) out.append("\n\nTask-adaptation policy selected by Moyu from a bounded task profile:").append(modules);
             if (ContextMode.resolve(session, snapshot).evidencePolicyEnabled) out.append(SMART_EVIDENCE);
         }
+        appendRuntimeMetadata(out);
         appendSnapshotPolicy(out, snapshot);
 
         ContextCheckpoint checkpoint = session == null ? null : ContextCheckpoint.fromStored(session.contextCheckpoint);
