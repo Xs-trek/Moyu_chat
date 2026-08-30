@@ -41,6 +41,7 @@ document.addEventListener('pointercancel', () => {
 }, true);
 document.addEventListener('compositionstart', () => renderGate.compositionStart(), true);
 document.addEventListener('compositionend', () => renderGate.compositionEnd(), true);
+document.addEventListener('selectionchange', () => renderGate.interactionEnded(), true);
 document.addEventListener('focusout', () => setTimeout(() => renderGate.interactionEnded(), 0), true);
 
 const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)');
