@@ -253,6 +253,20 @@ public class ChatDatabaseTest {
         upgraded.close();
     }
 
+    @Test public void upgradeFromV14FreezesReasoningLevelsIntoExistingSessions() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(14);
+        android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
+        raw.execSQL("UPDATE model_profiles SET reasoning_levels='low,high,xhigh' WHERE profile_id='legacy-p:default'");
+        raw.execSQL("UPDATE sessions SET reasoning_effort='xhigh' WHERE local_id='legacy-s'");
+        raw.close();
+        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
+        ChatDatabase.Session session = upgraded.getSession("legacy-s");
+        assertNotNull(session);
+        assertEquals("low,high,xhigh", session.reasoningLevels);
+        assertEquals("xhigh", session.reasoningEffort);
+        upgraded.close();
+    }
+
     @Test public void localBranchesInheritFrozenContextMode() {
         ChatDatabase.Provider provider = provider("p-mode"); db.saveProvider(provider);
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); assertNotNull(profile);
