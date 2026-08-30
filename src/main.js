@@ -385,6 +385,11 @@ document.addEventListener('submit', (event) => {
   draftTimer = 0;
   advanceDraftGeneration(sessionId);
   const activeSession = getState().view?.activeSession?.localSessionId === sessionId ? getState().view.activeSession : null;
+  if (activeSession && !activeSession.canSend) {
+    postIntent('chat.session.saveDraft', { localSessionId: sessionId, text });
+    setNotice({ level: 'info', text: '当前回合仍在进行，内容已保留为下一条草稿' });
+    return;
+  }
   const reasoningEffort = activeSession?.reasoningEffort;
   const webMode = activeSession?.webMode;
   const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text,
