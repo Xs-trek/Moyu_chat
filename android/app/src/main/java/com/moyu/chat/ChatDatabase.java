@@ -199,6 +199,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE sessions ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
             db.execSQL("ALTER TABLE sessions ADD COLUMN subagent_mode TEXT NOT NULL DEFAULT 'off'");
         }
+        if (oldVersion < 15) {
+            // Reasoning capability range is part of the frozen deployment snapshot. Profile edits must
+            // not retroactively remove or grant effort levels to already-created sessions.
+            db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_levels TEXT NOT NULL DEFAULT ''");
+            db.execSQL("UPDATE sessions SET reasoning_levels=COALESCE((SELECT reasoning_levels FROM model_profiles WHERE profile_id=sessions.model_profile_id),'')");
+        }
     }
 
     public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
