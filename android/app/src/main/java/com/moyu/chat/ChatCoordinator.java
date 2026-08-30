@@ -1440,7 +1440,7 @@ final class ChatCoordinator implements AutoCloseable {
 
     private void createLocalBranch(String sourceSessionId, Integer throughSeq) throws Exception {
         ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
-        if (activeTurns.containsKey(sourceSessionId)) throw new IllegalStateException("interrupt the current turn before branching");
+        if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching");
         ChatDatabase.Snapshot snapshot = snapshots.createLocal(sourceSessionId, throughSeq);
         ChatDatabase.Session branch = db.branchSession(source, "分支 · " + source.title, snapshot.id, sourceSessionId);
         activate(branch.id);
