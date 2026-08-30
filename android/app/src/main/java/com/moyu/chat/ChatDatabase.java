@@ -289,6 +289,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.harnessPreset = HarnessProfile.normalize(source.harnessPreset);
         s.clientToolCalling = ClientToolRuntime.normalizeCalling(source.clientToolCalling);
         s.subagentMode = HarnessPolicyResolver.normalizeSubagentMode(source.subagentMode);
+        s.reasoningLevels = ReasoningPolicy.normalizeLevels(source.reasoningLevels);
         s.reasoningEffort = source.reasoningEffort == null ? ReasoningPolicy.DEFAULT : source.reasoningEffort;
         s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.draft = ""; s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId;
