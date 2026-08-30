@@ -65,7 +65,7 @@ final class ChatCoordinator implements AutoCloseable {
             this.contextTokens = session.contextTokens;
             this.inputTokens = session.inputTokens;
             this.maxOutputTokens = session.maxOutputTokens;
-            this.reasoningAvailable = profile != null && !ReasoningPolicy.normalizeLevels(profile.reasoningLevels).isEmpty();
+            this.reasoningAvailable = !ReasoningPolicy.normalizeLevels(session.reasoningLevels).isEmpty();
         }
     }
 
