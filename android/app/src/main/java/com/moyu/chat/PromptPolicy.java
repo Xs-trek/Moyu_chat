@@ -83,6 +83,20 @@ final class PromptPolicy {
         return out.toString();
     }
 
+    static String runtimeMetadata(ZonedDateTime now) {
+        ZonedDateTime local = now == null ? ZonedDateTime.now() : now;
+        String offset = local.getOffset().getId();
+        if ("Z".equals(offset)) offset = "+00:00";
+        return "\n\nMoyu trusted runtime metadata:\n"
+                + "Current local date: " + local.toLocalDate() + "\n"
+                + "Device timezone: " + local.getZone().getId() + " (UTC" + offset + ")\n"
+                + "Interpret relative dates such as today, yesterday, and tomorrow using this local date unless the user specifies another timezone.";
+    }
+
+    private static void appendRuntimeMetadata(StringBuilder out) {
+        out.append(runtimeMetadata(ZonedDateTime.now()));
+    }
+
     private static void appendSnapshotPolicy(StringBuilder out, ChatDatabase.Snapshot snapshot) {
         if (snapshot == null) return;
         if (snapshot.sourceType == null || snapshot.sourceType.trim().isEmpty() || "remote".equals(snapshot.sourceType)
