@@ -66,13 +66,10 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             applyHostedTools(body, turnOptions);
             applyClientTools(body, turnOptions);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
-            Request.Builder builder = new Request.Builder().url(base + "/messages")
-                    .header("anthropic-version", "2023-06-01")
-                    .header("Accept", "text/event-stream")
-                    .post(RequestBody.create(JSON, body.toString()));
-            ProviderAuth.apply(builder, provider.authMode, provider.protocol, apiKey);
-            Request request = builder.build();
-            Call call = http.newCall(request); executor.execute(() -> run(call, guarded)); return call::cancel;
+            MultiCallTurn turn = new MultiCallTurn();
+            JSONObject requestBody = new JSONObject(body.toString());
+            executor.execute(() -> run(base + "/messages", provider, apiKey, requestBody, guarded, turn));
+            return turn;
         } catch (Exception error) { guarded.onError("bad_provider_config", safe(error), false); return () -> {}; }
     }
 
