@@ -303,8 +303,9 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 ProviderAuth.apply(builder, provider.authMode, provider.protocol, apiKey);
                 call = http.newCall(builder.build());
                 turn.bind(call);
-                AnthropicRoundResult round = runRound(call, sink);
+                AnthropicRoundResult round = runRound(call, usageSink);
                 if (round == null) return; // transport/protocol error was already emitted.
+                usageSink.commitRound();
                 emitContinuationBlocks(round.assistantContent, sink);
                 String reason = round.stopReason;
                 if ("pause_turn".equals(reason)) {
