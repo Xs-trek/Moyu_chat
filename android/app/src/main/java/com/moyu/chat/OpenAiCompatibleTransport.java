@@ -553,6 +553,32 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         } catch (Exception ignored) { }
     }
 
+    private static String refusalEventKey(JSONObject event) {
+        String itemId = event == null ? "" : event.optString("item_id", "").trim();
+        if (!itemId.isEmpty()) return "refusal:item:" + itemId;
+        int outputIndex = event == null ? -1 : event.optInt("output_index", -1);
+        int contentIndex = event == null ? -1 : event.optInt("content_index", -1);
+        return "refusal:index:" + outputIndex + ":" + contentIndex;
+    }
+
+    private static void emitResponseRefusals(JSONObject response, ChatTransport.Sink sink, Set<String> emitted) {
+        JSONArray output = response == null ? null : response.optJSONArray("output"); if (output == null) return;
+        for (int i = 0; i < output.length(); i++) emitRefusalItem(output.optJSONObject(i), sink, emitted);
+    }
+
+    private static void emitRefusalItem(JSONObject item, ChatTransport.Sink sink, Set<String> emitted) {
+        if (item == null || !"message".equals(item.optString("type", ""))) return;
+        String itemId = item.optString("id", "").trim();
+        JSONArray content = item.optJSONArray("content"); if (content == null) return;
+        for (int i = 0; i < content.length(); i++) {
+            JSONObject part = content.optJSONObject(i); if (part == null || !"refusal".equals(part.optString("type", ""))) continue;
+            String refusal = part.optString("refusal", ""); if (refusal.isEmpty()) continue;
+            String key = itemId.isEmpty() ? "refusal:text:" + Integer.toHexString(refusal.hashCode()) : "refusal:item:" + itemId;
+            if (emitted != null && !emitted.add(key)) continue;
+            sink.onStage("output"); sink.onTextDelta(refusal);
+        }
+    }
+
     private static void emitResponseImages(JSONObject response, ChatTransport.Sink sink, Set<String> emittedImages) {
         JSONArray output = response == null ? null : response.optJSONArray("output"); if (output == null) return;
         for (int i = 0; i < output.length(); i++) emitImageItem(output.optJSONObject(i), sink, emittedImages);
