@@ -148,6 +148,24 @@ public class MoyuWebServiceTest {
         }
     }
 
+    @Test public void fallbackFetchExtractsOnlyExplicitUrlFromNaturalLanguagePrompt() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            installExaMcp(server, "Fetched exact URL");
+            try (MoyuWebService web = new MoyuWebService(server.url("/mcp").toString())) {
+                MoyuWebService.Prepared prepared = web.prepare(
+                        "请抓取 https://does-not-exist.invalid/page 并总结内容", new ChatTurnOptions("", "auto"), null);
+                assertTrue(prepared.attempted);
+                assertTrue(prepared.hasContext());
+                RecordedRequest toolCall = takeToolCall(server);
+                String body = toolCall.getBody().readUtf8();
+                assertTrue(body.contains("https://does-not-exist.invalid/page"));
+                assertFalse("free-form user prompt must never become the fetch URL argument", body.contains("请抓取"));
+                assertFalse(body.contains("并总结内容"));
+            }
+        }
+    }
+
     @Test public void publicUrlLocalFailureFallsBackToExaFetchWithRealMcpHandshake() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
