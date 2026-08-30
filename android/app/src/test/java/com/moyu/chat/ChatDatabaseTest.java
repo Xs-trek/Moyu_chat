@@ -296,7 +296,7 @@ public class ChatDatabaseTest {
         assertEquals(ProviderAuth.BEARER, session.authMode);
         assertEquals(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, session.reasoningWire);
 
-        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; second.inputModalities = "text";
+        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; second.reasoningLevels = "low"; second.inputModalities = "text";
         second.protocol = OpenAiCompatibleTransport.RESPONSES; second.authMode = ProviderAuth.API_KEY;
         second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES; db.saveModelProfile(second);
         ChatDatabase.Session reloaded = db.getSession(session.id);
