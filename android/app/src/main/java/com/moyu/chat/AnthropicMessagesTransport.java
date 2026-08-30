@@ -291,9 +291,11 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     private void run(String endpoint, ChatDatabase.Provider provider, String apiKey, JSONObject body,
                      ChatTransport.Sink sink, MultiCallTurn turn) {
         int pauseContinuations = 0;
+        UsageAccumulatingSink usageSink = new UsageAccumulatingSink(sink);
         while (!turn.isCancelled()) {
             Call call = null;
             try {
+                usageSink.startRound();
                 Request.Builder builder = new Request.Builder().url(endpoint)
                         .header("anthropic-version", "2023-06-01")
                         .header("Accept", "text/event-stream")
