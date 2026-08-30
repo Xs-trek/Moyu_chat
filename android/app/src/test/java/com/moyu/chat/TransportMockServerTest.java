@@ -279,6 +279,18 @@ public class TransportMockServerTest {
         assertEquals(1, sink.terminals.get());
     }
 
+    @Test public void responsesCompletedOnlyKeepsMultipleRefusalContentParts() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"msg_multi_refuse\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"First refusal. \"},{\"type\":\"refusal\",\"refusal\":\"Second refusal.\"}]}]}}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "test-key", "test-model", prompt("user", "unsafe request"), sink);
+        sink.awaitTerminal();
+        assertTrue(sink.completed);
+        assertNull(sink.errorCode);
+        assertEquals("First refusal. Second refusal.", sink.text.toString());
+        assertEquals(1, sink.terminals.get());
+    }
+
     @Test public void responsesEncodesImageInputAsInputImagePart() throws Exception {
         server.enqueue(new MockResponse().setBody("data: {\"type\":\"response.completed\",\"response\":{}}\n\n"));
         RecordingSink sink = new RecordingSink();
