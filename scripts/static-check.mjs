@@ -143,7 +143,9 @@ for (const [name, transport] of [['OpenAI', openAiTransport], ['Anthropic', anth
   if (!transport.includes('stream_stalled') || !transport.includes('stream_timeout')) fail(`${name} streaming transport lacks bounded stall/timeout terminal mapping`);
 }
 if (!openAiTransport.includes('static boolean parseResponses(')) fail('Responses terminal events must signal the HTTP reader to exit');
+if (!openAiTransport.includes('response.refusal.delta') || !openAiTransport.includes('response.refusal.done') || !openAiTransport.includes('emitResponseRefusals(') || !openAiTransport.includes('contentIndex')) fail('Responses refusal content must remain visible and deduplicated per content part');
 if (!anthropicTransport.includes('static boolean parse(')) fail('Anthropic terminal events must signal the HTTP reader to exit');
+if (!anthropicTransport.includes('MAX_PAUSE_TURN_CONTINUATIONS = 4') || !anthropicTransport.includes('UsageAccumulatingSink') || !anthropicTransport.includes('stop_reason') || !anthropicTransport.includes('model_context_window_exceeded') || !anthropicTransport.includes('if (!stopState.reason.isEmpty())')) fail('Anthropic stop_reason, bounded pause_turn continuation, cumulative usage, and EOF terminal semantics must remain enforced');
 if (!openAiTransport.includes('.fastFallback(true)')) fail('OpenAI-compatible transport must retain fast IPv6/IPv4 fallback');
 
 const registry = read('android/app/src/main/java/com/moyu/chat/ChatTransportRegistry.java');
