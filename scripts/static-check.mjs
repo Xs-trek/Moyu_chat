@@ -112,6 +112,7 @@ if (!checkpointService.includes('Treat the supplied conversation and previous ch
 
 const contextBudget = read('android/app/src/main/java/com/moyu/chat/ContextBudgetManager.java');
 if (!contextBudget.includes('groupTurns(') || !contextBudget.includes('user-led turns')) fail('v0.0.2 context budget must select complete user-led turns');
+if (!contextBudget.includes('minimumLatestTurnBudget(') || !contextBudget.includes('softTarget = Math.min(full, Math.max(target, mandatory))')) fail('percentage compaction targets must remain soft and never reject a current turn that fits the real input window');
 const contextBuilder = read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java');
 const terminalSink = read('android/app/src/main/java/com/moyu/chat/TerminalSink.java');
 const turnOptions = read('android/app/src/main/java/com/moyu/chat/ChatTurnOptions.java');
