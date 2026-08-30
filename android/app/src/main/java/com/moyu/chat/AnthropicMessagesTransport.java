@@ -579,7 +579,8 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             }
         }
 
-        void flush() {
+        JSONArray drain() {
+            JSONArray out = new JSONArray();
             try {
                 java.util.Set<String> serverToolIds = new java.util.HashSet<>();
                 for (JSONObject block : completed.values()) {
@@ -591,12 +592,14 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                     String type = block.optString("type", "");
                     if (("web_search_tool_result".equals(type) || "web_fetch_tool_result".equals(type))
                             && !serverToolIds.contains(block.optString("tool_use_id", ""))) continue;
-                    sink.onProviderContinuation(new JSONObject().put("protocol", PROTOCOL)
-                            .put("item", new JSONObject(block.toString())));
+                    out.put(new JSONObject(block.toString()));
                 }
             } catch (Exception ignored) { }
             completed.clear(); blocks.clear(); inputJson.clear();
+            return out;
         }
+
+        void flush() { emitContinuationBlocks(drain(), sink); }
     }
 
     private static void collectWebSources(Object value, ChatTransport.Sink sink) {
