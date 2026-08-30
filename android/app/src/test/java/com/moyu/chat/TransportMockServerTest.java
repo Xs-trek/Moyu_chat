@@ -503,6 +503,55 @@ public class TransportMockServerTest {
         assertTrue(body.optBoolean("stream"));
     }
 
+    @Test public void anthropicMaxTokensPreservesPartialTextButMarksTurnIncomplete() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial answer\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":64}}\n\n" +
+                "data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertEquals("partial answer", sink.text.toString());
+        assertEquals("response_incomplete", sink.errorCode);
+        assertFalse(sink.completed);
+        assertTrue(sink.errorSummary.contains("max_tokens"));
+        assertEquals(1, sink.terminals.get());
+    }
+
+    @Test public void anthropicPauseTurnContinuesWithExactAssistantContent() throws Exception {
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"working\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"pause_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":8}}\n\n" +
+                "data: {\"type\":\"message_stop\"}\n\n"));
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" done\"}}\n\n" +
+                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":12}}\n\n" +
+                "data: {\"type\":\"message_stop\"}\n\n"));
+        RecordingSink sink = new RecordingSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertTrue(sink.completed);
+        assertNull(sink.errorCode);
+        assertEquals("working done", sink.text.toString());
+        RecordedRequest first = server.takeRequest(10, TimeUnit.SECONDS);
+        RecordedRequest second = server.takeRequest(10, TimeUnit.SECONDS);
+        assertNotNull(first); assertNotNull(second);
+        JSONArray continuedMessages = new JSONObject(second.getBody().readUtf8()).getJSONArray("messages");
+        JSONObject pausedAssistant = continuedMessages.getJSONObject(continuedMessages.length() - 1);
+        assertEquals("assistant", pausedAssistant.optString("role"));
+        JSONArray content = pausedAssistant.getJSONArray("content");
+        assertEquals(1, content.length());
+        assertEquals("text", content.getJSONObject(0).optString("type"));
+        assertEquals("working", content.getJSONObject(0).optString("text"));
+        assertEquals(1, sink.terminals.get());
+    }
+
     @Test public void anthropicMessageStopSignalsReaderExit() throws Exception {
         RecordingSink sink = new RecordingSink();
         assertTrue(AnthropicMessagesTransport.parse(new JSONObject("{\"type\":\"message_stop\"}"), sink));
