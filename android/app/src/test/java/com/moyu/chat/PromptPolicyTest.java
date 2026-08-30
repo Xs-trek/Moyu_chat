@@ -4,6 +4,9 @@ import static org.junit.Assert.*;
 
 import org.junit.Test;
 
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+
 /** Stable instruction prefix + snapshot boundary + truncation disclosure. */
 public class PromptPolicyTest {
     private final PromptPolicy policy = new PromptPolicy();
