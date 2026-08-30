@@ -38,4 +38,14 @@ public class PromptPolicyTest {
         snapshot.truncated = true;
         assertTrue(policy.instructions(snapshot, false).contains("bounded recent tail"));
     }
+
+    @Test
+    public void trustedRuntimeMetadataProvidesLocalDateAndTimezone() {
+        ZonedDateTime fixed = ZonedDateTime.of(2026, 8, 30, 23, 18, 0, 0, ZoneId.of("Asia/Singapore"));
+        String metadata = PromptPolicy.runtimeMetadata(fixed);
+        assertTrue(metadata.contains("Moyu trusted runtime metadata"));
+        assertTrue(metadata.contains("Current local date: 2026-08-30"));
+        assertTrue(metadata.contains("Device timezone: Asia/Singapore (UTC+08:00)"));
+        assertTrue(metadata.contains("today, yesterday, and tomorrow"));
+    }
 }
