@@ -41,6 +41,53 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         }
     }
 
+    /**
+     * pause_turn is one logical provider round implemented by multiple HTTP requests. Coordinator
+     * treats repeated usage callbacks within a provider round as cumulative updates, so expose
+     * completed-request totals + the current request instead of resetting usage on each continuation.
+     */
+    private static final class UsageAccumulatingSink implements ChatTransport.Sink {
+        private final ChatTransport.Sink delegate;
+        private int completedInput, completedOutput, completedCached, completedCacheWrite, completedCacheBase, completedReasoning;
+        private int roundInput, roundOutput, roundCached, roundCacheWrite, roundCacheBase, roundReasoning;
+        UsageAccumulatingSink(ChatTransport.Sink delegate) { this.delegate = delegate; }
+        void startRound() { roundInput = roundOutput = roundCached = roundCacheWrite = roundCacheBase = roundReasoning = 0; }
+        void commitRound() {
+            completedInput += roundInput; completedOutput += roundOutput; completedCached += roundCached;
+            completedCacheWrite += roundCacheWrite; completedCacheBase += roundCacheBase; completedReasoning += roundReasoning;
+            startRound();
+        }
+        private static Integer present(int value) { return value > 0 ? value : null; }
+        private void emitUsage() {
+            delegate.onUsageDetails(present(completedInput + roundInput), present(completedOutput + roundOutput),
+                    present(completedCached + roundCached), present(completedCacheWrite + roundCacheWrite),
+                    present(completedCacheBase + roundCacheBase), present(completedReasoning + roundReasoning));
+        }
+        @Override public void onStage(String stage) { delegate.onStage(stage); }
+        @Override public void onReasoningDelta(String delta) { delegate.onReasoningDelta(delta); }
+        @Override public void onProviderContinuation(JSONObject state) { delegate.onProviderContinuation(state); }
+        @Override public void onTextDelta(String delta) { delegate.onTextDelta(delta); }
+        @Override public void onImage(String mimeType, String base64, String fileName) { delegate.onImage(mimeType, base64, fileName); }
+        @Override public void onToolActivity(String tool, String state) { delegate.onToolActivity(tool, state); }
+        @Override public void onWebSource(String url, String title) { delegate.onWebSource(url, title); }
+        @Override public void onClientToolBatch(JSONArray calls) { delegate.onClientToolBatch(calls); }
+        @Override public void onUsage(Integer inputTokens, Integer outputTokens) {
+            onUsageDetails(inputTokens, outputTokens, null, null, null, null);
+        }
+        @Override public void onUsageDetails(Integer inputTokens, Integer outputTokens, Integer cachedInputTokens,
+                                             Integer cacheWriteInputTokens, Integer cacheHitBaseTokens, Integer reasoningTokens) {
+            if (inputTokens != null) roundInput = Math.max(roundInput, Math.max(0, inputTokens));
+            if (outputTokens != null) roundOutput = Math.max(roundOutput, Math.max(0, outputTokens));
+            if (cachedInputTokens != null) roundCached = Math.max(roundCached, Math.max(0, cachedInputTokens));
+            if (cacheWriteInputTokens != null) roundCacheWrite = Math.max(roundCacheWrite, Math.max(0, cacheWriteInputTokens));
+            if (cacheHitBaseTokens != null) roundCacheBase = Math.max(roundCacheBase, Math.max(0, cacheHitBaseTokens));
+            if (reasoningTokens != null) roundReasoning = Math.max(roundReasoning, Math.max(0, reasoningTokens));
+            emitUsage();
+        }
+        @Override public void onCompleted() { delegate.onCompleted(); }
+        @Override public void onError(String code, String summary, boolean retryable) { delegate.onError(code, summary, retryable); }
+    }
+
     private final OkHttpClient http = new OkHttpClient.Builder()
             .fastFallback(true)
             .retryOnConnectionFailure(false)
