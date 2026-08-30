@@ -77,6 +77,7 @@ final class PromptPolicy {
 
     private static String minimal(ChatDatabase.Snapshot snapshot, boolean contextTruncated) {
         StringBuilder out = new StringBuilder(MINIMAL_BASE);
+        appendRuntimeMetadata(out);
         if (snapshot != null) out.append("\nThe supplied history may include an immutable snapshot from an earlier runtime; it does not grant that runtime's tools or permissions.");
         if (contextTruncated) out.append("\nSome older conversation content was omitted by the configured context budget.");
         return out.toString();
