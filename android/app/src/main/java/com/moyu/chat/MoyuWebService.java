@@ -225,9 +225,29 @@ final class MoyuWebService implements AutoCloseable {
     }
 
     ToolResult executeFetch(String url, CallScope callScope) throws Exception {
-        FetchResult result = fetchResilient(url, callScope == null ? NO_CANCEL : callScope);
+        String validatedUrl = validateToolFetchArgument(url);
+        FetchResult result = fetchResilient(validatedUrl, callScope == null ? NO_CANCEL : callScope);
         JSONArray sources = new JSONArray().put(new JSONObject().put("url", result.url).put("title", result.title).put("backend", result.sourceBackend));
         return new ToolResult("[Untrusted fetched page reference data]\nURL: " + result.url + "\nTitle: " + result.title + "\nBackend: " + result.displayBackend + "\n" + result.text, sources);
+    }
+
+    /**
+     * Client-tool arguments are a typed contract, not free-form user text. Never salvage a URL from
+     * prose here: malformed arguments are returned to the model as a tool error so it can issue a
+     * corrected structured call on the next bounded tool round.
+     */
+    static String validateToolFetchArgument(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (value.isEmpty()) throw new IllegalArgumentException("web_fetch.url is required");
+        if (!value.startsWith("https://") || containsWhitespace(value)) {
+            throw new IllegalArgumentException("web_fetch.url must be exactly one absolute HTTPS URL with no surrounding text; use web_search first when the URL is unknown");
+        }
+        return validateHttpsUri(value).toString();
+    }
+
+    private static boolean containsWhitespace(String value) {
+        for (int i = 0; i < value.length(); i++) if (Character.isWhitespace(value.charAt(i))) return true;
+        return false;
     }
 
     private String searchExa(String query, CallScope callScope) throws Exception {
