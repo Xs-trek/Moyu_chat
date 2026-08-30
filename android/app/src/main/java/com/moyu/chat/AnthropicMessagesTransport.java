@@ -433,12 +433,26 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             return false;
         }
         if ("message_delta".equals(type)) {
-            JSONObject usage = event.optJSONObject("usage"); if (usage != null) sink.onUsage(null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null); return false;
+            JSONObject usage = event.optJSONObject("usage");
+            if (usage != null) sink.onUsage(null, usage.has("output_tokens") ? usage.optInt("output_tokens") : null);
+            JSONObject delta = event.optJSONObject("delta");
+            String stopReason = delta == null || delta.isNull("stop_reason") ? "" : delta.optString("stop_reason", "").trim();
+            if (stopState != null && !stopReason.isEmpty()) stopState.reason = stopReason;
+            return false;
         }
         if ("message_stop".equals(type)) {
+            if (stopState != null) stopState.messageStop = true;
+            if (!terminalOnMessageStop) return true;
             if (continuation != null) continuation.flush();
             JSONArray calls = clientTools == null ? new JSONArray() : clientTools.calls();
-            if (calls.length() > 0) sink.onClientToolBatch(calls); else sink.onCompleted();
+            String reason = stopState == null ? "" : stopState.reason;
+            if ("tool_use".equals(reason)) {
+                if (calls.length() > 0) sink.onClientToolBatch(calls); else sink.onError("invalid_tool_call", "Provider stopped for tool_use without a valid client tool call", false);
+            } else if ("max_tokens".equals(reason) || "model_context_window_exceeded".equals(reason)) {
+                sink.onError("response_incomplete", "Anthropic response incomplete: " + reason, false);
+            } else if ("pause_turn".equals(reason)) {
+                sink.onError("pause_turn_requires_transport_continuation", "pause_turn requires the streaming transport continuation loop", true);
+            } else sink.onCompleted();
             return true;
         }
         if ("error".equals(type)) {
