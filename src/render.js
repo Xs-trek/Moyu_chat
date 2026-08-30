@@ -634,7 +634,8 @@ export function patchConversation() {
   const contextPreparing = Boolean(session.contextPreparing);
   const timeline = scroll.querySelector('.timeline');
   const anchor = captureTimelineAnchor();
-  if (timeline && !selectionInside(timeline)) {
+  const timelineDeferred = Boolean(timeline && selectionInside(timeline));
+  if (timeline && !timelineDeferred) {
     reconcileTimeline(timeline, session.messages, running, session.localSessionId, Boolean(view.ui?.showReasoning));
   } else if (!running && timeline) {
     timeline.querySelectorAll('.streaming-state').forEach((node) => node.remove());
