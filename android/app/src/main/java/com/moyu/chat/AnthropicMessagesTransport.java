@@ -399,6 +399,12 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 }
             }
             if (sawData) {
+                // Some compatible endpoints close immediately after message_delta and omit
+                // message_stop. A parsed stop_reason is still authoritative terminal semantics;
+                // only truly reason-less legacy SSE keeps the historical EOF-success fallback.
+                if (!stopState.reason.isEmpty()) {
+                    return new AnthropicRoundResult(stopState.reason, continuation.drain(), clientTools.calls());
+                }
                 emitContinuationBlocks(continuation.drain(), sink);
                 JSONArray calls = clientTools.calls();
                 if (calls.length() > 0) sink.onClientToolBatch(calls); else sink.onCompleted();
