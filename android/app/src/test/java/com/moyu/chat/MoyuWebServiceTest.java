@@ -77,6 +77,13 @@ public class MoyuWebServiceTest {
         }
     }
 
+    @Test public void autoDoesNotSearchPureLocalDateQuestion() {
+        try (MoyuWebService web = new MoyuWebService("http://127.0.0.1:1/mcp")) {
+            MoyuWebService.Prepared prepared = web.prepare("今天是几号？", new ChatTurnOptions("", "auto"), null);
+            assertFalse("local date comes from trusted runtime metadata, not Web search", prepared.attempted);
+        }
+    }
+
     @Test public void autoContinuesImmediatelyPreviousWebSearchButNotUnrelatedTurns() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
