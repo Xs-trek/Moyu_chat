@@ -711,7 +711,7 @@ export function patchConversation() {
     if (anchor) restoreTimelineAnchor(anchor, session.localSessionId);
     syncTurnNavigator(scroll);
   });
-  return true;
+  return !timelineDeferred;
 }
 
 function resolvedTheme(view) {
