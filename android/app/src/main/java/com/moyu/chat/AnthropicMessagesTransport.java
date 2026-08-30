@@ -27,6 +27,20 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     static final long SEMANTIC_IDLE_SECONDS = 300L;
     static final long READ_TIMEOUT_SECONDS = 360L;
     private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.SECONDS.toNanos(SEMANTIC_IDLE_SECONDS);
+    private static final int MAX_PAUSE_TURN_CONTINUATIONS = 4;
+
+    private static final class MultiCallTurn implements Turn {
+        private final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        private final java.util.concurrent.atomic.AtomicReference<Call> current = new java.util.concurrent.atomic.AtomicReference<>();
+        void bind(Call call) { current.set(call); if (cancelled.get() && call != null) call.cancel(); }
+        void clear(Call call) { if (call != null) current.compareAndSet(call, null); }
+        boolean isCancelled() { return cancelled.get(); }
+        @Override public void cancel() {
+            cancelled.set(true);
+            Call call = current.get(); if (call != null) call.cancel();
+        }
+    }
+
     private final OkHttpClient http = new OkHttpClient.Builder()
             .fastFallback(true)
             .retryOnConnectionFailure(false)
