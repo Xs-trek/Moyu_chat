@@ -1523,6 +1523,7 @@ final class ChatCoordinator implements AutoCloseable {
 
     private void createHandoff(String sessionId) throws Exception {
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before creating a handoff");
         JSONArray timeline = db.timeline(sessionId);
         String summary = latestAssistantText(timeline);
         if (summary.isEmpty()) throw new IllegalStateException("no assistant conclusion available");
