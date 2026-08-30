@@ -402,6 +402,17 @@ public class ChatDatabaseTest {
             raw.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
             raw.execSQL("UPDATE sessions SET protocol=COALESCE((SELECT protocol FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT protocol FROM providers WHERE providers.provider_id=sessions.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT auth_mode FROM providers WHERE providers.provider_id=sessions.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT reasoning_wire FROM providers WHERE providers.provider_id=sessions.provider_id),'none')");
         }
+        if (version >= 14) {
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN config_mode TEXT NOT NULL DEFAULT 'legacy-manual'");
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_key TEXT NOT NULL DEFAULT 'unknown'");
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_version TEXT NOT NULL DEFAULT ''");
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_source TEXT NOT NULL DEFAULT 'legacy-v0.0.3'");
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
+            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
+            raw.execSQL("ALTER TABLE sessions ADD COLUMN subagent_mode TEXT NOT NULL DEFAULT 'off'");
+        }
         raw.execSQL("INSERT INTO snapshot_items VALUES('legacy-snap',0,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}')");
         raw.execSQL("PRAGMA user_version = " + version);
         raw.close();
