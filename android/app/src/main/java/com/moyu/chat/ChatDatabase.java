@@ -253,8 +253,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
         s.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
         s.webMode = ChatTurnOptions.normalizeWebMode(webMode);
+        s.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
         s.reasoningEffort = ReasoningPolicy.normalizeEffort(reasoningEffort == null ? ReasoningPolicy.DEFAULT : reasoningEffort);
-        if (!ReasoningPolicy.allows(profile.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("reasoning effort not supported by model profile");
+        if (!ReasoningPolicy.allows(s.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("reasoning effort not supported by frozen session capability");
         s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim();
         s.state = "idle";
         s.updatedAt = Instant.now().toString();
