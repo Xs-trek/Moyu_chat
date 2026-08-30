@@ -543,7 +543,7 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.Provider provider = ChatDatabase.deploymentProvider(sharedProvider, session);
         if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("provider protocol unsupported");
         ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
-        ReasoningPolicy.validateEffortForProvider(provider, profile.reasoningLevels, session.reasoningEffort);
+        ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort);
         return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile);
     }
 
