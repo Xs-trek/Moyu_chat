@@ -133,6 +133,18 @@ public class ContextBudgetManagerTest {
     }
 
     @Test
+    public void softCompactionTargetNeverRejectsCurrentTurnThatFitsRealWindow() throws Exception {
+        ContextBudgetManager manager = new ContextBudgetManager();
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i < 5_000; i++) current.append('x');
+        JSONArray all = new JSONArray().put(message("user", current.toString()));
+        assertTrue(manager.estimateInput(INSTRUCTIONS, all) > manager.effectiveInputBudget(4_000, 0, 512) * 30 / 100);
+        ContextBudgetManager.Result compacted = manager.selectPercent(INSTRUCTIONS, all, 4_000, 0, 512, 30);
+        assertEquals(1, compacted.messages.length());
+        assertEquals(current.toString(), compacted.messages.getJSONObject(0).optString("text"));
+    }
+
+    @Test
     public void reservedToolHistoryFailsInsteadOfDroppingCurrentTurn() throws Exception {
         ContextBudgetManager manager = new ContextBudgetManager();
         JSONArray all = new JSONArray().put(message("user", "CURRENT"));
