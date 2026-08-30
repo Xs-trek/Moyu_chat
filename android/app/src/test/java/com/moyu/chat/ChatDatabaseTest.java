@@ -302,6 +302,7 @@ public class ChatDatabaseTest {
         ChatDatabase.Session reloaded = db.getSession(session.id);
         assertEquals("session keeps resolved model limits after profile edits", 128_000, reloaded.contextTokens);
         assertEquals(96_000, reloaded.inputTokens); assertEquals("xhigh", reloaded.reasoningEffort);
+        assertEquals("session keeps frozen reasoning capability after profile edits", "low,high,xhigh", reloaded.reasoningLevels);
         assertEquals("session keeps resolved modalities after profile edits", "text,image", reloaded.inputModalities);
         assertEquals("session keeps the accepted transport protocol after profile edits", OpenAiCompatibleTransport.CHAT_COMPLETIONS, reloaded.protocol);
         assertEquals(ProviderAuth.BEARER, reloaded.authMode);
