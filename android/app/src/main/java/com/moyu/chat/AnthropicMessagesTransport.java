@@ -225,46 +225,131 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         }
     }
 
-    private void run(Call call, ChatTransport.Sink sink) {
+    private static final class AnthropicStopState {
+        String reason = "";
+        boolean messageStop;
+    }
+
+    private static final class AnthropicRoundResult {
+        final String stopReason;
+        final JSONArray assistantContent;
+        final JSONArray clientCalls;
+        AnthropicRoundResult(String stopReason, JSONArray assistantContent, JSONArray clientCalls) {
+            this.stopReason = stopReason == null ? "" : stopReason.trim();
+            this.assistantContent = assistantContent == null ? new JSONArray() : assistantContent;
+            this.clientCalls = clientCalls == null ? new JSONArray() : clientCalls;
+        }
+    }
+
+    private void run(String endpoint, ChatDatabase.Provider provider, String apiKey, JSONObject body,
+                     ChatTransport.Sink sink, MultiCallTurn turn) {
+        int pauseContinuations = 0;
+        while (!turn.isCancelled()) {
+            Call call = null;
+            try {
+                Request.Builder builder = new Request.Builder().url(endpoint)
+                        .header("anthropic-version", "2023-06-01")
+                        .header("Accept", "text/event-stream")
+                        .post(RequestBody.create(JSON, body.toString()));
+                ProviderAuth.apply(builder, provider.authMode, provider.protocol, apiKey);
+                call = http.newCall(builder.build());
+                turn.bind(call);
+                AnthropicRoundResult round = runRound(call, sink);
+                if (round == null) return; // transport/protocol error was already emitted.
+                emitContinuationBlocks(round.assistantContent, sink);
+                String reason = round.stopReason;
+                if ("pause_turn".equals(reason)) {
+                    if (++pauseContinuations > MAX_PAUSE_TURN_CONTINUATIONS) {
+                        sink.onError("pause_turn_limit", "Provider pause_turn continuation limit exceeded", true);
+                        return;
+                    }
+                    if (round.assistantContent.length() == 0) {
+                        sink.onError("invalid_pause_turn", "Provider returned pause_turn without replayable assistant content", false);
+                        return;
+                    }
+                    JSONArray messages = body.optJSONArray("messages");
+                    if (messages == null) {
+                        sink.onError("invalid_pause_turn", "Anthropic request has no messages array for pause_turn continuation", false);
+                        return;
+                    }
+                    messages.put(new JSONObject().put("role", "assistant")
+                            .put("content", new JSONArray(round.assistantContent.toString())));
+                    continue;
+                }
+                if ("tool_use".equals(reason)) {
+                    if (round.clientCalls.length() == 0) sink.onError("invalid_tool_call", "Provider stopped for tool_use without a valid client tool call", false);
+                    else sink.onClientToolBatch(round.clientCalls);
+                    return;
+                }
+                if ("max_tokens".equals(reason)) {
+                    sink.onError("response_incomplete", "Anthropic response stopped at max_tokens", false);
+                    return;
+                }
+                if ("model_context_window_exceeded".equals(reason)) {
+                    sink.onError("response_incomplete", "Anthropic response stopped because the model context window was exhausted", false);
+                    return;
+                }
+                if (reason.isEmpty() || "end_turn".equals(reason) || "stop_sequence".equals(reason) || "refusal".equals(reason)) {
+                    sink.onCompleted();
+                    return;
+                }
+                sink.onError("unknown_stop_reason", "Anthropic returned unsupported stop_reason: " + reason, false);
+                return;
+            } catch (Exception error) {
+                if (turn.isCancelled()) sink.onError("cancelled", "已中断", false);
+                else sink.onError("network_error", safe(error), true);
+                return;
+            } finally {
+                turn.clear(call);
+            }
+        }
+        sink.onError("cancelled", "已中断", false);
+    }
+
+    private AnthropicRoundResult runRound(Call call, ChatTransport.Sink sink) {
         boolean sawData = false;
         boolean sawUnexpectedPayload = false;
         boolean responseStarted = false;
         long lastSemantic = System.nanoTime();
         AnthropicContinuationCollector continuation = new AnthropicContinuationCollector(sink);
         AnthropicClientToolCollector clientTools = new AnthropicClientToolCollector();
+        AnthropicStopState stopState = new AnthropicStopState();
         try (Response response = call.execute()) {
             responseStarted = true;
-            if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return; }
+            if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return null; }
             sink.onStage("connected");
-            if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
+            if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return null; }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = reader.readLine()) != null;) {
                     long now = System.nanoTime();
                     if (!line.startsWith("data:")) {
                         String trimmed = line.trim();
                         if (!trimmed.isEmpty() && !trimmed.startsWith(":") && !trimmed.startsWith("event:")) sawUnexpectedPayload = true;
-                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return null; }
                         continue;
                     }
                     String data = line.substring(5).trim();
                     if (data.isEmpty()) {
-                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return null; }
                         continue;
                     }
                     sawData = true;
                     JSONObject event;
                     try { event = new JSONObject(data); }
                     catch (Exception ignored) {
-                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return null; }
                         continue;
                     }
                     if (!event.optString("type", "").isEmpty()) lastSemantic = now;
-                    else if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
-                    if (parse(event, sink, continuation, clientTools)) return;
+                    else if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return null; }
+                    if (parse(event, sink, continuation, clientTools, stopState, false)) {
+                        if (stopState.messageStop) return new AnthropicRoundResult(stopState.reason, continuation.drain(), clientTools.calls());
+                        return null;
+                    }
                 }
             }
             if (sawData) {
-                continuation.flush();
+                emitContinuationBlocks(continuation.drain(), sink);
                 JSONArray calls = clientTools.calls();
                 if (calls.length() > 0) sink.onClientToolBatch(calls); else sink.onCompleted();
             }
@@ -277,6 +362,16 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 else if (!sawData) sink.onError("stream_first_event_timeout", "Provider returned HTTP headers but no SSE data within " + READ_TIMEOUT_SECONDS + " seconds", true);
                 else sink.onError("stream_timeout", "Provider stream stopped producing bytes for " + READ_TIMEOUT_SECONDS + " seconds", true);
             } else sink.onError("network_error", safe(error), true);
+        }
+        return null;
+    }
+
+    private static void emitContinuationBlocks(JSONArray blocks, ChatTransport.Sink sink) {
+        if (blocks == null || sink == null) return;
+        for (int i = 0; i < blocks.length(); i++) {
+            JSONObject block = blocks.optJSONObject(i); if (block == null) continue;
+            try { sink.onProviderContinuation(new JSONObject().put("protocol", PROTOCOL).put("item", new JSONObject(block.toString()))); }
+            catch (Exception ignored) { }
         }
     }
 
