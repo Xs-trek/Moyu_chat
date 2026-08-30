@@ -549,12 +549,14 @@ public class TransportMockServerTest {
 
     @Test public void anthropicPauseTurnContinuesWithExactAssistantContent() throws Exception {
         server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
                 "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
                 "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"working\"}}\n\n" +
                 "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
                 "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"pause_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":8}}\n\n" +
                 "data: {\"type\":\"message_stop\"}\n\n"));
         server.enqueue(new MockResponse().setBody(
+                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":20,\"output_tokens\":0}}}\n\n" +
                 "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
                 "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" done\"}}\n\n" +
                 "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
@@ -566,6 +568,8 @@ public class TransportMockServerTest {
         assertTrue(sink.completed);
         assertNull(sink.errorCode);
         assertEquals("working done", sink.text.toString());
+        assertEquals("pause_turn continuation usage must accumulate across HTTP requests", 30, sink.inputTokens);
+        assertEquals(20, sink.outputTokens);
         RecordedRequest first = server.takeRequest(10, TimeUnit.SECONDS);
         RecordedRequest second = server.takeRequest(10, TimeUnit.SECONDS);
         assertNotNull(first); assertNotNull(second);
