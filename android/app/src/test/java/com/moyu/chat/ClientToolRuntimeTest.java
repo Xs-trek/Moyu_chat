@@ -10,6 +10,23 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class ClientToolRuntimeTest {
+    @Test public void webFetchDefinitionRequiresOneBareHttpsUrl() throws Exception {
+        JSONArray definitions = ClientToolRuntime.canonicalDefinitions(ClientToolRuntime.WEB_FETCH);
+        assertEquals(1, definitions.length());
+        JSONObject definition = definitions.getJSONObject(0);
+        JSONObject url = definition.getJSONObject("parameters").getJSONObject("properties").getJSONObject("url");
+        assertEquals("^https://[^\\s]+$", url.optString("pattern"));
+        assertTrue(definition.optString("description").contains("no prose"));
+        assertTrue(url.optString("description").contains("Do not copy the user's sentence"));
+    }
+
+    @Test public void webFetchRuntimeRejectsFreeFormPromptInsteadOfSalvagingUrl() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> MoyuWebService.validateToolFetchArgument("请抓取 https://example.com/page 并总结内容"));
+        assertTrue(error.getMessage().contains("exactly one absolute HTTPS URL"));
+        assertEquals("https://example.com/page", MoyuWebService.validateToolFetchArgument("https://example.com/page"));
+    }
+
     @Test public void failedDelegationDoesNotCountAsSuccessfulSubagent() throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
