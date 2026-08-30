@@ -574,7 +574,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         for (int i = 0; i < content.length(); i++) {
             JSONObject part = content.optJSONObject(i); if (part == null || !"refusal".equals(part.optString("type", ""))) continue;
             String refusal = part.optString("refusal", ""); if (refusal.isEmpty()) continue;
-            String key = itemId.isEmpty() ? "refusal:text:" + Integer.toHexString(refusal.hashCode()) : "refusal:item:" + itemId;
+            String key = itemId.isEmpty()
+                    ? "refusal:text:" + i + ":" + Integer.toHexString(refusal.hashCode())
+                    : "refusal:item:" + itemId + ":" + i;
             if (emitted != null && !emitted.add(key)) continue;
             sink.onStage("output"); sink.onTextDelta(refusal);
         }
