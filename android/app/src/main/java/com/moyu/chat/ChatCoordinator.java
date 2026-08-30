@@ -554,8 +554,8 @@ final class ChatCoordinator implements AutoCloseable {
 
     private void saveDraft(String id, String text) {
         if (db.getSession(id) == null) throw new IllegalArgumentException("session not found");
-        // Ignore stale IME/debounce writes from the just-submitted composer while a turn owns this session.
-        if (sessionBusy(id)) return;
+        // A running turn may coexist with the user's next-turn draft. Frontend draft generations
+        // suppress stale pre-send debounce writes, so Native must not discard legitimate typing here.
         db.setDraft(id, text == null ? "" : text);
     }
 
