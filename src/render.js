@@ -689,11 +689,24 @@ export function patchConversation() {
     trigger.disabled = field.classList.contains('disabled-choice') || !session.canConfigureTurn;
   });
   const input = composer?.querySelector('textarea[name="message"]');
-  if (input) input.placeholder = session.canSend
-    ? (String(session.inputModalities || '').split(',').includes('image') ? '输入消息，或添加图片' : '输入消息')
-    : contextPreparing ? '正在整理上下文'
-    : session.webPreparingStage ? '正在联网检索'
-    : '等待当前回合结束';
+  if (input) {
+    const nextDraft = String(session.composerDraft || '');
+    const projectedDraft = String(input.dataset.projectedDraft || '');
+    const safeToProjectDraft = input.value === projectedDraft || document.activeElement !== input;
+    if (safeToProjectDraft && input.value !== nextDraft) {
+      input.value = nextDraft;
+      input.style.height = 'auto';
+      const max = 160;
+      input.style.height = `${Math.min(max, Math.max(44, input.scrollHeight))}px`;
+      input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
+    }
+    if (safeToProjectDraft || input.value === nextDraft) input.dataset.projectedDraft = nextDraft;
+    input.placeholder = session.canSend
+      ? (String(session.inputModalities || '').split(',').includes('image') ? '输入消息，或添加图片' : '输入消息')
+      : contextPreparing ? '正在整理上下文'
+      : session.webPreparingStage ? '正在联网检索'
+      : '等待当前回合结束';
+  }
   requestAnimationFrame(() => {
     if (anchor) restoreTimelineAnchor(anchor, session.localSessionId);
     syncTurnNavigator(scroll);
