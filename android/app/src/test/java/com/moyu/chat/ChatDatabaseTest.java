@@ -290,6 +290,7 @@ public class ChatDatabaseTest {
         ChatDatabase.Session session = db.createSession(second, null, null, null, "xhigh");
         assertEquals("model-b", session.model); assertEquals(128_000, session.contextTokens); assertEquals(96_000, session.inputTokens);
         assertEquals(8_192, session.maxOutputTokens); assertEquals("xhigh", session.reasoningEffort);
+        assertEquals("low,high,xhigh", session.reasoningLevels);
         assertEquals("text,image", session.inputModalities); assertEquals("text,image", session.outputModalities);
         assertEquals(OpenAiCompatibleTransport.CHAT_COMPLETIONS, session.protocol);
         assertEquals(ProviderAuth.BEARER, session.authMode);
