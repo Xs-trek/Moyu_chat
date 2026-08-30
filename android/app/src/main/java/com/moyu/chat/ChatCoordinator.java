@@ -1741,7 +1741,7 @@ final class ChatCoordinator implements AutoCloseable {
         JSONObject o = new JSONObject().put("localSessionId", s.id).put("title", s.title).put("providerId", s.providerId).put("providerName", p == null ? s.providerId : p.displayName)
                 .put("modelProfileId", s.modelProfileId == null ? JSONObject.NULL : s.modelProfileId).put("model", s.model)
                 .put("modelName", modelProfile == null ? s.model : modelProfile.displayName)
-                .put("reasoningLevels", modelProfile == null ? "" : ReasoningPolicy.normalizeLevels(modelProfile.reasoningLevels))
+                .put("reasoningLevels", ReasoningPolicy.normalizeLevels(s.reasoningLevels))
                 .put("reasoningEffort", s.reasoningEffort == null ? ReasoningPolicy.DEFAULT : s.reasoningEffort)
                 .put("thinkingMode", ReasoningPolicy.normalizeThinkingMode(s.thinkingMode)).put("thinkingBudgetTokens", Math.max(0, s.thinkingBudgetTokens))
                 .put("continuationMode", ProviderContinuationPolicy.normalize(s.continuationMode))
