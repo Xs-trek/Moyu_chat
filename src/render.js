@@ -643,7 +643,7 @@ export function patchConversation() {
   }
   reconcileTurnNavigator(layout, session);
 
-  const busyLabel = session.postProcessingStage === 'repairing' ? '修正回答' : session.postProcessingStage === 'verifying' ? '校验回答' : session.webPreparingStage === 'web_fetch' ? '读取网页' : session.webPreparingStage === 'web_search' ? '搜索网页' : contextPreparing ? '整理上下文' : running ? '生成中' : '';
+  const busyLabel = session.postProcessingStage === 'repairing' ? '修正回答' : session.postProcessingStage === 'verifying' ? '校验回答' : session.webPreparingStage === 'web_planning' ? '规划联网' : session.webPreparingStage === 'web_fetch' ? '读取网页' : session.webPreparingStage === 'web_search' ? '搜索网页' : contextPreparing ? '整理上下文' : running ? '生成中' : '';
   const title = document.querySelector('.conversation-title strong');
   if (title) title.textContent = session.title || '';
   const subtitle = document.querySelector('.conversation-title small');
