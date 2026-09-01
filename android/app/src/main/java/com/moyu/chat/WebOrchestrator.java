@@ -221,7 +221,7 @@ final class WebOrchestrator {
         String intent = !urls.isEmpty() ? INTENT_URL : REALTIME.matcher(input).find() ? INTENT_REALTIME
                 : NEWS.matcher(input).find() || strong ? INTENT_CURRENT : followUp ? INTENT_RESEARCH : INTENT_NONE;
         String freshness = REALTIME.matcher(input).find() ? FRESHNESS_HOUR
-                : TODAY.matcher(input).find() || YESTERDAY.matcher(input).find() || NEWS.matcher(input).find() ? FRESHNESS_DAY
+                : TODAY.matcher(input).find() || YESTERDAY.matcher(input).find() || NEWS.matcher(input).find() || RECENT.matcher(input).find() ? FRESHNESS_DAY
                 : WEEK.matcher(input).find() ? FRESHNESS_WEEK : MONTH.matcher(input).find() ? FRESHNESS_MONTH : FRESHNESS_AUTO;
         String category = NEWS.matcher(input).find() ? "news" : "";
         String start = "", end = "";
