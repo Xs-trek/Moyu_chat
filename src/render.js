@@ -283,6 +283,7 @@ function conversation(view) {
 
 function streamStageLabel(stage) {
   if (stage === 'preparing') return '整理上下文';
+  if (stage === 'web_planning') return '规划联网';
   if (stage === 'web_search') return '搜索网页';
   if (stage === 'web_fetch') return '读取网页';
   if (stage === 'tool') return '执行工具';
