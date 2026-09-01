@@ -67,6 +67,40 @@ final class ContextBuilder {
     }
 
     /**
+     * Add host-owned per-turn instructions after normal Harness construction. Re-budget the already
+     * selected prompt instead of rebuilding/re-expanding optional Memory/RAG material.
+     */
+    CanonicalPrompt appendInstructionSuffix(CanonicalPrompt prompt, int contextTokens, int inputTokens,
+                                            int outputTokens, String suffix) throws Exception {
+        if (prompt == null) throw new IllegalArgumentException("prompt required");
+        if (suffix == null || suffix.isEmpty()) return prompt;
+        String instructions = prompt.instructions + suffix;
+        ContextBudgetManager.Result selected = budgets.select(instructions, prompt.messages,
+                contextTokens, inputTokens, outputTokens);
+        return new CanonicalPrompt(instructions, selected.messages, prompt.truncated || selected.truncated,
+                selected.estimatedTokens, prompt.inheritedItemCount, prompt.localItemCount,
+                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation);
+    }
+
+    /**
+     * Web evidence selected by the product-level orchestrator is required input for this provider
+     * turn, not an optional RAG embellishment. Older complete turns may be dropped, but the current
+     * user turn plus this bounded evidence must survive or the caller receives an explicit failure.
+     */
+    CanonicalPrompt appendRequiredUserSuffix(CanonicalPrompt prompt, int contextTokens, int inputTokens,
+                                             int outputTokens, String suffix) throws Exception {
+        if (prompt == null) throw new IllegalArgumentException("prompt required");
+        if (suffix == null || suffix.isEmpty()) return prompt;
+        JSONArray candidate = new JSONArray(prompt.messages.toString());
+        mergeIntoLatestUser(candidate, suffix);
+        ContextBudgetManager.Result selected = budgets.select(prompt.instructions, candidate,
+                contextTokens, inputTokens, outputTokens);
+        return new CanonicalPrompt(prompt.instructions, selected.messages, prompt.truncated || selected.truncated,
+                selected.estimatedTokens, prompt.inheritedItemCount, prompt.localItemCount,
+                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation);
+    }
+
+    /**
      * Proactive compaction is based on the active raw tail, including provider-private replay state,
      * not only visible text. Trigger=50%; target=30% of the effective input window.
      */
