@@ -283,12 +283,58 @@ final class MoyuWebService implements AutoCloseable {
         return false;
     }
 
-    private String searchExa(String query, CallScope callScope) throws Exception {
-        String q = query == null ? "" : query.trim();
-        if (q.isEmpty()) throw new IllegalArgumentException("search query is empty");
-        if (q.length() > 4_000) q = q.substring(0, 4_000);
-        return callExaTool("web_search_exa", new JSONObject().put("query", q).put("type", "auto")
-                .put("numResults", 6).put("livecrawl", "fallback").put("contextMaxCharacters", MAX_SEARCH_CHARS), callScope);
+    /**
+     * Execute the planner's search contract. Prefer Exa advanced search for publication/freshness
+     * controls and highlights; fall back to the stable basic tool if an anonymous/older MCP endpoint
+     * does not expose the optional advanced tool. Deprecated livecrawl is intentionally not used.
+     */
+    private String searchExa(WebOrchestrator.Plan plan, CallScope callScope) throws Exception {
+        if (plan == null || plan.queries.isEmpty()) throw new IllegalArgumentException("search plan has no queries");
+        String primary = plan.queries.get(0).trim();
+        if (primary.isEmpty()) throw new IllegalArgumentException("search query is empty");
+        if (primary.length() > 4_000) primary = primary.substring(0, 4_000);
+        JSONObject advanced = new JSONObject().put("query", primary).put("type", "auto").put("numResults", 8)
+                .put("enableHighlights", true).put("highlightsQuery", primary)
+                .put("highlightsMaxCharacters", 4_000).put("contextMaxCharacters", MAX_SEARCH_CHARS);
+        if (plan.queries.size() > 1) {
+            JSONArray additional = new JSONArray();
+            for (int i = 1; i < plan.queries.size() && i < 3; i++) additional.put(plan.queries.get(i));
+            if (additional.length() > 0) advanced.put("additionalQueries", additional);
+        }
+        int maxAgeHours = plan.maxAgeHours();
+        if (maxAgeHours >= 0) advanced.put("maxAgeHours", maxAgeHours).put("livecrawlTimeout", 12_000);
+        if (!plan.category.isEmpty()) advanced.put("category", plan.category);
+        if (!plan.startPublishedDate.isEmpty()) advanced.put("startPublishedDate", plan.startPublishedDate);
+        if (!plan.endPublishedDate.isEmpty()) advanced.put("endPublishedDate", plan.endPublishedDate);
+        try {
+            return callExaTool("web_search_advanced_exa", advanced, callScope);
+        } catch (Exception advancedError) {
+            StringBuilder merged = new StringBuilder();
+            Exception last = advancedError;
+            for (String raw : plan.queries) {
+                if (callScope.isCancelled()) throw new java.io.InterruptedIOException("cancelled");
+                String query = raw == null ? "" : raw.trim();
+                if (query.isEmpty()) continue;
+                if (query.length() > 4_000) query = query.substring(0, 4_000);
+                // Basic MCP search currently has only query/numResults as its stable public contract.
+                // Preserve freshness intent in the rewritten query itself when advanced filters are unavailable.
+                String fallbackQuery = query;
+                if (!plan.startPublishedDate.isEmpty() || !plan.endPublishedDate.isEmpty()) {
+                    fallbackQuery += " published " + plan.startPublishedDate + " " + plan.endPublishedDate;
+                }
+                if ("news".equals(plan.category) && !fallbackQuery.toLowerCase(Locale.ROOT).contains("news")) fallbackQuery = "category:news " + fallbackQuery;
+                try {
+                    String result = callExaTool("web_search_exa",
+                            new JSONObject().put("query", fallbackQuery).put("numResults", 6), callScope);
+                    if (result != null && !result.trim().isEmpty()) {
+                        if (merged.length() > 0) merged.append("\n\n");
+                        merged.append(result.trim());
+                    }
+                } catch (Exception basicError) { last = basicError; }
+            }
+            if (merged.length() > 0) return limit(merged.toString(), MAX_SEARCH_CHARS);
+            throw new IllegalStateException("Exa advanced/basic search failed: " + safe(last));
+        }
     }
 
     private String fetchExa(String url, CallScope callScope) throws Exception {
