@@ -237,7 +237,7 @@ final class WebOrchestrator {
             end = startOfDay(now.toLocalDate().plusDays(1), now);
         }
         ArrayList<String> queries = new ArrayList<>();
-        if (useWeb && (urls.isEmpty() || strong || followUp || force)) {
+        if (useWeb && !priorSourceFetch && (urls.isEmpty() || strong || followUp || force)) {
             String query = input;
             if (followUp && previous != null && !previous.previousUserText.isEmpty()) query = previous.previousUserText + " — " + input;
             query = stripUrls(query).trim();
