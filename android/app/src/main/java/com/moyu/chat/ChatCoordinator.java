@@ -677,20 +677,66 @@ final class ChatCoordinator implements AutoCloseable {
             return;
         }
 
-        // Web/tools are a separate capability plane. Hidden Router/Checkpoint calls above never receive them.
+        // Web is a product-level policy plane. First decide whether this user request needs external
+        // information; only then choose the execution wire. Provider capability controls HOW Web runs,
+        // never WHETHER a semantically fresh/current request deserves Web.
+        final MoyuWebService.FollowUpContext webFollowUp = webFollowUpContext(db.timeline(id));
+        final boolean webPlanning = webOrchestrator.shouldRunPlanner(turnConfig.webMode, input, webFollowUp);
+        if (webPlanning) {
+            webPreparingStages.put(id, "web_planning");
+            try { live.put("streamStage", "web_planning"); db.replaceTimelineBody(streamKey, live); } catch (Exception ignored) { }
+            emitStreamingView(id);
+        }
+        final WebOrchestrator.Plan webPlan;
+        try {
+            webPlan = webOrchestrator.plan(turnConfig.webMode, input, prompt, transport, provider, key,
+                    turnConfig.model, turnControl, webFollowUp);
+        } finally {
+            if (webPlanning && webPreparingStages.remove(id) != null) emitStreamingView(id);
+        }
+        if (turnControl != null && turnControl.isCancelled()) {
+            finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                    new String[]{"cancelled", "Generation stopped"});
+            return;
+        }
+
         String hostedCapabilities = ChatTurnOptions.effectiveCapabilities(provider.protocol, turnConfig.toolCapabilities);
+        ChatTurnOptions declaredHosted = new ChatTurnOptions(hostedCapabilities, ChatTurnOptions.WEB_ON);
+        boolean nativeSearch = declaredHosted.supports(ChatTurnOptions.WEB_SEARCH);
+        boolean nativeFetch = declaredHosted.supports(ChatTurnOptions.WEB_FETCH);
         boolean clientCalling = ClientToolRuntime.compatible(provider.protocol, turnConfig.clientToolCalling);
+        // Auto prefers a reviewed provider-native search loop when explicitly declared. All other
+        // deployments get host-managed retrieval as a guaranteed grounding baseline. Web=on also uses
+        // the host path so "force Web" cannot silently become provider-side tool_choice=auto with no call.
+        boolean hostManagedWeb = webPlan.useWeb && (ChatTurnOptions.WEB_ON.equals(turnConfig.webMode)
+                || webPlan.hasExplicitUrls() || !nativeSearch);
+        boolean providerHostedThisTurn = webPlan.useWeb && nativeSearch && !hostManagedWeb;
+
         java.util.LinkedHashSet<String> clientToolNames = new java.util.LinkedHashSet<>();
-        if (clientCalling && ChatTurnOptions.WEB_AUTO.equals(turnConfig.webMode)) {
-            ChatTurnOptions hostedOnly = new ChatTurnOptions(hostedCapabilities, turnConfig.webMode);
-            if (!hostedOnly.supports(ChatTurnOptions.WEB_SEARCH)) clientToolNames.add(ClientToolRuntime.WEB_SEARCH);
-            if (!hostedOnly.supports(ChatTurnOptions.WEB_FETCH)) clientToolNames.add(ClientToolRuntime.WEB_FETCH);
+        if (clientCalling && webPlan.useWeb) {
+            if (!nativeSearch) clientToolNames.add(ClientToolRuntime.WEB_SEARCH);
+            if (!nativeFetch) clientToolNames.add(ClientToolRuntime.WEB_FETCH);
         }
         if (clientCalling && HarnessPolicyResolver.SUBAGENT_AUTO.equals(adaptivePolicy.subagentMode)) {
             clientToolNames.add(ClientToolRuntime.DELEGATE_SUBTASK);
         }
-        // Tool definitions are real model input. If even the schema cannot fit beside the mandatory
-        // newest user-led turn, client tools are an optional enhancement and are disabled for this turn.
+
+        // Make the product decision explicit to the answering model. Tool schemas below advertise any
+        // concrete client tools; the guidance prevents "I have no Web" claims when host/native Web is active.
+        String webGuidance = webOrchestrator.guidance(webPlan, providerHostedThisTurn, false, false, hostManagedWeb);
+        if (!webGuidance.isEmpty()) {
+            try {
+                prompt = contexts.appendInstructionSuffix(prompt, turnConfig.contextTokens, turnConfig.inputTokens,
+                        turnConfig.maxOutputTokens, webGuidance);
+            } catch (IllegalArgumentException noGuidanceRoom) {
+                finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                        new String[]{"web_context_budget", "Web orchestration instructions do not fit the configured model input window"});
+                return;
+            }
+        }
+
+        // Tool definitions are real model input. They are optional because host-managed Web guarantees
+        // grounding for non-native deployments; dropping a client schema must never drop required Web.
         int clientToolSchemaReserve = clientToolNames.isEmpty() ? 0
                 : new ContextBudgetManager().estimate(ClientToolRuntime.canonicalDefinitions(String.join(",", clientToolNames)).toString()) + 128;
         if (clientToolSchemaReserve > 0) {
@@ -704,24 +750,19 @@ final class ChatCoordinator implements AutoCloseable {
         }
         final String clientToolCsv = String.join(",", clientToolNames);
         final int clientToolSchemaTokens = clientToolSchemaReserve;
-        // Already validated against the current user turn plus client-tool definitions. Optional
-        // deterministic Web may enrich this prompt, but must never invalidate this safe baseline.
         final CanonicalPrompt preWebPrompt = prompt;
-        ChatTurnOptions webOptions = new ChatTurnOptions(hostedCapabilities, turnConfig.webMode,
-                turnConfig.clientToolCalling, clientToolCsv, new JSONArray());
+        final ChatTurnOptions webOptions = new ChatTurnOptions(hostedCapabilities, turnConfig.webMode,
+                turnConfig.clientToolCalling, clientToolCsv, new JSONArray(), new JSONArray(), providerHostedThisTurn);
         MoyuWebService.Prepared preparedWeb = MoyuWebService.Prepared.none();
-        // `web=on` keeps the existing deterministic forced fallback semantics. In auto mode a
-        // deployment with client tools lets the model decide when to search/fetch instead.
-        boolean typedClientWeb = clientToolNames.contains(ClientToolRuntime.WEB_SEARCH)
-                || clientToolNames.contains(ClientToolRuntime.WEB_FETCH);
-        if (webOptions.webEnabled() && (!typedClientWeb || ChatTurnOptions.WEB_ON.equals(turnConfig.webMode))) {
+
+        if (hostManagedWeb) {
             try {
-                preparedWeb = webService.prepare(input, webOptions, stage -> {
+                preparedWeb = webService.prepare(webPlan, stage -> {
                     String webStage = stage == null || stage.trim().isEmpty() ? "web_search" : stage.trim();
                     webPreparingStages.put(id, webStage);
                     try { live.put("streamStage", webStage); db.replaceTimelineBody(streamKey, live); } catch (Exception ignored) { }
                     emitStreamingView(id);
-                }, turnControl, webFollowUpContext(db.timeline(id)));
+                }, turnControl, webFollowUp);
             } catch (Exception webError) {
                 finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
                         turnControl != null && turnControl.isCancelled()
@@ -736,27 +777,54 @@ final class ChatCoordinator implements AutoCloseable {
                         new String[]{"cancelled", "Generation stopped"});
                 return;
             }
+
+            // A Web plan selected by the product is required grounding, not optional RAG. Shrink only
+            // the not-yet-sent evidence body; never silently fall back to stale model weights merely
+            // because old conversation turns consumed the window.
             if (preparedWeb.hasContext()) {
-                // ContextBuilder treats this suffix as optional and may omit it under pressure. Only
-                // expose Web sources/evidence when the exact suffix actually survived final selection
-                // and the separately reserved client-tool definitions still fit.
-                CanonicalPrompt webPrompt = contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens,
-                        turnConfig.maxOutputTokens, preparedWeb.promptSuffix);
-                boolean webApplied = promptContainsLatestUserSuffix(webPrompt, preparedWeb.promptSuffix);
-                if (webApplied && clientToolSchemaTokens > 0) {
+                MoyuWebService.Prepared appliedWeb = null;
+                CanonicalPrompt appliedPrompt = null;
+                int[] evidenceCaps = new int[]{24_000, 12_000, 6_000, 3_000, 1_500, 750, 512};
+                for (int cap : evidenceCaps) {
+                    MoyuWebService.Prepared candidate = preparedWeb.clipped(cap);
                     try {
-                        webPrompt = contexts.reserveForAdditionalInput(webPrompt, turnConfig.contextTokens, turnConfig.inputTokens,
-                                turnConfig.maxOutputTokens, clientToolSchemaTokens);
-                        webApplied = promptContainsLatestUserSuffix(webPrompt, preparedWeb.promptSuffix);
-                    } catch (IllegalArgumentException optionalWebOverflow) {
-                        webApplied = false;
+                        CanonicalPrompt webPrompt = contexts.appendRequiredUserSuffix(preWebPrompt,
+                                turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens,
+                                candidate.promptSuffix);
+                        if (clientToolSchemaTokens > 0) {
+                            webPrompt = contexts.reserveForAdditionalInput(webPrompt, turnConfig.contextTokens,
+                                    turnConfig.inputTokens, turnConfig.maxOutputTokens, clientToolSchemaTokens);
+                        }
+                        if (!promptContainsLatestUserSuffix(webPrompt, candidate.promptSuffix)) continue;
+                        appliedWeb = candidate;
+                        appliedPrompt = webPrompt;
+                        break;
+                    } catch (IllegalArgumentException noEvidenceRoom) {
+                        // Try a smaller not-yet-sent evidence body. The current user turn stays mandatory.
                     }
                 }
-                if (webApplied) prompt = webPrompt;
-                else {
-                    prompt = preWebPrompt;
+                if (appliedWeb == null || appliedPrompt == null) {
+                    boolean alternateWeb = providerHostedThisTurn
+                            || clientToolNames.contains(ClientToolRuntime.WEB_SEARCH)
+                            || clientToolNames.contains(ClientToolRuntime.WEB_FETCH);
+                    if (!alternateWeb) {
+                        finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                                new String[]{"web_context_budget", "Required Web evidence does not fit the configured model input window"});
+                        return;
+                    }
                     preparedWeb = MoyuWebService.Prepared.none();
+                    prompt = preWebPrompt;
+                } else {
+                    preparedWeb = appliedWeb;
+                    prompt = appliedPrompt;
                 }
+            } else if (!preparedWeb.attempted
+                    && !providerHostedThisTurn
+                    && !clientToolNames.contains(ClientToolRuntime.WEB_SEARCH)
+                    && !clientToolNames.contains(ClientToolRuntime.WEB_FETCH)) {
+                finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
+                        new String[]{"web_retrieval_unavailable", "Web was required for this turn but no retrieval path produced evidence or diagnostics"});
+                return;
             }
         }
         final MoyuWebService.Prepared webPrepared = preparedWeb;
