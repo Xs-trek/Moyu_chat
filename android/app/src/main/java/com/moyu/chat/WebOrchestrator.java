@@ -217,10 +217,12 @@ final class WebOrchestrator {
         if (ChatTurnOptions.WEB_OFF.equals(mode) || input.isEmpty() || PURE_DEVICE_DATE.matcher(input).matches()) return Plan.none();
         ArrayList<String> urls = new ArrayList<>(extractUrls(input));
         boolean followUp = previous != null && previous.previousTurnUsedWeb && FOLLOW_UP.matcher(input).find();
+        boolean priorSourceFetch = followUp && previous != null && previous.sources.length() > 0
+                && PRIOR_SOURCE_FETCH.matcher(input).find();
         boolean strong = EXPLICIT_OR_FRESH.matcher(input).find();
         boolean force = ChatTurnOptions.WEB_ON.equals(mode);
         boolean useWeb = force || strong || !urls.isEmpty() || followUp;
-        String intent = !urls.isEmpty() ? INTENT_URL : REALTIME.matcher(input).find() ? INTENT_REALTIME
+        String intent = !urls.isEmpty() || priorSourceFetch ? INTENT_URL : REALTIME.matcher(input).find() ? INTENT_REALTIME
                 : NEWS.matcher(input).find() || strong ? INTENT_CURRENT : followUp ? INTENT_RESEARCH : INTENT_NONE;
         String freshness = REALTIME.matcher(input).find() ? FRESHNESS_HOUR
                 : TODAY.matcher(input).find() || YESTERDAY.matcher(input).find() || NEWS.matcher(input).find() || RECENT.matcher(input).find() ? FRESHNESS_DAY
