@@ -88,6 +88,14 @@ final class MoyuWebService implements AutoCloseable {
         }
 
         boolean hasContext() { return !promptSuffix.isEmpty(); }
+        Prepared clipped(int maxChars) {
+            int cap = Math.max(512, maxChars);
+            if (promptSuffix.length() <= cap) return this;
+            String closing = "\n[Web context truncated by Moyu context budget]\n[/Moyu Web Context]";
+            int keep = Math.max(128, cap - closing.length());
+            return new Prepared(promptSuffix.substring(0, Math.min(keep, promptSuffix.length())) + closing,
+                    sources, backend, attempted);
+        }
         static Prepared none() { return new Prepared("", new JSONArray(), "", false); }
     }
 
