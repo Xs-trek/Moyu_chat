@@ -154,6 +154,13 @@ const registry = read('android/app/src/main/java/com/moyu/chat/ChatTransportRegi
 for (const protocol of ['CHAT_COMPLETIONS', 'RESPONSES', 'AnthropicMessagesTransport.PROTOCOL']) if (!registry.includes(protocol)) fail(`transport registry missing ${protocol}`);
 
 const webService = read('android/app/src/main/java/com/moyu/chat/MoyuWebService.java');
+const webOrchestrator = read('android/app/src/main/java/com/moyu/chat/WebOrchestrator.java');
+if (!coordinator.includes('private final WebOrchestrator webOrchestrator = new WebOrchestrator()')
+    || !coordinator.includes('webOrchestrator.plan(')
+    || !webOrchestrator.includes('ModelPreflight.runOutputWithEffort')
+    || !webOrchestrator.includes('queries')
+    || !webOrchestrator.includes('freshness')
+    || coordinator.includes('SEARCH_HINT') || webOrchestrator.includes('SEARCH_HINT')) fail('Auto Web must remain a product-level planner/orchestrator rather than a keyword/tool-capability router');
 if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_search_exa') || !webService.includes('web_fetch_exa')
     || !webService.includes('"method", "initialize"') || !webService.includes('notifications/initialized')
     || !webService.includes('Mcp-Session-Id')) fail('Moyu Exa fallback must use a real MCP initialize/session lifecycle with search + fetch tools');
