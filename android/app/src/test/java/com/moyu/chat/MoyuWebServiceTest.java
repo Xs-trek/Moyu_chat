@@ -34,7 +34,7 @@ public class MoyuWebServiceTest {
         assertTrue(MoyuWebService.isPublicAddress(InetAddress.getByName("2606:4700:4700::1111")));
     }
 
-    @Test public void offNeverCallsFallbackAndOnForcesSearch() throws Exception {
+    @Test public void offNeverCallsFallbackAndOnForcesPlannedSearch() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
             installExaMcp(server, "Title: Example\nURL: https://example.com/\nUseful context");
@@ -47,15 +47,16 @@ public class MoyuWebServiceTest {
                 MoyuWebService.Prepared on = web.prepare("hello", new ChatTurnOptions("", "on"), stages::add);
                 assertTrue(on.attempted);
                 assertTrue(on.hasContext());
-                assertEquals("Exa", on.backend);
+                assertEquals("Exa Search", on.backend);
                 assertEquals(1, on.sources.length());
                 assertEquals("web_search", stages.get(0));
                 assertEquals(3, server.getRequestCount());
                 RecordedRequest request = takeToolCall(server);
                 String body = request.getBody().readUtf8();
-                assertTrue(body.contains("web_search_exa"));
-                assertTrue(body.contains("\"numResults\":6"));
-                assertTrue(body.contains("\"livecrawl\":\"fallback\""));
+                assertTrue(body.contains("web_search_advanced_exa"));
+                assertTrue(body.contains("\"numResults\":8"));
+                assertTrue(body.contains("\"enableHighlights\":true"));
+                assertFalse("deprecated livecrawl must not return", body.contains("livecrawl"));
             }
         }
     }
