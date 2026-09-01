@@ -264,13 +264,14 @@ final class WebOrchestrator {
                 FRESHNESS_AUTO, "", "", "", false);
 
         String intent = deterministic.intent;
-        if ((INTENT_NONE.equals(intent) || INTENT_URL.equals(intent) && deterministic.queries.isEmpty()) && modelPlan != null && !INTENT_NONE.equals(modelPlan.intent)) intent = modelPlan.intent;
+        boolean reusePriorSource = INTENT_URL.equals(deterministic.intent) && deterministic.urls.isEmpty();
+        if (INTENT_NONE.equals(intent) && modelPlan != null && !INTENT_NONE.equals(modelPlan.intent)) intent = modelPlan.intent;
         if (INTENT_NONE.equals(intent)) intent = modelPlan == null ? INTENT_LOOKUP : modelPlan.intent;
 
         ArrayList<String> queries = new ArrayList<>();
-        if (modelPlan != null) queries.addAll(modelPlan.queries);
-        if (queries.isEmpty()) queries.addAll(deterministic.queries);
-        if (queries.isEmpty() && deterministic.urls.isEmpty()) {
+        if (!reusePriorSource && modelPlan != null) queries.addAll(modelPlan.queries);
+        if (!reusePriorSource && queries.isEmpty()) queries.addAll(deterministic.queries);
+        if (!reusePriorSource && queries.isEmpty() && deterministic.urls.isEmpty()) {
             String query = followUp && previous != null && !previous.previousUserText.isEmpty()
                     ? previous.previousUserText + " — " + input : input;
             if (!query.trim().isEmpty()) queries.add(query.trim());
