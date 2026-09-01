@@ -45,6 +45,8 @@ final class WebOrchestrator {
             "(?i)^\\s*(?:今天(?:是)?(?:几号|什么日期|星期几)|现在(?:是)?几号|what (?:date|day) is it(?: today)?|what's today's date)\\s*[?？。.]?\\s*$");
     private static final Pattern FOLLOW_UP = Pattern.compile(
             "(?i)(继续|接着|再查|再搜|再找|再看看|更多|进一步|刚才|上面|这些来源|那些来源|continue|more|again|follow[- ]?up|check more)");
+    private static final Pattern PRIOR_SOURCE_FETCH = Pattern.compile(
+            "(?i)(读一下|打开|原文|这个网页|那个网页|这个来源|那个来源|刚才.*(?:链接|来源|网页)|read (?:it|that|the source)|open (?:it|that|the source)|fetch (?:it|that|the source))");
     private static final Pattern REALTIME = Pattern.compile(
             "(?i)(实时|现在.*(?:价格|行情|比分|天气|状态)|当前.*(?:价格|行情|比分|天气|故障|状态)|\\brealtime\\b|\\breal-time\\b|right now|live score|stock price|exchange rate|outage|weather)");
     private static final Pattern NEWS = Pattern.compile("(?i)(新闻|最新消息|近期消息|发生了什么|\\bnews\\b|what happened|latest development)");
