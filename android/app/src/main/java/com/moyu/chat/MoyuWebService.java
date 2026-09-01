@@ -44,7 +44,7 @@ final class MoyuWebService implements AutoCloseable {
         @Override public void clear(okhttp3.Call call) { }
     };
 
-    static final String EXA_ENDPOINT = "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa";
+    static final String EXA_ENDPOINT = "https://mcp.exa.ai/mcp?tools=web_search_exa,web_search_advanced_exa,web_fetch_exa";
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
     private static final int MAX_HTTP_BYTES = 1024 * 1024;
     private static final int MAX_CONTEXT_CHARS = 24_000;
