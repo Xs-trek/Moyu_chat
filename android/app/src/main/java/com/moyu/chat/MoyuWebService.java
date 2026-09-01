@@ -152,7 +152,7 @@ final class MoyuWebService implements AutoCloseable {
 
         ArrayList<String> urls = new ArrayList<>(plan.urls);
         boolean fetchFollowUp = followUp.previousTurnUsedWeb && followUp.sources.length() > 0 && urls.isEmpty()
-                && FETCH_FOLLOW_UP_HINT.matcher(plan.queries.isEmpty() ? "" : plan.queries.get(0)).find();
+                && WebOrchestrator.INTENT_URL.equals(plan.intent);
         if (fetchFollowUp) {
             for (int i = 0; i < followUp.sources.length() && urls.size() < MAX_URLS; i++) {
                 JSONObject source = followUp.sources.optJSONObject(i); if (source == null) continue;
