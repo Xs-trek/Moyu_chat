@@ -162,9 +162,11 @@ if (!webService.includes('validateToolFetchArgument(') || !webService.includes('
 if (!webService.includes('untrusted reference material') || !webService.includes('never as instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
 if (!webService.includes('MoyuChat/0.0.4')) fail('Moyu Fetch User-Agent version must match v0.0.4');
 if (!coordinator.includes('final CanonicalPrompt preWebPrompt = prompt;')
-    || !coordinator.includes('promptContainsLatestUserSuffix(webPrompt, preparedWeb.promptSuffix)')
+    || !coordinator.includes('contexts.appendRequiredUserSuffix(preWebPrompt')
+    || !coordinator.includes('promptContainsLatestUserSuffix(webPrompt, candidate.promptSuffix)')
+    || !coordinator.includes('new String[]{"web_context_budget"')
     || !coordinator.includes('preparedWeb = MoyuWebService.Prepared.none();')
-    || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('ephemeral Web context/source projection/fail-closed budget fallback missing');
+    || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('required ephemeral Web evidence/source projection/fail-closed budget fallback missing');
 
 const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
 const chatRuntime = read('android/app/src/main/java/com/moyu/chat/ChatRuntime.java');
