@@ -243,7 +243,11 @@ final class MoyuWebService implements AutoCloseable {
     }
 
     ToolResult executeSearch(String query, CallScope callScope) throws Exception {
-        String result = searchExa(query, callScope == null ? NO_CANCEL : callScope);
+        String q = query == null ? "" : query.trim();
+        if (q.isEmpty()) throw new IllegalArgumentException("web_search.query is required");
+        WebOrchestrator.Plan plan = WebOrchestrator.legacyPlan(q, ChatTurnOptions.WEB_ON,
+                FollowUpContext.none(), java.time.ZonedDateTime.now());
+        String result = searchExa(plan, callScope == null ? NO_CANCEL : callScope);
         if (result == null || result.trim().isEmpty()) throw new IllegalStateException("Exa returned no search context");
         String bounded = limit(result, MAX_SEARCH_CHARS);
         LinkedHashMap<String, JSONObject> sources = new LinkedHashMap<>();
