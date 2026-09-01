@@ -708,7 +708,7 @@ public class ChatCoordinatorE2eTest {
         await("web-auto turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
     }
 
-    @Test public void clientWebToolsRemainExposedOnLaterUserTurns() throws Exception {
+    @Test public void autoWebToolsAreTurnScopedByProductPlanInsteadOfAlwaysExposed() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
         assertNotNull(profile);
@@ -717,24 +717,23 @@ public class ChatCoordinatorE2eTest {
         app.database().saveModelProfile(profile);
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
                 .put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_AUTO));
-        await("client-tool session created", () -> activeSession(latestView()) != null);
+        await("client-tool-capable session created", () -> activeSession(latestView()) != null);
         String sessionId = latestView().optString("activeLocalSessionId");
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first ordinary turn"));
         RecordedRequest first = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(first);
         JSONObject firstBody = new JSONObject(first.getBody().readUtf8());
-        assertTrue("first turn must expose client tools", firstBody.has("tools"));
-        assertTrue(firstBody.toString().contains("web_search"));
-        assertTrue(firstBody.toString().contains("web_fetch"));
-        await("first client-tool-capable turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+        assertFalse("Auto must not advertise Web tools on a stable turn merely because the deployment supports function calling",
+                firstBody.has("tools"));
+        await("first ordinary turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second ordinary turn"));
         RecordedRequest second = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(second);
         JSONObject secondBody = new JSONObject(second.getBody().readUtf8());
-        assertTrue("client tools are a frozen session capability and must still be exposed on the next user turn", secondBody.has("tools"));
-        assertTrue(secondBody.toString().contains("web_search"));
-        assertTrue(secondBody.toString().contains("web_fetch"));
-        await("second client-tool-capable turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+        assertFalse("client Web capability remains frozen in the session, but exposure is a per-turn product decision",
+                secondBody.has("tools"));
+        assertEquals(ClientToolRuntime.OPENAI_CHAT, app.database().getSession(sessionId).clientToolCalling);
+        await("second ordinary turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
     }
 
     @Test public void interruptKeepsPartialAnswerAndUnlocksSession() throws Exception {
