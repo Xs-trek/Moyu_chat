@@ -53,8 +53,6 @@ final class MoyuWebService implements AutoCloseable {
     private static final int MAX_URLS = 2;
     private static final Pattern URL = Pattern.compile("https://[^\\s<>()\\[\\]{}\\\"']+", Pattern.CASE_INSENSITIVE);
     private static final Pattern HTML_TITLE = Pattern.compile("(?is)<title[^>]*>(.*?)</title>");
-    private static final Pattern SEARCH_HINT = Pattern.compile(
-            "(?i)(搜索|检索|联网|查一下|查找|查证|最新|近期|新闻|官网|价格|版本|发布|更新|社区|天气|汇率|股价|行情|比分|公告|故障|发生了什么|有什么新|\\bweb\\b|\\bsearch\\b|\\blatest\\b|\\brecent\\b|\\bnews\\b|\\bprice\\b|\\brelease\\b|\\bweather\\b|exchange rate|stock price|score|outage|what happened|what's new|\\blookup\\b|\\bbrowse\\b|find online)");
     /** Follow-up wording only extends an immediately preceding Web-backed turn; it never enables Web globally. */
     private static final Pattern FOLLOW_UP_HINT = Pattern.compile(
             "(?i)(继续|接着|再查|再搜|再找|再看看|更多|进一步|刚才|上面|这些来源|那些来源|continue|more|again|follow[- ]?up|keep searching|check more)");
