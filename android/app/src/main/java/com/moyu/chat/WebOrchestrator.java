@@ -239,8 +239,9 @@ final class WebOrchestrator {
             query = stripUrls(query).trim();
             if (!query.isEmpty()) queries.add(query);
         }
-        return new Plan(useWeb, false, intent, queries, urls, freshness, category, start, end,
-                INTENT_RESEARCH.equals(intent));
+        // Deterministic fallback decides only whether/what to search. Expensive search→full-page fetch
+        // is a semantic planner decision, not a blanket rule for every follow-up/research-shaped turn.
+        return new Plan(useWeb, false, intent, queries, urls, freshness, category, start, end, false);
     }
 
     private static Plan merge(Plan deterministic, Plan modelPlan, String webMode, String userText,
