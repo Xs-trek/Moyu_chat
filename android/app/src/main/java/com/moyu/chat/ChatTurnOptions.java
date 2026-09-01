@@ -29,22 +29,34 @@ final class ChatTurnOptions {
     final JSONArray toolHistory;
     /** Exact provider output/content blocks from earlier client-tool rounds in this same user turn. */
     final JSONArray providerRoundHistory;
+    /** Product-level orchestrator decision for provider-hosted Web on this concrete turn. */
+    final boolean hostedWebAllowed;
 
     ChatTurnOptions(String toolCapabilities, String webMode) {
-        this(toolCapabilities, webMode, ClientToolRuntime.NONE, "", new JSONArray(), new JSONArray());
+        this(toolCapabilities, webMode, ClientToolRuntime.NONE, "", new JSONArray(), new JSONArray(),
+                !WEB_OFF.equals(normalizeWebMode(webMode)));
     }
 
     ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
                     String clientToolNames, JSONArray toolHistory) {
-        this(toolCapabilities, webMode, clientToolCalling, clientToolNames, toolHistory, new JSONArray());
+        this(toolCapabilities, webMode, clientToolCalling, clientToolNames, toolHistory, new JSONArray(),
+                !WEB_OFF.equals(normalizeWebMode(webMode)));
     }
 
     ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
                     String clientToolNames, JSONArray toolHistory, JSONArray providerRoundHistory) {
+        this(toolCapabilities, webMode, clientToolCalling, clientToolNames, toolHistory, providerRoundHistory,
+                !WEB_OFF.equals(normalizeWebMode(webMode)));
+    }
+
+    ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
+                    String clientToolNames, JSONArray toolHistory, JSONArray providerRoundHistory,
+                    boolean hostedWebAllowed) {
         this.toolCapabilities = normalizeCapabilities(toolCapabilities);
         this.webMode = normalizeWebMode(webMode);
         this.clientToolCalling = ClientToolRuntime.normalizeCalling(clientToolCalling);
         this.clientToolNames = normalizeClientToolNames(clientToolNames);
+        this.hostedWebAllowed = hostedWebAllowed && !WEB_OFF.equals(this.webMode);
         try {
             this.toolHistory = toolHistory == null ? new JSONArray() : new JSONArray(toolHistory.toString());
             this.providerRoundHistory = providerRoundHistory == null ? new JSONArray() : new JSONArray(providerRoundHistory.toString());
@@ -52,18 +64,18 @@ final class ChatTurnOptions {
     }
 
     ChatTurnOptions withToolHistory(JSONArray history) {
-        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, providerRoundHistory);
+        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, providerRoundHistory, hostedWebAllowed);
     }
 
     ChatTurnOptions withRoundHistory(JSONArray history, JSONArray roundHistory) {
-        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, roundHistory);
+        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, roundHistory, hostedWebAllowed);
     }
 
     ChatTurnOptions withoutClientTools() {
-        return new ChatTurnOptions(toolCapabilities, webMode, ClientToolRuntime.NONE, "", toolHistory, providerRoundHistory);
+        return new ChatTurnOptions(toolCapabilities, webMode, ClientToolRuntime.NONE, "", toolHistory, providerRoundHistory, hostedWebAllowed);
     }
 
-    boolean webEnabled() { return !WEB_OFF.equals(webMode); }
+    boolean webEnabled() { return hostedWebAllowed; }
     boolean forceFallback() { return WEB_ON.equals(webMode); }
     boolean clientToolsEnabled(String protocol) {
         return ClientToolRuntime.compatible(protocol, clientToolCalling) && !clientToolNames.isEmpty();
