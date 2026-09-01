@@ -127,6 +127,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final SmartVerifierService smartVerifier = new SmartVerifierService();
     private final FocusedSubagentService focusedSubagent = new FocusedSubagentService();
     private final ConversationImportService conversationImporter = new ConversationImportService();
+    private final WebOrchestrator webOrchestrator = new WebOrchestrator();
     private final MoyuWebService webService = new MoyuWebService();
     private final RemoteDataBridge remoteBridge;
     private final Map<String, ChatTransport.Turn> activeTurns = new ConcurrentHashMap<>();
