@@ -48,6 +48,7 @@ final class WebOrchestrator {
     private static final Pattern REALTIME = Pattern.compile(
             "(?i)(实时|现在.*(?:价格|行情|比分|天气|状态)|当前.*(?:价格|行情|比分|天气|故障|状态)|\\brealtime\\b|\\breal-time\\b|right now|live score|stock price|exchange rate|outage|weather)");
     private static final Pattern NEWS = Pattern.compile("(?i)(新闻|最新消息|近期消息|发生了什么|\\bnews\\b|what happened|latest development)");
+    private static final Pattern RECENT = Pattern.compile("(?i)(最新|近期|最近|当前版本|最新版本|最新发布|\\blatest\\b|\\brecent\\b|\\bnewest\\b|current (?:version|release|status))");
     private static final Pattern YESTERDAY = Pattern.compile("(?i)(昨天|昨日|\\byesterday\\b)");
     private static final Pattern TODAY = Pattern.compile("(?i)(今天|今日|\\btoday\\b)");
     private static final Pattern WEEK = Pattern.compile("(?i)(本周|这周|过去一周|近一周|last week|past week|this week)");
