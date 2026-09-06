@@ -2,6 +2,8 @@
 
 Moyu Chat is an Android-local Chat client with optional bounded tools. It shares the offline WebView + native glue style of Moyu Remote, but its core path does not depend on Moyu Server, EasyTier, Claude Code, Codex or OpenCode being online.
 
+Current version: **v0.0.5** (Android versionCode 5, SQLite schema 15). This maintenance release fixes turn-wide usage accounting, import memory bounds, image dimensions, and smoke/contract mismatches. See `CHANGELOG.md`.
+
 ## Product boundary
 
 - Chat sessions and durable visible history are owned by Moyu Chat and stored in its own database.
@@ -58,6 +60,8 @@ OpenAI Responses same-turn replay preserves the response output items needed bef
 
 Provider-native hosted Web has priority when explicitly declared. Otherwise, a deployment with explicit client-tool support may use Moyu typed `web_search` / `web_fetch`; deployments without client tools can still use the bounded deterministic Moyu Web fallback.
 
+Web mode is independent of Minimal/Standard/Smart. Web On and explicit URLs can trigger bounded host retrieval even when client tools are available; supported hosted Web remains preferred. The semantic planner can itself make an auxiliary model request.
+
 For Responses, the currently supported generic hosted capability is `web_search`. For Messages, hosted Web requires an explicitly declared supported Anthropic wire version such as `web_search_20260209` or `web_fetch_20250910`; generic aliases are not converted into a Messages schema.
 
 Fallback search/fetch material is ephemeral untrusted context and is not written as user-authored timeline text.
@@ -72,4 +76,14 @@ Provider Base URL is the shared API root; transports append the protocol endpoin
 
 For the official Anthropic endpoint the shared root is therefore `https://api.anthropic.com/v1`.
 
-See `PROMPT_CONTEXT.md` for the prompt/context projection details. Historical version design files describe the version named in their filename and are not a substitute for the current source.
+## Usage and local media/import limits
+
+Turn usage includes reported main, auxiliary (Router, Checkpoint, Web planner, verifier/repair), and subagent requests. Provider-reported usage is retained even when a helper fails, times out, or is cancelled. Missing usage stays unknown; partial totals are labeled accordingly. Hosted tool fees and money prices are not inferred from token counts.
+
+Call counts refer to logical transport invocations; Anthropic internal `pause_turn` HTTP continuations belong to one such invocation and retain transport-accumulated usage. These counters are not an invoice or a raw HTTP request count.
+
+Image input/output is limited to 12 MiB encoded bytes, 16,777,216 pixels and 8,192 pixels on either side; up to four draft images remain supported. Oversized images are rejected before private media files are written.
+
+Official ChatGPT/Claude imports use streaming JSON. Parsed JSON is limited to 256 MiB across selected ZIP entries, each raw JSON token to 1 Mi characters, each conversation to 8 Mi raw JSON characters, and nesting to 128 levels. Escapes count as written in JSON. Existing 20,000-conversation/node and 200,000-character message limits remain. A safety-limit failure stops the import and reports already completed conversations.
+
+`PROMPT_CONTEXT.md` and `PROJECT_REVIEW_ZH.md` are historical design/review baselines. Use this README, `ARCHITECTURE.md`, and current source for the active version.

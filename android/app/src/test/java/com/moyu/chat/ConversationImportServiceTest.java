@@ -101,5 +101,54 @@ public class ConversationImportServiceTest {
         } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("source")); }
     }
 
+    @Test public void giantStringStopsBeforeConsumerAndPreservesEarlierConversation() throws Exception {
+        String good = "{\"uuid\":\"ok\",\"chat_messages\":[{\"sender\":\"human\",\"text\":\"hello\"}]}";
+        String oversized = "{\"uuid\":\"bad\",\"chat_messages\":[{\"sender\":\"human\",\"text\":\""
+                + repeated('x', 1024 * 1024 + 1) + "\"}]}";
+        List<ConversationImportService.ImportedConversation> out = new ArrayList<>();
+        try {
+            importer.importFile("claude", "conversations.json", bytes("[" + good + "," + oversized + "]"), out::add);
+            fail("oversized string accepted");
+        } catch (ConversationImportService.PartialImportException expected) {
+            assertTrue(expected.userSummary.contains("1 Mi"));
+            assertEquals(1, out.size());
+            assertEquals("hello", out.get(0).items.getJSONObject(0).getString("text"));
+        }
+    }
+
+    @Test public void cumulativeConversationLimitAlsoCoversSkippedMetadata() throws Exception {
+        StringBuilder json = new StringBuilder("[{\"uuid\":\"large\",\"metadata\":[");
+        String field = "\"" + repeated('x', 512 * 1024) + "\"";
+        for (int i = 0; i < 17; i++) { if (i > 0) json.append(','); json.append(field); }
+        json.append("],\"chat_messages\":[{\"sender\":\"human\",\"text\":\"hello\"}]}]");
+        try {
+            importer.importFile("claude", "conversations.json", bytes(json.toString()), ignored -> fail("over-limit conversation committed"));
+            fail("aggregate limit not enforced");
+        } catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("8 Mi")); }
+    }
+
+    @Test public void escapedBracesAndQuotesDoNotCorruptConversationBudgetBoundaries() throws Exception {
+        String text = repeated('x', 1020) + "\"\\[{}]\n" + repeated('y', 2048);
+        JSONObject message = new JSONObject().put("sender", "human").put("text", text);
+        JSONObject conversation = new JSONObject().put("uuid", "ok")
+                .put("chat_messages", new org.json.JSONArray().put(message));
+        List<ConversationImportService.ImportedConversation> out = new ArrayList<>();
+        importer.importFile("claude", "conversations.json", bytes("[" + conversation + "," + conversation + "]"), out::add);
+        assertEquals(2, out.size());
+        assertEquals(text, out.get(1).items.getJSONObject(0).getString("text"));
+    }
+
+    @Test public void extremeNestingInSkippedMetadataFailsWithBoundedError() throws Exception {
+        String json = "[{\"metadata\":" + repeated('[', 130) + "0" + repeated(']', 130) + "}]";
+        try {
+            importer.importFile("chatgpt", "conversations.json", bytes(json), ignored -> fail("invalid conversation committed"));
+            fail("excessive nesting accepted");
+        } catch (java.io.IOException expected) { assertTrue(expected.getMessage().contains("128")); }
+    }
+
+    private static String repeated(char value, int count) {
+        char[] chars = new char[count]; java.util.Arrays.fill(chars, value); return new String(chars);
+    }
+
     private static ByteArrayInputStream bytes(String value) { return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8)); }
 }

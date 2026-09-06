@@ -71,6 +71,11 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** One cancellation owner spans accepted-send preparation, provider streaming and Smart post-processing. */
     private static final class TurnControl implements ClientToolRuntime.TurnCancellation {
+        final TurnUsage usage = new TurnUsage();
+        final String usageKey = "usage:turn:" + UUID.randomUUID();
+        final boolean[] usagePersisted = new boolean[]{false};
+        JSONObject usageState;
+        long requestStartedNanos;
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private final AtomicReference<Thread> taskThread = new AtomicReference<>();
         private final AtomicReference<ChatTransport.Turn> transportTurn = new AtomicReference<>();
@@ -335,6 +340,7 @@ final class ChatCoordinator implements AutoCloseable {
                             } catch (Exception error) {
                                 // Last-resort durable terminal guard: if beginTurn() already committed a live row,
                                 // no escaping preparation exception may leave the DB stuck in running/streaming.
+                                persistFinalUsage(sessionId, turnControl);
                                 try { db.failUnhandledTurn(sessionId, turnControl.isCancelled() ? "cancelled" : "turn_internal_error", safe(error)); } catch (Exception ignored) { }
                                 turnControls.remove(sessionId, turnControl);
                                 startingSessions.remove(sessionId);
@@ -583,7 +589,10 @@ final class ChatCoordinator implements AutoCloseable {
         if (activeTurns.containsKey(id)) throw new IllegalStateException("session busy");
         ChatDatabase.Provider provider = turnConfig.provider;
         String key = turnConfig.apiKey;
-        ChatTransport transport = transports.forProtocol(provider.protocol); if (transport == null) throw new IllegalStateException("provider protocol unsupported");
+        ChatTransport rawTransport = transports.forProtocol(provider.protocol); if (rawTransport == null) throw new IllegalStateException("provider protocol unsupported");
+        ChatTransport transport = turnControl.usage.track(rawTransport, TurnUsage.Kind.MAIN);
+        ChatTransport auxiliaryTransport = turnControl.usage.track(rawTransport, TurnUsage.Kind.AUXILIARY);
+        ChatTransport subagentTransport = turnControl.usage.track(rawTransport, TurnUsage.Kind.SUBAGENT);
         // Resolve only stable session policy before durable mutation. Once the user taps Send the
         // message belongs in the transcript and the composer draft must be cleared even if later
         // context preparation, Web retrieval, or provider startup fails.
@@ -615,8 +624,10 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("contextMode", turnConfig.contextMode)
                 .put("effectiveContextMode", contextPolicy.effectiveLabel);
         db.beginTurn(id, "user:" + UUID.randomUUID(), user, streamKey, live);
+        turnControl.usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString());
         startingSessions.add(id);
         final long requestStartedNanos = System.nanoTime();
+        turnControl.requestStartedNanos = requestStartedNanos;
         emitView();
         if (turnControl != null && turnControl.isCancelled()) {
             finishTurn(id, streamKey, live, "", "", new JSONArray(), new LinkedHashMap<>(), "",
@@ -646,7 +657,7 @@ final class ChatCoordinator implements AutoCloseable {
         if (preparing) { preparingSessions.add(id); emitView(); }
         try {
             if (needsRouter) {
-                TaskProfile routed = taskRouter.route(transport, provider, key, session.model, prompt);
+                TaskProfile routed = taskRouter.route(auxiliaryTransport, provider, key, session.model, prompt);
                 profile = routed != null ? routed : new TaskProfile("general", "answer", "standard", "direct", "checkpoint_recent", new JSONArray(), 0d);
                 session.taskProfile = profile.toJson().toString();
                 db.saveSession(session);
@@ -655,7 +666,7 @@ final class ChatCoordinator implements AutoCloseable {
                 needsCheckpoint = compactionPlan != null;
             }
             if (needsCheckpoint) {
-                ContextCheckpointService.Update update = checkpointService.update(transport, provider, key, session.model, compactionPlan.baseline,
+                ContextCheckpointService.Update update = checkpointService.update(auxiliaryTransport, provider, key, session.model, compactionPlan.baseline,
                         ContextCheckpoint.fromStored(session.contextCheckpoint), session.checkpointCoveredItems);
                 if (update != null) {
                     session.contextCheckpoint = update.checkpoint.toJson().toString();
@@ -689,7 +700,7 @@ final class ChatCoordinator implements AutoCloseable {
         }
         final WebOrchestrator.Plan webPlan;
         try {
-            webPlan = webOrchestrator.plan(turnConfig.webMode, input, prompt, transport, provider, key,
+            webPlan = webOrchestrator.plan(turnConfig.webMode, input, prompt, auxiliaryTransport, provider, key,
                     turnConfig.model, turnControl, webFollowUp);
         } finally {
             if (webPlanning && webPreparingStages.remove(id) != null) emitStreamingView(id);
@@ -872,9 +883,9 @@ final class ChatCoordinator implements AutoCloseable {
         int[] roundReasoningStart = new int[]{0};
         int[] roundMediaStart = new int[]{0};
         final boolean allowImageOutput = ChatDatabase.supportsModality(turnConfig.outputModalities, "image");
-        String usageKey = "usage:turn:" + UUID.randomUUID();
-        JSONObject usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString()).put("context", prompt.diagnostics());
-        boolean[] usagePersisted = new boolean[]{false};
+        String usageKey = turnControl.usageKey;
+        JSONObject usageState = turnControl.usageState.put("context", prompt.diagnostics());
+        boolean[] usagePersisted = turnControl.usagePersisted;
         int[] roundInput = new int[]{0}, roundOutput = new int[]{0}, roundCached = new int[]{0}, roundCacheWrite = new int[]{0}, roundCacheBase = new int[]{0}, roundReasoning = new int[]{0};
         int[] mainInput = new int[]{0}, mainOutput = new int[]{0}, mainCached = new int[]{0}, mainCacheWrite = new int[]{0}, mainCacheBase = new int[]{0}, mainReasoning = new int[]{0};
         ChatTransport.Sink sink = new ChatTransport.Sink() {
@@ -896,6 +907,7 @@ final class ChatCoordinator implements AutoCloseable {
                 if (subagentCount[0] > 0) usageState.put("subagentCount", subagentCount[0]);
                 if (currentInput > 0 || childInputTokens[0] > 0) usageState.put("totalInputTokens", currentInput + childInputTokens[0]);
                 if (currentOutput > 0 || childOutputTokens[0] > 0) usageState.put("totalOutputTokens", currentOutput + childOutputTokens[0]);
+                turnControl.usage.project(usageState);
             }
             private void persistUsageProjection() throws Exception {
                 refreshUsageProjection();
@@ -1079,7 +1091,7 @@ final class ChatCoordinator implements AutoCloseable {
                             turnControl.bindCurrentThread();
                             try {
                                 ClientToolRuntime.BatchResult batch = ClientToolRuntime.executeBatch(batchCalls, batchNumber, clientToolCsv,
-                                        clientToolWorker, webService, focusedSubagent, transport, provider, key, turnConfig.model,
+                                        clientToolWorker, webService, focusedSubagent, subagentTransport, provider, key, turnConfig.model,
                                         turnConfig.reasoningEffort, turnControl);
                                 worker.execute(() -> {
                                     try {
@@ -1213,7 +1225,7 @@ final class ChatCoordinator implements AutoCloseable {
                 preparationWorker.execute(() -> {
                     turnControl.bindCurrentThread();
                     try {
-                        completeSmartTurn(id, streamKey, live, session, provider, key, transport,
+                        completeSmartTurn(id, streamKey, live, session, provider, key, auxiliaryTransport,
                                 mainPrompt, input, candidate, candidateReasoning, candidateMedia, candidateSources,
                                 candidateWebBackend, continuation, verifierContext, turnConfig, turnControl);
                     } finally {
@@ -1439,6 +1451,8 @@ final class ChatCoordinator implements AutoCloseable {
     private void settleUsage(String id, String usageKey, JSONObject usageState, boolean[] usagePersisted,
                              long requestStartedNanos, long firstOutputNanos) {
         try {
+            TurnControl control = turnControls.get(id);
+            if (control != null) control.usage.project(usageState);
             long finished = System.nanoTime();
             usageState.put("requestDurationMs", Math.max(0L, (finished - requestStartedNanos) / 1_000_000L));
             if (firstOutputNanos > 0L) {
@@ -1457,8 +1471,22 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception ignored) { }
     }
 
+    private void persistFinalUsage(String id, TurnControl control) {
+        if (control != null && control.usageState != null && control.usage.hasRequests()) {
+            try {
+                control.usage.project(control.usageState);
+                control.usageState.put("requestDurationMs", Math.max(0L,
+                        (System.nanoTime() - control.requestStartedNanos) / 1_000_000L));
+                if (control.usagePersisted[0]) db.replaceTimelineBody(control.usageKey, control.usageState);
+                else { db.appendTimeline(id, control.usageKey, control.usageState); control.usagePersisted[0] = true; }
+            } catch (Exception ignored) { }
+        }
+    }
+
     private void finishTurn(String id, String streamKey, JSONObject seed, String text, String reasoning, JSONArray outputMedia,
                             Map<String, JSONObject> webSources, String webBackend, String[] error) {
+        // Preparation or verification can be the last (or only) billed request of a turn.
+        persistFinalUsage(id, turnControls.get(id));
         boolean hasVisibleOutput = !text.isEmpty() || (outputMedia != null && outputMedia.length() > 0);
         boolean hasProjection = hasVisibleOutput || (reasoning != null && !reasoning.isEmpty());
         String[] terminalError = error;

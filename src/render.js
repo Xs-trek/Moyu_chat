@@ -336,6 +336,7 @@ function timelineProjection(items = []) {
     if (!raw) continue;
     if (raw.kind === 'usage') {
       for (let i = out.length - 1; i >= 0; i -= 1) {
+        if (out[i]?.kind === 'message' && out[i]?.role === 'user') break;
         if (out[i]?.kind === 'message' && out[i]?.role === 'assistant') { out[i] = { ...out[i], __usage: raw }; break; }
       }
       continue;
@@ -395,7 +396,10 @@ function assistantFooter(item, finalized, sessionId) {
   const canAct = finalized && Number(item.localSeq) > 0;
   const reasoningTokens = tokenCount(usage?.reasoningTokens);
   const speed = Number(usage?.outputTokensPerSecond);
-  const subagentCount = tokenCount(usage?.subagentCount);
+  const subagentCount = tokenCount(usage?.subagentCallCount ?? usage?.subagentCount);
+  const auxiliaryCount = tokenCount(usage?.auxiliaryCallCount);
+  const auxiliaryInput = tokenCount(usage?.auxiliaryInputTokens);
+  const auxiliaryOutput = tokenCount(usage?.auxiliaryOutputTokens);
   const childInput = tokenCount(usage?.childInputTokens);
   const childOutput = tokenCount(usage?.childOutputTokens);
   const totalInput = tokenCount(usage?.totalInputTokens);
@@ -423,10 +427,17 @@ function assistantFooter(item, finalized, sessionId) {
     ['总耗', usage?.requestDurationMs === undefined ? '—' : seconds(usage.requestDurationMs)],
   ];
   if (subagentCount !== null && subagentCount > 0) {
-    facts.push(['子任务', `${subagentCount.toLocaleString()} 个`]);
-    facts.push(['子模型入/出', `${(childInput || 0).toLocaleString()} / ${(childOutput || 0).toLocaleString()}`]);
-    facts.push(['总入/出', `${(totalInput || 0).toLocaleString()} / ${(totalOutput || 0).toLocaleString()}`]);
+    facts.push(['子任务调用', `${subagentCount.toLocaleString()} 次`]);
+    facts.push(['子模型入/出', `${childInput?.toLocaleString() ?? '—'} / ${childOutput?.toLocaleString() ?? '—'}`]);
   }
+  if (auxiliaryCount > 0) {
+    facts.push(['辅助调用', `${auxiliaryCount.toLocaleString()} 次`]);
+    facts.push(['辅助入/出', `${auxiliaryInput?.toLocaleString() ?? '—'} / ${auxiliaryOutput?.toLocaleString() ?? '—'}`]);
+  }
+  if (subagentCount > 0 || auxiliaryCount > 0) {
+    facts.push([usage?.usageIncomplete ? '已报告总入/出' : '总入/出', `${totalInput?.toLocaleString() ?? '—'} / ${totalOutput?.toLocaleString() ?? '—'}`]);
+  }
+  if (usage?.usageIncomplete) facts.push(['用量', '部分请求未报告完整用量']);
   const signature = JSON.stringify({ sources: item.sources || [], backend, usage: usage || null, facts, canAct, localSeq: item.localSeq, verification });
   return h('footer', { class: 'assistant-footer', dataset: { footerSignature: signature } },
     sourceNode,

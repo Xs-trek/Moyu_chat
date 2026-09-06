@@ -23,6 +23,8 @@ import java.util.UUID;
 /** Private durable image store. Timeline rows keep only bounded metadata/media IDs, never base64 blobs. */
 final class ChatMediaStore {
     static final int MAX_IMAGE_BYTES = 12 * 1024 * 1024;
+    static final long MAX_IMAGE_PIXELS = 16L * 1024 * 1024;
+    static final int MAX_IMAGE_DIMENSION = 8192;
     static final int MAX_DRAFT_IMAGES = 4;
     private final File root;
 
@@ -46,6 +48,7 @@ final class ChatMediaStore {
     JSONObject saveBase64Image(String mimeType, String base64, String fileName) throws Exception {
         String mime = normalizeMime(mimeType);
         if (base64 == null || base64.trim().isEmpty()) throw new IllegalArgumentException("empty image payload");
+        if (base64.length() > (MAX_IMAGE_BYTES * 4L / 3L) + 1024L) throw new IllegalArgumentException("image exceeds local size limit");
         byte[] bytes;
         try { bytes = Base64.decode(base64, Base64.DEFAULT); }
         catch (IllegalArgumentException error) { throw new IllegalArgumentException("invalid image payload"); }
@@ -89,7 +92,7 @@ final class ChatMediaStore {
         if (bytes == null || bytes.length == 0 || bytes.length > MAX_IMAGE_BYTES) throw new IllegalArgumentException("image exceeds local size limit");
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true;
         BitmapFactory.decodeStream(new ByteArrayInputStream(bytes), null, options);
-        if (options.outWidth <= 0 || options.outHeight <= 0) throw new IllegalArgumentException("unsupported or invalid image");
+        validateDimensions(options.outWidth, options.outHeight);
         String id = UUID.randomUUID().toString();
         File target = new File(root, id);
         try (FileOutputStream out = new FileOutputStream(target)) { out.write(bytes); }
@@ -97,6 +100,13 @@ final class ChatMediaStore {
         return new JSONObject().put("mediaId", id).put("kind", "image").put("mimeType", mime)
                 .put("fileName", cleanName).put("sizeBytes", bytes.length).put("width", options.outWidth).put("height", options.outHeight)
                 .put("sha256", sha256(bytes)).put("createdAt", Instant.now().toString()).put("url", "/media/" + id);
+    }
+
+    static void validateDimensions(int width, int height) {
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("unsupported or invalid image");
+        if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION || (long) width * height > MAX_IMAGE_PIXELS) {
+            throw new IllegalArgumentException("图片尺寸过大，请缩小至 16777216 像素以内，且单边不超过 8192 像素");
+        }
     }
 
     private File fileFor(String mediaId) {

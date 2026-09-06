@@ -1,5 +1,7 @@
 # Moyu Chat architecture
 
+Current source: v0.0.5; SQLite schema remains 15.
+
 ## 1. Product boundary
 
 Moyu Chat is a supplemental Android-local Chat application. It must remain usable with no PC, no Moyu Server and no EasyTier connection. Moyu Remote remains a separate PC-runtime remote-control product; the two applications do not share a SQLite database.
@@ -137,6 +139,7 @@ Hosted Web is deployment capability, not protocol inference.
 - Messages requires a supported exact Anthropic Web tool wire version; generic `web_search`/`web_fetch` aliases are not guessed into Messages schemas.
 - When provider-native Web is absent, explicit client tools may supply Moyu `web_search` / `web_fetch`.
 - A bounded deterministic Exa/HTTPS fallback remains available for deployments without client-tool support.
+- Web mode is independent of context mode. Without hosted Web, Web On or an explicit URL may also use host retrieval on a deployment that supports client tools. Semantic Web planning is a bounded auxiliary model call.
 
 Fetched/search material is untrusted ephemeral context, not durable user text.
 
@@ -160,3 +163,11 @@ Official Anthropic shared root is `https://api.anthropic.com/v1`.
 - Remote imports are immutable bounded snapshots; handoff is explicit.
 - Failed model inputs/handoffs are not autonomously resent.
 - No shell, computer use, arbitrary filesystem mutation, Android device control, recursive subagents or autonomous agent planning loop is part of the v0.0.4 Chat runtime.
+
+## 11. Turn usage and input resource bounds
+
+`TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is ordinary timeline JSON, so this release needs no schema migration.
+
+The official export importer keeps Android `JsonReader`, with a reader guard that limits raw token size, aggregate conversation JSON size and nesting before string allocation. Format/branch interpretation still belongs to the existing importer. Resource-limit failures stop reading; completed conversations remain imported with a partial-result report. Exact limits are listed in README.
+
+`ChatMediaStore` reads image bounds without decoding pixels, rejects excessive dimensions/area, and only then creates the private media file. Byte/draft-image limits remain in force.

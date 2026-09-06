@@ -42,6 +42,8 @@ final class ConversationImportService {
     private static final int MAX_TEXT_CHARS_PER_MESSAGE = 200_000;
     private static final int MAX_TITLE_CHARS = 512;
     private static final long MAX_JSON_BYTES = 256L * 1024L * 1024L;
+    private static final int MAX_JSON_TOKEN_CHARS = 1024 * 1024;
+    private static final int MAX_CONVERSATION_JSON_CHARS = 8 * 1024 * 1024;
 
     interface Consumer { void accept(ImportedConversation conversation) throws Exception; }
 
@@ -108,6 +110,54 @@ final class ConversationImportService {
         @Override public void close() { /* caller owns the source/ZipInputStream */ }
     }
 
+    /** Bounds raw JSON before JsonReader allocates strings or we retain a whole conversation.
+     * This is only a resource guard; JsonReader remains responsible for syntax validation. */
+    private static final class BoundedJsonReader extends java.io.FilterReader {
+        private int depth, tokenChars, conversationChars;
+        private boolean quoted, escaped, inConversation;
+        private IOException failure;
+        BoundedJsonReader(java.io.Reader input) { super(input); }
+
+        private void inspect(char value) throws IOException {
+            if (failure != null) throw failure;
+            if (inConversation && ++conversationChars > MAX_CONVERSATION_JSON_CHARS) {
+                fail("单个会话 JSON 超过 8 Mi 字符安全上限");
+            }
+            if (quoted) {
+                if (!escaped && value == '"') { quoted = false; tokenChars = 0; return; }
+                if (++tokenChars > MAX_JSON_TOKEN_CHARS) fail("JSON 字符串超过 1 Mi 字符安全上限");
+                if (escaped) escaped = false;
+                else if (value == '\\') escaped = true;
+                return;
+            }
+            if (value == '"') { quoted = true; tokenChars = 0; }
+            else if (value == '{' || value == '[') {
+                if (depth == 1) { inConversation = true; conversationChars = 1; }
+                if (++depth > 128) fail("JSON 嵌套超过 128 层安全上限");
+                tokenChars = 0;
+            } else if (value == '}' || value == ']') {
+                depth--;
+                if (depth == 1) inConversation = false;
+                tokenChars = 0;
+            } else if (value == ',' || value == ':' || Character.isWhitespace(value)) tokenChars = 0;
+            else if (++tokenChars > MAX_JSON_TOKEN_CHARS) fail("JSON 值超过 1 Mi 字符安全上限");
+        }
+
+        private void fail(String message) throws IOException { failure = new IOException(message); throw failure; }
+        @Override public int read() throws IOException {
+            if (failure != null) throw failure;
+            int value = in.read();
+            if (value >= 0) inspect((char) value);
+            return value;
+        }
+        @Override public int read(char[] buffer, int offset, int length) throws IOException {
+            if (failure != null) throw failure;
+            int count = in.read(buffer, offset, length);
+            for (int i = 0; i < count; i++) inspect(buffer[offset + i]);
+            return count;
+        }
+    }
+
     private static final class MessageNode {
         String id = "";
         String parent = "";
@@ -171,7 +221,8 @@ final class ConversationImportService {
     }
 
     private void importJsonArray(String source, InputStream input, Consumer consumer, Report report) throws Exception {
-        JsonReader reader = new JsonReader(new InputStreamReader(new BoundedJsonInputStream(input, report), StandardCharsets.UTF_8));
+        JsonReader reader = new JsonReader(new BoundedJsonReader(
+                new InputStreamReader(new BoundedJsonInputStream(input, report), StandardCharsets.UTF_8)));
         reader.setLenient(false);
         if (reader.peek() != JsonToken.BEGIN_ARRAY) throw new IllegalArgumentException("官方 conversations JSON 顶层应为数组");
         report.jsonEntries++;
@@ -236,7 +287,7 @@ final class ConversationImportService {
         reader.beginObject();
         int ordinal = 0;
         while (reader.hasNext()) {
-            if (nodes.size() >= MAX_NODES_PER_CONVERSATION) throw new ImportSkip("单个 ChatGPT 会话节点过多");
+            if (nodes.size() >= MAX_NODES_PER_CONVERSATION) throw new IOException("单个 ChatGPT 会话节点过多");
             String key = reader.nextName();
             MessageNode node = readChatGptNode(reader, key, ordinal++);
             nodes.put(node.id.isEmpty() ? key : node.id, node);
@@ -387,7 +438,7 @@ final class ConversationImportService {
         if (reader.peek() != JsonToken.BEGIN_ARRAY) { reader.skipValue(); return; }
         reader.beginArray(); int ordinal = 0;
         while (reader.hasNext()) {
-            if (out.size() >= MAX_NODES_PER_CONVERSATION) throw new ImportSkip("单个 Claude 会话消息过多");
+            if (out.size() >= MAX_NODES_PER_CONVERSATION) throw new IOException("单个 Claude 会话消息过多");
             out.add(readClaudeMessage(reader, ordinal++));
         }
         reader.endArray();

@@ -1,6 +1,8 @@
 # Local development handoff
 
-Status: v0.0.4 source line. Local source and Git state are the only authority; do not assume this file proves that the current checkout has passed a build.
+Status: v0.0.5 source line (versionCode 5, SQLite schema 15). Local source and Git state are the only authority; do not assume this file proves that the current checkout has passed a build.
+
+v0.0.5 is maintenance on the v0.0.4 architecture. `TurnUsage` tracks all main/auxiliary/subagent transport calls, including reported usage on failure/cancellation; unknown usage must not be represented as zero. Import guards apply before JSON string allocation and cap aggregate conversation size. Image bounds are checked before persistence. See README/CHANGELOG for exact limits.
 
 ## Product boundary
 

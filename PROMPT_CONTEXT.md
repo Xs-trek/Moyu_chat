@@ -1,5 +1,7 @@
 # Prompt and context design — v0.0.2
 
+Historical v0.0.2 design baseline. Current mode/Harness/Web behavior is documented in README.md and ARCHITECTURE.md and implemented by the current source.
+
 ## Principle
 
 Moyu owns the durable conversation and the application policy. Providers execute a derived request plus an optional, discardable provider-native continuation lane.

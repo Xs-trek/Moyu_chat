@@ -625,9 +625,14 @@ public class ChatCoordinatorE2eTest {
         });
         assertNull("interrupt during preflight must prevent the main provider request", server.takeRequest(800, TimeUnit.MILLISECONDS));
         JSONArray rows = app.database().timeline(sessionId);
-        assertEquals("cancelled-before-main keeps the accepted user turn but removes the empty live assistant", 1, rows.length());
+        assertEquals("cancelled-before-main keeps the user and usage, but removes the empty live assistant", 2, rows.length());
         assertEquals("user", rows.getJSONObject(0).optString("role"));
         assertEquals("cancel while routing", rows.getJSONObject(0).optString("text"));
+        JSONObject usage = rows.getJSONObject(1);
+        assertEquals("usage", usage.getString("kind"));
+        assertEquals(1, usage.getInt("auxiliaryCallCount"));
+        assertTrue(usage.getBoolean("usageIncomplete"));
+        assertFalse("cancelled request did not report usage; do not invent zero", usage.has("totalInputTokens"));
     }
 
     @Test public void plainSecondTurnUsesStandardRoleHistoryWithoutToolPayload() throws Exception {
@@ -1315,6 +1320,96 @@ public class ChatCoordinatorE2eTest {
         assertFalse("old encrypted reasoning must not replay after credential rotation", secondBody.contains("old-cipher"));
         assertFalse("old provider output item must not replay after credential rotation", secondBody.contains("rs_old"));
         await("second request completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
+    private static MockResponse completion(String text, int input, int output) {
+        return sse("data: {\"choices\":[{\"delta\":{\"content\":" + JSONObject.quote(text) + "}}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":"
+                + input + ",\"completion_tokens\":" + output + "}}\n\n");
+    }
+
+    private JSONObject turnUsage(String sessionId) throws Exception {
+        JSONArray rows = app.database().timeline(sessionId);
+        JSONObject usage = null; int count = 0;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            if ("usage".equals(row.optString("kind"))) { usage = row; count++; }
+        }
+        assertEquals("a user turn has one durable usage row", 1, count);
+        return usage;
+    }
+
+    @Test public void minimalWebPlannerUsageIsIncludedEvenWhenItChoosesNoRetrieval() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return request.getBody().clone().readUtf8().contains("Web retrieval planner")
+                        ? completion("{\"useWeb\":false,\"intent\":\"none\",\"queries\":[]}", 11, 3)
+                        : completion("Shakespeare.", 7, 2);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_AUTO));
+        await("minimal session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Who wrote Hamlet?"));
+        await("planner and answer complete", () -> "completed".equals(app.database().getSession(sessionId).state));
+        JSONObject usage = turnUsage(sessionId);
+        assertEquals(2, server.getRequestCount());
+        assertEquals(1, usage.getInt("auxiliaryCallCount"));
+        assertEquals(11, usage.getInt("auxiliaryInputTokens"));
+        assertEquals(7, usage.getInt("inputTokens"));
+        assertEquals(18, usage.getInt("totalInputTokens"));
+        assertEquals(5, usage.getInt("totalOutputTokens"));
+        assertFalse(usage.getBoolean("usageIncomplete"));
+    }
+
+    @Test public void smartRouterVerificationRepairAndRecheckSettleIntoSameUsageRow() throws Exception {
+        AtomicInteger verifications = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("Classify the conversation")) return completion("invalid router JSON", 6, 2);
+                if (body.contains("Repair the candidate answer")) return completion("fixed answer", 13, 4);
+                if (body.contains("You are a verification component")) {
+                    boolean fail = verifications.incrementAndGet() == 1;
+                    try {
+                        JSONArray checks = new JSONArray();
+                        for (String rule : new String[]{"constraint_adherence", "evidence_integrity", "completion_honesty",
+                                "uncertainty_honesty", "material_factual_support"}) {
+                            boolean violation = fail && "constraint_adherence".equals(rule);
+                            checks.put(new JSONObject().put("rule", rule).put("result", violation ? "fail" : "pass")
+                                    .put("severity", violation ? "hard" : "minor")
+                                    .put("evidenceIds", new JSONArray().put("user:current")).put("note", "fixture"));
+                        }
+                        return completion(new JSONObject().put("verdict", fail ? "fail" : "pass")
+                                .put("selfConfidence", 0.9).put("checks", checks).toString(), 11, 3);
+                    } catch (Exception error) { throw new AssertionError(error); }
+                }
+                return completion("candidate answer", 7, 2);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.harnessPreset = HarnessProfile.REINFORCED;
+        app.database().saveModelProfile(profile);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.SMART).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("smart session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Reply with fixed answer."));
+        await("smart repair completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+        JSONObject usage = turnUsage(sessionId);
+        assertEquals(5, server.getRequestCount());
+        assertEquals(2, verifications.get());
+        assertEquals(4, usage.getInt("auxiliaryCallCount"));
+        assertEquals(41, usage.getInt("auxiliaryInputTokens"));
+        assertEquals(12, usage.getInt("auxiliaryOutputTokens"));
+        assertEquals(7, usage.getInt("inputTokens"));
+        assertEquals(48, usage.getInt("totalInputTokens"));
+        assertEquals(14, usage.getInt("totalOutputTokens"));
+        assertFalse(usage.getBoolean("usageIncomplete"));
+        assertTrue(app.database().timeline(sessionId).toString().contains("fixed answer"));
     }
 
     @Test public void standardSubagentToolLoopReturnsOneFinalParentAnswerAndAggregatesChildUsage() throws Exception {

@@ -167,7 +167,7 @@ if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_
 if (!webService.includes('Moyu Fetch only allows HTTPS URLs') || !webService.includes('publicDns') || !webService.includes('validateHttpsUri')) fail('Moyu Fetch HTTPS/SSRF boundary missing');
 if (!webService.includes('validateToolFetchArgument(') || !webService.includes('web_fetch.url must be exactly one absolute HTTPS URL with no surrounding text') || !webService.includes('Never salvage a URL from')) fail('client web_fetch must reject free-form prompt text and return a correctable typed tool error instead of guessing a URL');
 if (!webService.includes('untrusted reference material') || !webService.includes('never as instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
-if (!webService.includes('MoyuChat/0.0.4')) fail('Moyu Fetch User-Agent version must match v0.0.4');
+if (!webService.includes('MoyuChat/0.0.5')) fail('Moyu Fetch User-Agent version must match v0.0.5');
 if (!coordinator.includes('final CanonicalPrompt preWebPrompt = prompt;')
     || !coordinator.includes('contexts.appendRequiredUserSuffix(preWebPrompt')
     || !coordinator.includes('promptContainsLatestUserSuffix(webPrompt, candidate.promptSuffix)')
@@ -306,9 +306,25 @@ if (!contract.includes('export interface VerificationView') || !contract.include
 if (!contract.includes('export interface ConversationStreamPatch') || !contract.includes("scope: 'conversation.stream'") || !contract.includes('patch?: ConversationStreamPatch')) fail('contract must expose the bounded native-to-WebView streaming patch data plane');
 
 const packageJson = JSON.parse(read('package.json'));
+// Exercise the actual pure projection: failed turns must not overwrite a previous reply's usage.
+try {
+  const projection = new Function(render
+    .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
+    .replace(/\bexport\s+(?=(?:async\s+)?function\b|class\b|const\b|let\b|var\b)/g, '')
+    + '\nreturn timelineProjection;')();
+  const rows = projection([
+    { kind: 'message', role: 'user', text: 'first' },
+    { kind: 'message', role: 'assistant', text: 'answer' },
+    { kind: 'usage', inputTokens: 7 },
+    { kind: 'message', role: 'user', text: 'failed follow-up' },
+    { kind: 'usage', auxiliaryInputTokens: 11 },
+    { kind: 'error', summary: 'stopped' },
+  ]);
+  if (rows[1].__usage?.inputTokens !== 7) fail('failed-turn usage must not overwrite the previous assistant footer');
+} catch (error) { fail('usage timeline projection failed: ' + error.message); }
 const gradle = read('android/app/build.gradle');
-if (packageJson.version !== '0.0.4' || !gradle.includes("versionName '0.0.4'") || !gradle.includes('versionCode 4')) fail('v0.0.4 product version metadata is not aligned');
-if (!mainUi.includes("uiVersion: '0.0.4'")) fail('WebView app.ready version must match v0.0.4');
+if (packageJson.version !== '0.0.5' || !gradle.includes("versionName '0.0.5'") || !gradle.includes('versionCode 5')) fail('v0.0.5 product version metadata is not aligned');
+if (!mainUi.includes("uiVersion: '0.0.5'")) fail('WebView app.ready version must match v0.0.5');
 
 if (failed) process.exit(1);
-console.log('moyu-chat v0.0.4 static architecture checks passed');
+console.log('moyu-chat v0.0.5 static architecture checks passed');
