@@ -116,13 +116,44 @@ function mockPayload(s, turnId, callIndex) {
     { part: 1, direction: 'response', createdAt: now(), body: JSON.stringify(response) }] };
 }
 
+/** Every answer to one question across sessions (original + re-answers), shaped like ChatDatabase.answerGroup(). */
+function mockAnswers(turnId) {
+  const replies = [];
+  for (const s of world.sessions) for (const m of s.messages) if (m.turnId) replies.push({ s, m });
+  const found = replies.find(({ m }) => m.turnId === turnId);
+  if (!found) throw new Error('turn not found');
+  const root = found.m.rerunOf || found.m.turnId;
+  const group = replies.filter(({ m }) => m.turnId === root || m.rerunOf === root);
+  const question = (() => {
+    const origin = group.find(({ m }) => m.turnId === root) || group[0];
+    const at = origin.s.messages.indexOf(origin.m);
+    for (let i = at - 1; i >= 0; i--) if (origin.s.messages[i].role === 'user') return origin.s.messages[i].text;
+    return '';
+  })();
+  return { rootTurnId: root, question, answers: group.map(({ s, m }) => ({ turnId: m.turnId, localSessionId: s.localSessionId, sessionTitle: s.title, status: m.incomplete ? 'cancelled' : 'ok',
+    config: { modelName: m.modelName || s.modelName, contextMode: s.contextMode }, usage: usageRow({ outputTokens: Math.round((m.text || '').length / 1.6) }),
+    rating: m.rating, original: m.turnId === root, text: m.text, verification: m.verification ? { verdict: m.verification.verdict, repaired: Boolean(m.verification.repaired) } : undefined })) };
+}
+
+/** Plausible per model × mode rows for the stats page. */
+function mockStats(days) {
+  const k = days / 7;
+  return { days, rows: [
+    { model: 'Claude Sonnet 5.5', contextMode: 'smart', turns: Math.round(42 * k), ok: Math.round(40 * k), failed: 2, cancelled: 0, avgFirstOutputMs: 1850, avgDurationMs: 14200, avgTokens: 23800, helperShare: 0.27, routed: Math.round(6 * k), webUsed: Math.round(15 * k), verified: Math.round(18 * k), repaired: 3, ratedUp: 9, ratedDown: 2 },
+    { model: 'GPT-5.2', contextMode: 'standard', turns: Math.round(31 * k), ok: Math.round(31 * k), failed: 0, cancelled: 1, avgFirstOutputMs: 950, avgDurationMs: 8100, avgTokens: 15400, helperShare: 0.06, routed: 0, webUsed: Math.round(9 * k), verified: 0, repaired: 0, ratedUp: 5, ratedDown: 1 },
+    { model: 'DeepSeek Chat', contextMode: 'minimal', turns: Math.round(12 * k), ok: Math.round(12 * k), failed: 0, cancelled: 0, avgFirstOutputMs: 620, avgDurationMs: 5200, avgTokens: 9100, routed: 0, webUsed: 0, verified: 0, repaired: 0, ratedUp: 0, ratedDown: 0 },
+  ] };
+}
+
 function notice(text) { window.dispatchEvent(new CustomEvent('moyu:notice', { detail: { level: 'info', text: `[mock] ${text}` } })); }
 
 /** Simulates one turn: stages → reasoning deltas → answer deltas → final row + usage, at native patch cadence. */
 function startStream(s, text, { web = s.webMode === 'on', fail = false } = {}) {
   const user = { localSeq: nextSeq(s), kind: 'message', role: 'user', text, createdAt: now() };
   s.messages.push(user);
-  const reply = { localSeq: nextSeq(s), turnId: `turn-live-${Date.now()}`, kind: 'message', role: 'assistant', text: '', reasoning: '', model: s.model, modelName: s.modelName, modelProfileId: s.modelProfileId,
+  const rerunOf = world.pendingReruns?.[s.localSessionId];
+  if (world.pendingReruns) delete world.pendingReruns[s.localSessionId];
+  const reply = { localSeq: nextSeq(s), turnId: `turn-live-${Date.now()}`, ...(rerunOf ? { rerunOf } : {}), kind: 'message', role: 'assistant', text: '', reasoning: '', model: s.model, modelName: s.modelName, modelProfileId: s.modelProfileId,
     reasoningAvailable: Boolean(s.reasoningLevels), reasoningEffort: s.reasoningEffort, streaming: true, streamStage: 'preparing', createdAt: now() };
   s.messages.push(reply);
   s.composerDraft = '';
@@ -186,6 +217,10 @@ function finish(s, reply, { web = false, error = false, interrupted = false } = 
   if (error) s.messages.push({ localSeq: nextSeq(s), kind: 'error', code: 'provider.stream_reset', summary: '模拟错误：流在输出中途被服务端重置。', createdAt: now() });
   s.state = error ? 'failed' : 'completed';
   s.preview = reply.text.slice(0, 60);
+  if (reply.rerunOf) {
+    const group = mockAnswers(reply.turnId);
+    for (const answer of group.answers) for (const x of world.sessions) for (const m of x.messages) if (m.turnId === answer.turnId) m.answers = group.answers.length;
+  }
   emitView();
 }
 
@@ -230,6 +265,7 @@ function handle(type, p) {
     case 'chat.message.rollback': if (s) s.messages = s.messages.filter((x) => Number(x.localSeq) < p.localSeq); break;
     case 'chat.message.edit': if (s) { const item = s.messages.find((x) => x.localSeq === p.localSeq); s.composerDraft = item?.text || ''; s.messages = s.messages.filter((x) => Number(x.localSeq) < p.localSeq); } break;
     case 'branch.create.local': notice(`创建分支（through ${p.throughSeq ?? '末尾'}）`); return;
+    case 'turn.rate': for (const x of world.sessions) for (const m of x.messages) if (m.turnId === p.turnId) { if (p.rating) m.rating = p.rating; else delete m.rating; } break;
     case 'verification.feedback': { const item = s?.messages.find((x) => x.localSeq === p.localSeq); if (item?.verification) item.verification = { ...item.verification, feedbackLabel: p.label }; break; }
     case 'external.open': notice(`打开外部链接 ${p.url}`); return;
     case 'provider.configure.open': case 'model.configure.open': notice('原生配置对话框（预览中不可用）'); return;
@@ -241,6 +277,32 @@ function handle(type, p) {
 window.MoyuHost = {
   postMessage(raw) {
     const message = JSON.parse(raw);
+    if (message.type === 'turn.rerun') {
+      try {
+        const source = findSession(message.payload?.localSessionId);
+        const seq = Number(message.payload?.localSeq);
+        const question = source.messages.find((x) => x.localSeq === seq);
+        const reply = source.messages.find((x) => x.role === 'assistant' && x.localSeq > seq && x.turnId);
+        const provider = world.providers.find((x) => x.models.some((m) => m.modelProfileId === (message.payload.modelProfileId || source.modelProfileId)));
+        const model = provider?.models.find((m) => m.modelProfileId === (message.payload.modelProfileId || source.modelProfileId));
+        const id = `s-rerun-${Date.now()}`;
+        const mode = message.payload.contextMode || source.contextMode;
+        world.sessions.unshift({ ...source, localSessionId: id, title: `重答 · ${source.title}`, messages: source.messages.filter((x) => Number(x.localSeq) < seq).map((x) => ({ ...x })),
+          contextMode: mode, effectiveContextMode: mode, ...(model ? { modelProfileId: model.modelProfileId, model: model.modelId, modelName: model.displayName, providerId: provider.providerId, providerName: provider.displayName } : {}),
+          composerDraft: '', draftMedia: question?.attachments || [], state: 'idle', updatedAt: now() });
+        world.pendingReruns = { ...(world.pendingReruns || {}), [id]: reply?.turnId };
+        world.activeSessionId = id; world.route = 'conversation';
+        emitView();
+        result(message.requestId, true, '', { localSessionId: id, text: question?.text || '' });
+      } catch (error) { result(message.requestId, false, error.message); }
+      return;
+    }
+    if (message.type === 'turn.answers.get') {
+      try { result(message.requestId, true, '', mockAnswers(message.payload?.turnId)); }
+      catch (error) { result(message.requestId, false, error.message); }
+      return;
+    }
+    if (message.type === 'stats.get') { result(message.requestId, true, '', mockStats(Number(message.payload?.days) || 7)); return; }
     if (message.type === 'turn.payload.get') {
       try { result(message.requestId, true, '', mockPayload(findSession(message.payload?.localSessionId), message.payload?.turnId, message.payload?.callIndex)); }
       catch (error) { result(message.requestId, false, error.message); }

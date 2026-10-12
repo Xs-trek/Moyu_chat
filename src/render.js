@@ -4,7 +4,7 @@ import { button, fmtTime, h, icon, iconButton } from './dom.js';
 import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
-import { loadTrace, peekTrace } from './trace.js';
+import { forgetRemote, loadRemote, loadTrace, peekTrace } from './remote.js';
 import * as vm from './view-model.js';
 
 export { openConfirmDialog, openTextDialog } from './overlays.js';
@@ -164,6 +164,33 @@ function settings(view) {
         h('p', { class: 'setting-desc', text: 'Chat 使用自己的本地数据库；API Key 只保存在 Android 安全存储，不进入 WebView 或 SQLite。TaskProfile 与 Checkpoint 只是可重建的上下文控制状态。' }))));
 }
 
+// ---------- Stats ----------
+
+const STATS_PERIODS = [[7, '7 天'], [30, '30 天'], [90, '90 天']];
+let statsDays = 7;
+export function setStatsDays(days) { statsDays = STATS_PERIODS.some(([d]) => d === Number(days)) ? Number(days) : 7; }
+/** Statistics are re-read every time the page is opened. */
+export function forgetStats() { for (const [days] of STATS_PERIODS) forgetRemote(`stats:${days}`); }
+
+function stats() {
+  const entry = loadRemote(`stats:${statsDays}`, 'stats.get', { days: statsDays });
+  let content;
+  if (!entry || entry.state === 'loading') content = h('p', { class: 'setting-desc', text: '读取中…' });
+  else if (entry.state === 'error') content = h('p', { class: 'setting-desc', text: `未能读取：${entry.error}` });
+  else {
+    const rows = vm.statsView(entry.data);
+    content = rows.length ? rows.map((row) => h('section', { class: 'card stats-card' },
+      h('div', { class: 'stats-head' }, h('strong', { class: 'grow truncate', text: row.title }), h('span', { class: 'chip quiet', text: row.mode })),
+      h('dl', { class: 'stats-grid' }, row.cells.map(([k, v]) => h('div', { class: 'stats-cell' }, h('dt', { text: k }), h('dd', { text: v }))))))
+      : h('section', { class: 'card' }, h('p', { class: 'setting-desc', text: '这段时间还没有完成的回合。' }));
+  }
+  return h('main', { class: 'page stats-page' }, appHeader('统计', '按模型和上下文模式汇总的使用情况'),
+    h('div', { class: 'page-body stack' },
+      segmentedSetting('统计周期', 'stats-days', 'days', STATS_PERIODS.map(([d, label]) => [String(d), label]), String(statsDays)),
+      h('p', { class: 'setting-desc', text: '辅助占比 = 路由、压缩、联网规划、校验、修正、子任务消耗的 token 占比；路由 / 联网 / 校验是实际执行的回合比例。用来判断某个辅助模块对某个模型还值不值得开。' }),
+      content));
+}
+
 // ---------- Conversation ----------
 
 function conversationSubtitle(session) {
@@ -310,6 +337,9 @@ function detailRows(item, sessionId, canAct) {
             : button('漏错', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'missed_error' }, 'btn small ghost'),
         ] : null));
   }
+  if (item.turnId && !item.inherited && Number(item.answers) > 1) {
+    out.push(h('div', { class: 'compare-row' }, button(`对比这个问题的 ${item.answers} 次回答`, 'open-answers', { sessionId, turnId: item.turnId }, 'btn small ghost')));
+  }
   if (item.turnId && !item.inherited) out.push(traceSection(sessionId, item.turnId));
   return out;
 }
@@ -346,11 +376,13 @@ function summaryFooter(item, ctx, canAct) {
   const key = vm.timelineKey(item);
   const expanded = expandedTurns.has(key);
   const verification = vm.verificationState(item.verification);
-  const signature = JSON.stringify({ usage: item.__usage || null, v: item.verification || null, canAct, expanded, d: ctx.delight, inc: item.incomplete, src: item.sources?.length || 0, wb: item.webBackend || '', tr: expanded ? peekTrace(item.turnId)?.state || '' : '' });
+  const signature = JSON.stringify({ usage: item.__usage || null, v: item.verification || null, canAct, expanded, d: ctx.delight, inc: item.incomplete, src: item.sources?.length || 0, wb: item.webBackend || '', tr: expanded ? peekTrace(item.turnId)?.state || '' : '', r: item.rating || 0, a: item.answers || 0 });
   return h('footer', { class: 'turn-foot', dataset: { footerSignature: signature } },
     h('div', { class: 'turn-sum' },
       h('button', { type: 'button', class: 'sum-toggle', 'aria-expanded': expanded ? 'true' : 'false', 'aria-label': expanded ? '收起用量详情' : '展开用量详情', dataset: { action: 'toggle-turn-details', itemKey: key } },
         summaryParts(item.__usage, item, ctx.delight), item.incomplete ? h('span', { class: 'chip warn', text: item.terminalCode === 'interrupted' ? '已中断' : '未完成' }) : null,
+        item.rating ? h('span', { class: `rate-mark ${item.rating > 0 ? 'up' : 'down'}`, title: item.rating > 0 ? '好答案' : '不好' }, icon(item.rating > 0 ? 'thumbUp' : 'thumbDown', 'ico ico-xs')) : null,
+        Number(item.answers) > 1 ? h('span', { class: 'chip quiet', title: '这个问题有多次回答', text: `${item.answers} 答` }) : null,
         icon(expanded ? 'chevronUp' : 'chevronDown', 'ico ico-xs')),
       verification?.seal ? h('span', { class: `seal${verification.seal === '存疑' ? ' doubt' : ''}`, title: verification.label, text: verification.seal }) : null,
       canAct ? iconButton('copy', '复制回答', 'copy-message', { sessionId: ctx.sessionId, localSeq: item.localSeq }, 'icon-btn mini') : null,
@@ -637,7 +669,7 @@ export function render() {
   const anchor = captureTimelineAnchor();
   const sessionId = view.activeSession?.localSessionId || '';
   applyRoot(view);
-  const pages = { home, conversation, providers, settings };
+  const pages = { home, conversation, providers, settings, stats };
   root.replaceChildren((pages[view.route] || home)(view));
   if (view.route === 'conversation' && view.activeSession) {
     const timeline = root.querySelector('.timeline');

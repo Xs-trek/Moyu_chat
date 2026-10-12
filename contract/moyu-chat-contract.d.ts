@@ -2,7 +2,7 @@ export type RequestId = string;
 export type Theme = 'system' | 'light' | 'dark';
 /** Background tone of the soft palette; colours themselves live in src/styles.css and MainActivity.canvasColor. */
 export type Tone = 'sage' | 'warm' | 'neutral';
-export type Route = 'home' | 'conversation' | 'providers' | 'settings';
+export type Route = 'home' | 'conversation' | 'providers' | 'settings' | 'stats';
 export type SessionState = 'idle' | 'running' | 'completed' | 'failed';
 export type ContextMode = 'minimal' | 'standard' | 'smart';
 export type WebMode = 'off' | 'auto' | 'on';
@@ -52,7 +52,15 @@ export type MoyuChatIntent =
   /** Read-only; the intent.result carries `data: TurnPayloadView`. */
   | UiIntent<'turn.payload.get', { localSessionId: string; turnId: string; callIndex: number }>
   /** Protocol inspector on/off: record redacted request / response text of each model call (recent turns only). */
-  | UiIntent<'inspector.capture.set', { enabled: boolean }>;
+  | UiIntent<'inspector.capture.set', { enabled: boolean }>
+  /** 1 = good answer, -1 = bad answer, 0 clears. */
+  | UiIntent<'turn.rate', { localSessionId: string; turnId: string; rating: 1 | -1 | 0 }>
+  /** Re-ask the user message at localSeq in a new branch; result `data: { localSessionId, text }`, then send `text` there. */
+  | UiIntent<'turn.rerun', { localSessionId: string; localSeq: number; modelProfileId?: string; contextMode?: ContextMode }>
+  /** Read-only; result `data: AnswerGroupView`. */
+  | UiIntent<'turn.answers.get', { localSessionId: string; turnId: string }>
+  /** Read-only; result `data: { days, since, rows: StatsRowView[] }`. */
+  | UiIntent<'stats.get', { days: number }>;
 
 export interface MediaView {
   mediaId: string;
@@ -209,7 +217,7 @@ export interface SessionView {
 }
 
 export type TimelineItem =
-  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'connecting' | 'connected' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question across re-answers, when more than one. */ answers?: number; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'connecting' | 'connected' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
   /** Projected from the turn record (not a stored timeline row): placed right after the turn's reply, or after its user row when there is none. */
   | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
@@ -252,6 +260,23 @@ export interface TurnPayloadView {
   callIndex: number;
   stage: string;
   parts: { part: number; direction: 'request' | 'response'; createdAt: string; body: string }[];
+}
+
+/** Every answer to one question: the original turn and its re-answers (original first). */
+export interface AnswerGroupView {
+  rootTurnId: string;
+  question: string;
+  answers: { turnId: string; localSessionId: string; sessionTitle: string; userSeq: number; status: string; terminalCode: string; config: Record<string, unknown>; usage: Record<string, unknown>; rating?: 1 | -1; original: boolean; startedAt: string; text?: string; verification?: { verdict: string; action: string; repaired: boolean } }[];
+}
+
+/** In-use statistics per model × context mode (finished turns in the window). */
+export interface StatsRowView {
+  model: string; contextMode: string;
+  turns: number; ok: number; failed: number; cancelled: number;
+  avgFirstOutputMs?: number; avgDurationMs?: number; avgTokens?: number;
+  mainTokens: number; helperTokens: number; helperShare?: number;
+  routed: number; checkpointed: number; webUsed: number; verified: number; repaired: number;
+  ratedUp: number; ratedDown: number;
 }
 
 export interface SessionDetailView extends SessionView {

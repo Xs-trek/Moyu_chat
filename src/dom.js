@@ -46,6 +46,11 @@ const ICONS = {
   image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 2-2 5 5', 'M15 9h.01'],
   stop: [],
   list: ['M8 6h12', 'M8 12h12', 'M8 18h12', 'M4 6h.01', 'M4 12h.01', 'M4 18h.01'],
+  chart: ['M4 20h16', 'M7 16v-5', 'M12 16V7', 'M17 16v-8'],
+  thumbUp: ['M7 11v9H4v-9z', 'M7 11l4-7a2 2 0 0 1 2 2v3h5a2 2 0 0 1 2 2.3l-1.2 6A2 2 0 0 1 16.8 20H7'],
+  thumbDown: ['M7 13V4H4v9z', 'M7 13l4 7a2 2 0 0 0 2-2v-3h5a2 2 0 0 0 2-2.3l-1.2-6A2 2 0 0 0 16.8 4H7'],
+  compare: ['M4 5h7v14H4z', 'M13 5h7v14h-7z'],
+  retry: ['M20 12a8 8 0 1 1-2.3-5.7', 'M20 4v5h-5'],
 };
 
 export function icon(name, cls = 'ico') {

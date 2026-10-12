@@ -194,6 +194,57 @@ public class TurnPipelineTest {
         assertEquals("capture off records nothing", 0, app.database().turnTrace(sessionId, second).getJSONArray("calls").length());
     }
 
+    @Test public void reAnswerWithAnotherModeIsLinkedRatedAndCounted() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) { return chat("answer " + calls.incrementAndGet()); }
+        });
+        Trace first = runTurn(ContextMode.MINIMAL, "same question");
+        String sourceId = latestView().optString("activeLocalSessionId");
+        String originalTurn = first.turn.optString("turnId");
+
+        post("turn.rerun", new JSONObject().put("localSessionId", sourceId).put("localSeq", 1).put("contextMode", ContextMode.STANDARD));
+        String rerunRequest = "r" + requestId;
+        await("rerun result", () -> resultFor(rerunRequest) != null);
+        JSONObject rerun = resultFor(rerunRequest).getJSONObject("data");
+        String branchId = rerun.getString("localSessionId");
+        assertNotEquals(sourceId, branchId);
+        assertEquals("same question", rerun.getString("text"));
+        assertEquals(ContextMode.STANDARD, app.database().getSession(branchId).contextMode);
+        assertEquals("the branch starts before the re-asked message", 0, app.database().timeline(branchId).length());
+
+        post("chat.session.send", new JSONObject().put("localSessionId", branchId).put("text", rerun.getString("text")));
+        await("re-answer finished", () -> finishedTrace(branchId) != null);
+        JSONObject group = app.database().answerGroup(branchId, finishedTrace(branchId).turn.optString("turnId"));
+        assertEquals(originalTurn, group.optString("rootTurnId"));
+        assertEquals("same question", group.optString("question"));
+        assertEquals(2, group.getJSONArray("answers").length());
+        assertTrue(group.getJSONArray("answers").getJSONObject(0).optBoolean("original"));
+        assertEquals("answer 2", group.getJSONArray("answers").getJSONObject(1).optString("text"));
+
+        post("turn.rate", new JSONObject().put("localSessionId", branchId).put("turnId", finishedTrace(branchId).turn.optString("turnId")).put("rating", 1));
+        await("rating shown", () -> {
+            JSONObject session = latestView() == null ? null : latestView().optJSONObject("activeSession");
+            if (session == null || !branchId.equals(session.optString("localSessionId"))) return false;
+            JSONArray messages = session.optJSONArray("messages");
+            for (int i = 0; i < messages.length(); i++) {
+                JSONObject item = messages.optJSONObject(i);
+                if ("assistant".equals(item.optString("role")) && item.optInt("rating") == 1 && item.optInt("answers") == 2) return true;
+            }
+            return false;
+        });
+
+        post("stats.get", new JSONObject().put("days", 7));
+        String statsRequest = "r" + requestId;
+        await("stats", () -> resultFor(statsRequest) != null);
+        JSONArray rows = resultFor(statsRequest).getJSONObject("data").getJSONArray("rows");
+        assertEquals("one row per model x mode", 2, rows.length());
+        int up = 0, turns = 0;
+        for (int i = 0; i < rows.length(); i++) { up += rows.getJSONObject(i).optInt("ratedUp"); turns += rows.getJSONObject(i).optInt("turns"); }
+        assertEquals(1, up);
+        assertEquals(2, turns);
+    }
+
     @Test public void standardModeWatchesTheBudgetButNeverRoutesOrVerifies() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) { return chat("standard answer"); }

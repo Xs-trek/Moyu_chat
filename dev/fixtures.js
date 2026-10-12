@@ -50,6 +50,9 @@ export function session(id, title, modelProfileId, extra = {}) {
   };
 }
 
+/** Turn ids are unique across every fixture session, like native UUIDs. */
+let fixtureTurns = 0;
+
 /** Builds a timeline with consecutive localSeq values; usage rows follow their assistant reply. */
 export function timeline(turns, startMinute = 0) {
   const items = [];
@@ -62,7 +65,7 @@ export function timeline(turns, startMinute = 0) {
     if (turn.assistant === undefined) continue;
     const { model: m } = profileOf(turn.modelProfileId || 'm-sonnet');
     items.push({
-      localSeq: ++seq, turnId: `turn-${seq}`, kind: 'message', role: 'assistant', text: turn.assistant, reasoning: turn.reasoning || '', model: m.modelId, modelName: m.displayName,
+      localSeq: ++seq, turnId: `turn-${++fixtureTurns}`, kind: 'message', role: 'assistant', text: turn.assistant, reasoning: turn.reasoning || '', model: m.modelId, modelName: m.displayName,
       modelProfileId: m.modelProfileId, reasoningAvailable: Boolean(m.reasoningLevels), reasoningEffort: turn.effort || 'default', sources: turn.sources, webBackend: turn.webBackend,
       verification: turn.verification, incomplete: turn.incomplete, terminalCode: turn.terminalCode, createdAt: at(minute + 1),
     });

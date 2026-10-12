@@ -153,7 +153,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 + "session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
                 + "user_seq INTEGER NOT NULL,assistant_key TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,"
                 + "status TEXT NOT NULL,terminal_code TEXT NOT NULL DEFAULT '',config TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',"
+                + "rating INTEGER CHECK(rating IN (-1,1)),rerun_of TEXT,"
                 + "UNIQUE(session_id,user_seq))");
+        // A re-answer points at the turn it re-asks (any session); the original may be deleted later.
+        db.execSQL("CREATE INDEX turns_rerun ON turns(rerun_of)");
         db.execSQL("CREATE INDEX turns_started ON turns(started_at)");
         // Turn span: one pipeline stage of a turn (ran / skipped and why, duration, decision, helper usage).
         db.execSQL("CREATE TABLE turn_spans(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"
@@ -509,6 +512,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             ContentValues turn = new ContentValues(); turn.put("turn_id", turnId); turn.put("session_id", sessionId); turn.put("user_seq", seq);
             turn.put("assistant_key", streamKey); turn.put("started_at", Instant.now().toString()); turn.put("status", "running");
             turn.put("config", config == null ? "{}" : config.toString());
+            String rerunOf = config == null ? "" : config.optString("rerunOf", "");
+            if (!rerunOf.isEmpty()) turn.put("rerun_of", rerunOf);
             db.insertWithOnConflict("turns", null, turn, SQLiteDatabase.CONFLICT_ABORT);
 
             ContentValues state = new ContentValues(); state.put("state", "running"); state.put("updated_at", Instant.now().toString());
@@ -726,13 +731,104 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized JSONArray turns(String sessionId) {
         JSONArray out = new JSONArray();
         if (sessionId == null) return out;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT turn_id,user_seq,status,usage FROM turns WHERE session_id=? ORDER BY user_seq", new String[]{sessionId})) {
+        // answers = this question's answers across re-answers (the original turn plus every turn that re-asks it).
+        String sql = "SELECT t.turn_id,t.user_seq,t.status,t.usage,t.rating,"
+                + "(SELECT COUNT(*) FROM turns g WHERE g.turn_id=COALESCE(t.rerun_of,t.turn_id) OR g.rerun_of=COALESCE(t.rerun_of,t.turn_id))"
+                + " FROM turns t WHERE t.session_id=? ORDER BY t.user_seq";
+        try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sessionId})) {
             while (c.moveToNext()) try {
-                out.put(new JSONObject().put("turnId", c.getString(0)).put("userSeq", c.getInt(1)).put("status", c.getString(2))
-                        .put("usage", new JSONObject(c.getString(3))));
+                JSONObject turn = new JSONObject().put("turnId", c.getString(0)).put("userSeq", c.getInt(1)).put("status", c.getString(2))
+                        .put("usage", new JSONObject(c.getString(3))).put("answers", c.getInt(5));
+                if (!c.isNull(4)) turn.put("rating", c.getInt(4));
+                out.put(turn);
             } catch (Exception ignored) { }
         }
         return out;
+    }
+
+    /** The turn record that started at the given user row, or null. */
+    public synchronized String turnAt(String sessionId, int userSeq) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT turn_id FROM turns WHERE session_id=? AND user_seq=?", new String[]{sessionId, String.valueOf(userSeq)})) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    /** 1 = good answer, -1 = bad answer, 0 clears the rating. */
+    public synchronized void rateTurn(String sessionId, String turnId, int rating) {
+        if (!(rating == 1 || rating == -1 || rating == 0)) throw new IllegalArgumentException("rating must be 1, -1 or 0");
+        ContentValues v = new ContentValues();
+        if (rating == 0) v.putNull("rating"); else v.put("rating", rating);
+        if (getWritableDatabase().update("turns", v, "session_id=? AND turn_id=?", new String[]{sessionId, turnId}) != 1) throw new IllegalArgumentException("turn not found");
+    }
+
+    /**
+     * Every answer to one question: the original turn and all turns that re-ask it, oldest first, with
+     * the session, the turn's config and usage, its rating, verification summary and answer text.
+     */
+    public synchronized JSONObject answerGroup(String sessionId, String turnId) {
+        SQLiteDatabase db = getReadableDatabase();
+        try {
+            String root;
+            try (Cursor c = db.rawQuery("SELECT COALESCE(rerun_of,turn_id) FROM turns WHERE session_id=? AND turn_id=?", new String[]{sessionId, turnId})) {
+                if (!c.moveToFirst()) return null;
+                root = c.getString(0);
+            }
+            JSONArray answers = new JSONArray();
+            String question = "";
+            String sql = "SELECT t.turn_id,t.session_id,s.title,t.user_seq,t.assistant_key,t.status,t.terminal_code,t.config,t.usage,t.rating,t.started_at"
+                    + " FROM turns t JOIN sessions s ON s.local_id=t.session_id WHERE t.turn_id=? OR t.rerun_of=? ORDER BY t.started_at";
+            try (Cursor c = db.rawQuery(sql, new String[]{root, root})) {
+                while (c.moveToNext()) {
+                    JSONObject answer = new JSONObject().put("turnId", c.getString(0)).put("localSessionId", c.getString(1)).put("sessionTitle", c.getString(2))
+                            .put("userSeq", c.getInt(3)).put("status", c.getString(5)).put("terminalCode", c.getString(6))
+                            .put("config", new JSONObject(c.getString(7))).put("usage", new JSONObject(c.getString(8))).put("startedAt", c.getString(10))
+                            .put("original", c.getString(0).equals(root));
+                    if (!c.isNull(9)) answer.put("rating", c.getInt(9));
+                    try (Cursor body = db.rawQuery("SELECT body FROM timeline WHERE item_key=?", new String[]{c.getString(4)})) {
+                        if (body.moveToFirst()) {
+                            JSONObject item = new JSONObject(body.getString(0));
+                            answer.put("text", item.optString("text", ""));
+                            JSONObject verification = item.optJSONObject("verification");
+                            if (verification != null) answer.put("verification", new JSONObject().put("verdict", verification.optString("verdict", ""))
+                                    .put("action", verification.optString("action", "")).put("repaired", verification.optBoolean("repaired", false)));
+                        }
+                    }
+                    if (question.isEmpty()) try (Cursor user = db.rawQuery("SELECT body FROM timeline WHERE session_id=? AND local_seq=?", new String[]{c.getString(1), String.valueOf(c.getInt(3))})) {
+                        if (user.moveToFirst()) question = new JSONObject(user.getString(0)).optString("text", "");
+                    }
+                    answers.put(answer);
+                }
+            }
+            return new JSONObject().put("rootTurnId", root).put("question", question).put("answers", answers);
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
+    }
+
+    /** Per model × context mode statistics of turns started at or after {@code sinceIso}. */
+    public synchronized JSONArray turnStats(String sinceIso) {
+        TurnStats stats = new TurnStats();
+        SQLiteDatabase db = getReadableDatabase();
+        String sql = "SELECT t.turn_id,t.config,t.usage,t.status,t.rating,s.stage,s.status,s.input_tokens,s.output_tokens,s.detail"
+                + " FROM turns t LEFT JOIN turn_spans s ON s.turn_id=t.turn_id WHERE t.started_at>=? AND t.status<>'running' ORDER BY t.turn_id,s.ordinal";
+        try (Cursor c = db.rawQuery(sql, new String[]{sinceIso == null ? "" : sinceIso})) {
+            String current = null; JSONObject config = null, usage = null; String status = null; Integer rating = null;
+            java.util.ArrayList<JSONObject> spans = new java.util.ArrayList<>();
+            while (c.moveToNext()) {
+                String turnId = c.getString(0);
+                if (!turnId.equals(current)) {
+                    if (current != null) stats.add(config, usage, status, rating, spans);
+                    current = turnId; spans = new java.util.ArrayList<>();
+                    config = new JSONObject(c.getString(1)); usage = new JSONObject(c.getString(2)); status = c.getString(3);
+                    rating = c.isNull(4) ? null : c.getInt(4);
+                }
+                if (c.isNull(5)) continue;
+                JSONObject span = new JSONObject().put("stage", c.getString(5)).put("status", c.getString(6)).put("detail", new JSONObject(c.getString(9)));
+                if (!c.isNull(7)) span.put("inputTokens", c.getLong(7));
+                if (!c.isNull(8)) span.put("outputTokens", c.getLong(8));
+                spans.add(span);
+            }
+            if (current != null) stats.add(config, usage, status, rating, spans);
+            return stats.toJson();
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }
 
     /** One turn with its configuration, usage and ordered stage spans; null when the turn does not belong to the session. */

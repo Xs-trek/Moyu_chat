@@ -42,6 +42,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, String> webPreparingStages = new ConcurrentHashMap<>();
     private final Map<String, String> postProcessingStages = new ConcurrentHashMap<>();
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
+    /** Branch session → the turn its next turn re-answers (set by turn.rerun, consumed when that turn starts). */
+    private final Map<String, String> pendingReruns = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
     private volatile boolean uiReady;
@@ -310,6 +312,30 @@ final class ChatCoordinator implements AutoCloseable {
                 }
                 case "verification.feedback": recordVerificationFeedback(required(p, "localSessionId"), requiredSeq(p), required(p, "label")); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
+                case "turn.rate": {
+                    int rating = p.optInt("rating", 0);
+                    db.rateTurn(required(p, "localSessionId"), required(p, "turnId"), rating);
+                    break;
+                }
+                case "turn.rerun": {
+                    JSONObject branch = rerunTurn(required(p, "localSessionId"), requiredSeq(p),
+                            p.optString("modelProfileId", "").trim(), p.optString("contextMode", "").trim());
+                    emitView();
+                    result(requestId, true, null, branch);
+                    return;
+                }
+                case "turn.answers.get": {
+                    JSONObject group = db.answerGroup(required(p, "localSessionId"), required(p, "turnId"));
+                    if (group == null) throw new IllegalArgumentException("turn not found");
+                    result(requestId, true, null, group);
+                    return; // read-only: no view change
+                }
+                case "stats.get": {
+                    int days = Math.max(1, Math.min(365, p.optInt("days", 7)));
+                    String since = Instant.now().minus(java.time.Duration.ofDays(days)).toString();
+                    result(requestId, true, null, new JSONObject().put("days", days).put("since", since).put("rows", db.turnStats(since)));
+                    return; // read-only: no view change
+                }
                 case "turn.payload.get": {
                     if (!p.has("callIndex")) throw new IllegalArgumentException("missing callIndex");
                     JSONObject payload = db.turnPayload(required(p, "localSessionId"), required(p, "turnId"), p.optInt("callIndex", -1));
@@ -439,7 +465,7 @@ final class ChatCoordinator implements AutoCloseable {
     void handleSystemBack(Runnable exitApp) {
         worker.execute(() -> {
             if (!"home".equals(route)) {
-                route = ("providers".equals(route) || "settings".equals(route)) && activeSessionId != null && db.getSession(activeSessionId) != null ? "conversation" : "home";
+                route = ("providers".equals(route) || "settings".equals(route) || "stats".equals(route)) && activeSessionId != null && db.getSession(activeSessionId) != null ? "conversation" : "home";
                 db.putSetting("route", route);
                 emitView();
             } else if (exitApp != null) exitApp.run();
@@ -503,6 +529,7 @@ final class ChatCoordinator implements AutoCloseable {
         @Override public ChatTransport.Turn removeActiveTurn(String sessionId) { return activeTurns.remove(sessionId); }
         @Override public boolean ownsTurn(String sessionId, TurnControl control) { return turnControls.get(sessionId) == control; }
         @Override public boolean wireCaptureEnabled() { return wireCapture; }
+        @Override public String takeRerunOf(String sessionId) { return pendingReruns.remove(sessionId); }
         @Override public void releaseTurn(String id) {
             activeTurns.remove(id);
             turnControls.remove(id);
@@ -522,6 +549,41 @@ final class ChatCoordinator implements AutoCloseable {
         ChatTransport.Turn turn = activeTurns.get(id);
         if (turn != null) try { turn.cancel(); } catch (Exception ignored) { }
         emitStreamingView(id);
+    }
+
+    /**
+     * Re-asks one user message in a new branch: the branch carries the conversation before that message,
+     * optionally another model and/or context mode, and the message's attachments as its draft. The
+     * caller sends the returned text; that turn is recorded as a re-answer of the original turn.
+     */
+    private JSONObject rerunTurn(String sourceSessionId, int userSeq, String modelProfileId, String contextMode) throws Exception {
+        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
+        if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before re-answering");
+        JSONObject question = messageAt(sourceSessionId, userSeq);
+        if (!"user".equals(question.optString("role"))) throw new IllegalArgumentException("only user messages can be re-answered");
+        String originalTurn = db.turnAt(sourceSessionId, userSeq);
+        String snapshotId = userSeq > 1 || source.originSnapshotId != null ? snapshots.createLocal(sourceSessionId, userSeq - 1).id : null;
+        ChatDatabase.Session branch = db.branchSession(source, "重答 · " + source.title, snapshotId, sourceSessionId);
+        // A re-answer is judged on its own: re-route and re-plan instead of inheriting the source's routing.
+        branch.taskProfile = "";
+        if (!contextMode.isEmpty()) {
+            branch.contextMode = ContextMode.normalize(contextMode);
+            branch.subagentMode = ContextMode.MINIMAL.equals(branch.contextMode) ? HarnessPolicyResolver.SUBAGENT_OFF
+                    : ContextMode.SMART.equals(branch.contextMode) ? HarnessPolicyResolver.SUBAGENT_AUTO : standardSubagentMode;
+        }
+        db.saveSession(branch);
+        JSONArray attachments = question.optJSONArray("attachments");
+        db.replaceDraftMedia(branch.id, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
+        try {
+            if (!modelProfileId.isEmpty() && !modelProfileId.equals(branch.modelProfileId)) setSessionModel(branch.id, modelProfileId);
+        } catch (Exception error) {
+            db.deleteSession(branch.id);
+            mediaStore.pruneUnreferenced(db.referencedMediaIds());
+            throw error;
+        }
+        if (originalTurn != null) pendingReruns.put(branch.id, originalTurn);
+        activate(branch.id);
+        return new JSONObject().put("localSessionId", branch.id).put("text", question.optString("text", ""));
     }
 
     private void createLocalBranch(String sourceSessionId, Integer throughSeq) throws Exception {
@@ -745,6 +807,9 @@ final class ChatCoordinator implements AutoCloseable {
             if (usage == null || usage.length() == 0) continue;
             byUserSeq.put(turn.optInt("userSeq"), new JSONObject(usage.toString()).put("kind", "usage").put("turnId", turn.optString("turnId")));
         }
+        java.util.HashMap<Integer, JSONObject> turnBySeq = new java.util.HashMap<>();
+        for (int i = 0; turns != null && i < turns.length(); i++) { JSONObject turn = turns.optJSONObject(i); if (turn != null) turnBySeq.put(turn.optInt("userSeq"), turn); }
+        JSONObject currentTurn = null;
         JSONArray out = new JSONArray();
         JSONObject pending = null;
         for (int i = 0; timeline != null && i < timeline.length(); i++) {
@@ -755,7 +820,14 @@ final class ChatCoordinator implements AutoCloseable {
                 if (pending != null) out.put(pending);
                 out.put(item);
                 pending = byUserSeq.get(item.optInt("localSeq", -1));
+                currentTurn = turnBySeq.get(item.optInt("localSeq", -1));
                 continue;
+            }
+            if (currentTurn != null && message && "assistant".equals(role)) {
+                item = new JSONObject(item.toString());
+                if (currentTurn.has("rating")) item.put("rating", currentTurn.optInt("rating"));
+                if (currentTurn.optInt("answers", 1) > 1) item.put("answers", currentTurn.optInt("answers"));
+                currentTurn = null;
             }
             out.put(item);
             if (pending != null && message && "assistant".equals(role)) { out.put(pending); pending = null; }
@@ -819,7 +891,7 @@ final class ChatCoordinator implements AutoCloseable {
     private static String nonEmpty(String value, String fallback) { return value == null || value.trim().isEmpty() ? fallback : value.trim(); }
     private static String empty(String v) { return v == null || v.isEmpty() ? null : v; }
     private static String bounded(String value, int max, String label) { String v = value == null ? "" : value.trim(); if (v.isEmpty()) throw new IllegalArgumentException(label + " required"); if (v.length() > max) throw new IllegalArgumentException(label + " too long"); return v; }
-    private static String validRoute(String value) { String v = value == null ? "" : value.trim(); if (!("home".equals(v) || "conversation".equals(v) || "providers".equals(v) || "settings".equals(v))) return "home"; return v; }
+    private static String validRoute(String value) { String v = value == null ? "" : value.trim(); if (!("home".equals(v) || "conversation".equals(v) || "providers".equals(v) || "settings".equals(v) || "stats".equals(v))) return "home"; return v; }
     /** "system" follows the Android night mode; the WebView never has to guess from prefers-color-scheme. */
     private String resolvedTheme() {
         if (!"system".equals(theme)) return theme;

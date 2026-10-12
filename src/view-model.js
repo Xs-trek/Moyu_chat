@@ -257,6 +257,55 @@ export function payloadParts(data) {
   });
 }
 
+/** Every answer to one question, as comparable cards (original first, then re-answers in order). */
+export function answersView(group) {
+  // Original first, then re-answers in the order they were asked.
+  const answers = (Array.isArray(group?.answers) ? group.answers : []).slice().sort((a, b) => Number(Boolean(b.original)) - Number(Boolean(a.original)));
+  let rerun = 0;
+  return {
+    question: String(group?.question || ''),
+    items: answers.map((answer) => {
+      const config = answer.config || {};
+      const u = turnUsage(answer.usage);
+      const totals = turnTotals(u);
+      const tokens = totals.input !== null || totals.output !== null ? `${compact(totals.input)} → ${compact(totals.output)}` : '';
+      const verification = answer.verification || null;
+      return {
+        sessionId: answer.localSessionId,
+        turnId: answer.turnId,
+        title: answer.original ? '原回答' : `重答 ${++rerun}`,
+        subtitle: [config.modelName || config.model, contextLabel(config.effectiveContextMode || config.contextMode)].filter(Boolean).join(' · '),
+        metrics: [u?.firstMs !== null && u?.firstMs !== undefined ? `首字 ${secs(u.firstMs)}` : '', u?.totalMs !== null && u?.totalMs !== undefined ? `总耗 ${secs(u.totalMs)}` : '', tokens].filter(Boolean).join(' · '),
+        verdict: verification ? `${VERDICTS[verification.verdict] || verification.verdict || '已校验'}${verification.repaired ? ' · 已修正' : ''}` : '',
+        rating: Number(answer.rating) || 0,
+        failed: answer.status === 'failed' || answer.status === 'cancelled',
+        text: String(answer.text || ''),
+      };
+    }),
+  };
+}
+
+/** Statistics rows as cards: one per model × context mode. */
+export function statsView(data) {
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+  const pct = (part, whole) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—');
+  return rows.map((row) => ({
+    title: row.model || '—',
+    mode: contextLabel(row.contextMode),
+    cells: [
+      ['回合', `${row.turns}${row.failed ? ` · 失败 ${row.failed}` : ''}${row.cancelled ? ` · 停止 ${row.cancelled}` : ''}`],
+      ['首字', row.avgFirstOutputMs !== undefined ? secs(row.avgFirstOutputMs) : '—'],
+      ['平均耗时', row.avgDurationMs !== undefined ? secs(row.avgDurationMs) : '—'],
+      ['平均 token', row.avgTokens !== undefined ? compact(row.avgTokens) : '—'],
+      ['辅助占比', row.helperShare !== undefined ? `${Math.round(row.helperShare * 100)}%` : '—'],
+      ['路由', pct(row.routed, row.turns)],
+      ['联网', pct(row.webUsed, row.turns)],
+      ['校验 / 修正', row.verified ? `${pct(row.verified, row.turns)} / ${row.repaired} 次` : '—'],
+      ['评价', row.ratedUp || row.ratedDown ? `好 ${row.ratedUp} · 差 ${row.ratedDown}` : '—'],
+    ],
+  }));
+}
+
 /** Normalised numbers for one turn's usage row (all optional; null means not reported). */
 export function turnUsage(usage) {
   if (!usage) return null;

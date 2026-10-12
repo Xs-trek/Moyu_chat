@@ -42,6 +42,8 @@ final class TurnPipeline {
         void putActiveTurn(String sessionId, ChatTransport.Turn turn);
         ChatTransport.Turn removeActiveTurn(String sessionId);
         boolean ownsTurn(String sessionId, TurnControl control);
+        /** The turn this session's next turn re-answers (from turn.rerun), or null; consumed on read. */
+        String takeRerunOf(String sessionId);
         /** Whether redacted request / response text is recorded for the protocol inspector. */
         boolean wireCaptureEnabled();
         /** Clears every busy flag for the session, releases the runtime lease and emits a full view. */
@@ -129,7 +131,10 @@ final class TurnPipeline {
         turnControl.turnId = turnId;
         if (env.wireCaptureEnabled()) usage.setWireRecorder((stage, callIndex, direction, wireText) -> db.addTurnPayload(turnId, callIndex, stage, direction, wireText));
         r.live.put("turnId", turnId);
-        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, turnConfigJson(r));
+        JSONObject config = turnConfigJson(r);
+        String rerunOf = env.takeRerunOf(id);
+        if (rerunOf != null) config.put("rerunOf", rerunOf);
+        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config);
         turnControl.usageState = new JSONObject().put("createdAt", Instant.now().toString());
         env.setStarting(id, true);
         r.requestStartedNanos = System.nanoTime();

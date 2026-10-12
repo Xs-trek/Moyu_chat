@@ -2,6 +2,7 @@
 // bottom sheets (action lists and per-turn settings) and app-owned dialogs. Android Back closes the top one.
 import { requestIntent } from './bridge.js';
 import { button, h, icon, iconButton } from './dom.js';
+import { renderMarkdownInto } from './markdown.js';
 import { fish } from './mascot.js';
 import { getState } from './state.js';
 import * as vm from './view-model.js';
@@ -57,6 +58,7 @@ export function renderDrawer(view) {
       h('div', { class: 'drawer-list' }, (view.sessions || []).length ? sessionList(view) : h('p', { class: 'drawer-empty', text: '还没有会话' })),
       h('footer', { class: 'drawer-foot' },
         h('button', { type: 'button', class: `drawer-link${view.route === 'providers' ? ' active' : ''}`, dataset: { action: 'nav', route: 'providers' } }, icon('sliders'), 'Provider 与模型'),
+        h('button', { type: 'button', class: `drawer-link${view.route === 'stats' ? ' active' : ''}`, dataset: { action: 'nav', route: 'stats' } }, icon('chart'), '统计'),
         h('button', { type: 'button', class: `drawer-link${view.route === 'settings' ? ' active' : ''}`, dataset: { action: 'nav', route: 'settings' } }, icon('gear'), '设置'))));
   root.classList.toggle('open', drawerOpen);
 }
@@ -72,6 +74,70 @@ export function setDrawer(open) {
 /** items: [{ label, icon, action, data, danger, disabled, hint }]. Every item closes the sheet after dispatch. */
 export function openActions(title, items) { sheet = { kind: 'actions', title, items }; paintSheet(null); }
 export function openTurnSettings(sessionId) { sheet = { kind: 'turn', sessionId }; paintSheet(getState().view); }
+
+/** Re-answer one user message in a new branch, optionally with another model and/or context mode. */
+export function openRerun(sessionId, localSeq) {
+  const session = getState().view?.activeSession;
+  if (!session || session.localSessionId !== sessionId) return;
+  sheet = { kind: 'rerun', sessionId, localSeq: Number(localSeq), modelProfileId: session.modelProfileId, contextMode: session.contextMode || 'standard' };
+  paintSheet(getState().view);
+}
+
+export function setRerunChoice(choice) {
+  if (sheet?.kind !== 'rerun') return;
+  sheet = { ...sheet, ...choice };
+  paintSheet(getState().view);
+}
+
+/** The pending re-answer choice, or null when the sheet is not open. */
+export function rerunChoice() { return sheet?.kind === 'rerun' ? { ...sheet } : null; }
+
+function rerunSheet(view, state) {
+  const choices = vm.modelChoices(view);
+  return [h('h2', { class: 'sheet-title', text: '换个方式重答' }),
+    h('p', { class: 'sheet-note', text: '在新分支里重新发送这条消息，只带它之前的对话；原会话不变，两次回答可以放在一起对比。' }),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: '模型' }),
+      h('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': '模型' }, choices.map(({ provider, model }) => {
+        const selected = model.modelProfileId === state.modelProfileId;
+        return h('button', { type: 'button', role: 'radio', 'aria-checked': selected ? 'true' : 'false', class: `choice-row${selected ? ' selected' : ''}`,
+          dataset: { action: 'rerun-model', modelProfileId: model.modelProfileId } },
+        h('span', { class: 'radio' }), h('span', { class: 'grow truncate', text: model.displayName || model.modelId }), h('small', { class: 'truncate', text: provider.displayName }));
+      }))),
+    segmented('上下文模式', ['minimal', 'standard', 'smart'], state.contextMode, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '',
+      dataset: { action: 'rerun-mode', contextMode: value }, text: vm.contextLabel(value) })),
+    h('div', { class: 'sheet-foot' }, button('重答', 'rerun-confirm', {}, 'btn primary'))];
+}
+
+/** Every answer to one question side by side (stacked on phones). */
+export function openAnswers(sessionId, turnId) {
+  const opened = { kind: 'answers', state: 'loading' };
+  sheet = opened;
+  paintSheet(null);
+  requestIntent('turn.answers.get', { localSessionId: sessionId, turnId })
+    .then((data) => { if (sheet === opened) { sheet = { ...opened, state: 'ready', data }; paintSheet(null); } })
+    .catch((error) => { if (sheet === opened) { sheet = { ...opened, state: 'error', error: String(error?.message || error || '') }; paintSheet(null); } });
+}
+
+function answerText(text) {
+  const box = h('div', { class: 'answer-text markdown-body' });
+  if (text) renderMarkdownInto(box, text); else box.textContent = '（没有回答）';
+  return box;
+}
+
+function answersSheet(state) {
+  const head = h('h2', { class: 'sheet-title', text: '对比回答' });
+  if (state.state === 'loading') return [head, h('p', { class: 'sheet-note', text: '读取中…' })];
+  if (state.state === 'error') return [head, h('p', { class: 'sheet-note', text: `未能读取：${state.error || '没有记录'}` })];
+  const view = vm.answersView(state.data);
+  return [head,
+    view.question ? h('p', { class: 'answers-question', text: view.question }) : null,
+    h('div', { class: 'answers' }, view.items.map((item) => h('article', { class: `answer-card${item.failed ? ' failed' : ''}` },
+      h('header', { class: 'answer-head' }, h('strong', { text: item.title }), h('small', { class: 'grow truncate', text: item.subtitle }),
+        item.rating ? h('span', { class: `rate-mark ${item.rating > 0 ? 'up' : 'down'}`, title: item.rating > 0 ? '好答案' : '不好' }, icon(item.rating > 0 ? 'thumbUp' : 'thumbDown', 'ico ico-xs')) : null),
+      item.metrics || item.verdict ? h('p', { class: 'answer-metrics', text: [item.metrics, item.verdict].filter(Boolean).join(' · ') }) : null,
+      answerText(item.text),
+      h('div', { class: 'answer-foot' }, button('打开会话', 'open-session', { sessionId: item.sessionId, closeSheet: '1' }, 'btn small ghost')))))];
+}
 
 /** Protocol inspector: the redacted request / response text of one recorded model call. */
 export function openPayload(sessionId, turnId, callIndex, title) {
@@ -132,6 +198,10 @@ function paintSheet(view) {
       }, item.icon ? icon(item.icon) : null, h('span', { class: 'grow' }, item.label, item.hint ? h('small', { text: item.hint }) : null))))];
   } else if (sheet.kind === 'payload') {
     body = payloadSheet(sheet);
+  } else if (sheet.kind === 'answers') {
+    body = answersSheet(sheet);
+  } else if (sheet.kind === 'rerun') {
+    body = rerunSheet(view || getState().view, sheet);
   } else {
     const session = view?.activeSession;
     if (!session || session.localSessionId !== sheet.sessionId) { closeSheet(); return; }

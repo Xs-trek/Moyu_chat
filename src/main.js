@@ -1,16 +1,16 @@
-import { bindHost, postIntent } from './bridge.js';
+import { bindHost, postIntent, requestIntent } from './bridge.js';
 import { flash, randomQuote } from './mascot.js';
-import { closeSheet, handleBack, openActions, openConfirmDialog, openPayload, openTextDialog, openTurnSettings, payloadText, selectPayloadPart, setDrawer } from './overlays.js';
+import { closeSheet, handleBack, openActions, openAnswers, openConfirmDialog, openPayload, openRerun, openTextDialog, openTurnSettings, payloadText, rerunChoice, selectPayloadPart, setDrawer, setRerunChoice } from './overlays.js';
 import { createRenderGate } from './render-gate.js';
-import { patchConversation, render, renderNotice, resizeTextarea, syncTurnNavigator, toggleTurnDetails } from './render.js';
+import { forgetStats, patchConversation, render, renderNotice, resizeTextarea, setStatsDays, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
 import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
-import { forgetTrace, onTraceChange } from './trace.js';
+import { forgetRemote, onRemoteChange, traceKey } from './remote.js';
 import * as vm from './view-model.js';
 
 const renderGate = createRenderGate(render);
 // A requested turn trace arrived: refresh the expanded footer in place.
-onTraceChange(() => { if (!patchConversation()) renderGate.request(); });
+onRemoteChange(() => { if (!patchConversation()) renderGate.request(); });
 subscribe((_state, change) => {
   if (change?.scope === 'toast') renderNotice();
   else if (!patchConversation()) renderGate.request();
@@ -132,12 +132,33 @@ function conversationMenu(target) {
   void target;
 }
 
+/** Re-answer: create the branch natively, then send the same message there. */
+function rerun() {
+  const choice = rerunChoice();
+  if (!choice) return;
+  closeSheet();
+  requestIntent('turn.rerun', { localSessionId: choice.sessionId, localSeq: choice.localSeq, modelProfileId: choice.modelProfileId, contextMode: choice.contextMode })
+    .then((data) => { if (data?.localSessionId) postIntent('chat.session.send', { localSessionId: data.localSessionId, text: String(data.text || '') }); })
+    .catch((error) => setNotice({ level: 'error', text: `重答失败：${error?.message || error}` }));
+}
+
+function messageItem(seq) {
+  return currentView()?.activeSession?.messages?.find((entry) => Number(entry.localSeq) === seq && entry.kind === 'message') || null;
+}
+
 function messageMenu(target) {
   const sessionId = target.dataset.sessionId;
   const localSeq = String(seqOf(target));
   const user = target.dataset.role === 'user';
+  const item = messageItem(seqOf(target));
+  const turnId = !user && item?.turnId && !item.inherited ? item.turnId : '';
+  const rating = Number(item?.rating) || 0;
   openActions(user ? '这条提问' : '这条回答', [
     user ? { label: '编辑后重发', icon: 'edit', action: 'edit-message', data: { sessionId, localSeq } } : null,
+    user && !item?.inherited ? { label: '换个模型或模式重答', icon: 'retry', action: 'rerun-open', data: { sessionId, localSeq }, hint: '在新分支里重新发送，原会话不变' } : null,
+    turnId ? { label: rating > 0 ? '取消“好答案”' : '好答案', icon: 'thumbUp', action: 'rate-turn', data: { sessionId, turnId, rating: rating > 0 ? '0' : '1' } } : null,
+    turnId ? { label: rating < 0 ? '取消“不好”' : '不好', icon: 'thumbDown', action: 'rate-turn', data: { sessionId, turnId, rating: rating < 0 ? '0' : '-1' } } : null,
+    turnId && Number(item?.answers) > 1 ? { label: `对比 ${item.answers} 次回答`, icon: 'compare', action: 'open-answers', data: { sessionId, turnId } } : null,
     { label: '复制', icon: 'copy', action: 'copy-message', data: { sessionId, localSeq } },
     { label: '从这里分支', icon: 'branch', action: 'branch-message', data: { sessionId, localSeq }, hint: '保留原会话，另开一条路线' },
     { label: '回退到这里之前', icon: 'undo', action: 'rollback-message', data: { sessionId, localSeq }, danger: true, hint: '撤销这条及之后的消息' },
@@ -181,7 +202,14 @@ document.addEventListener('click', (event) => {
   else if (action === 'open-payload') openPayload(target.dataset.sessionId, target.dataset.turnId, target.dataset.callIndex, target.dataset.title);
   else if (action === 'payload-part') selectPayloadPart(target.dataset.part);
   else if (action === 'payload-copy') copyText(payloadText(), target, '已复制报文');
-  else if (action === 'trace-retry') { forgetTrace(target.dataset.turnId); if (!patchConversation()) renderGate.request(); }
+  else if (action === 'trace-retry') { forgetRemote(traceKey(target.dataset.turnId)); if (!patchConversation()) renderGate.request(); }
+  else if (action === 'rate-turn') postIntent('turn.rate', { localSessionId: sessionId, turnId: target.dataset.turnId, rating: Number(target.dataset.rating) || 0 });
+  else if (action === 'open-answers') openAnswers(sessionId, target.dataset.turnId);
+  else if (action === 'rerun-open') openRerun(sessionId, target.dataset.localSeq);
+  else if (action === 'rerun-model') setRerunChoice({ modelProfileId: target.dataset.modelProfileId });
+  else if (action === 'rerun-mode') setRerunChoice({ contextMode: target.dataset.contextMode });
+  else if (action === 'rerun-confirm') rerun();
+  else if (action === 'stats-days') { setStatsDays(target.dataset.days); renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
   else if (action === 'toggle-turn-nav') {
     const nav = target.closest('.turn-nav');
@@ -224,7 +252,7 @@ document.addEventListener('click', (event) => {
     setOptimisticWebMode(sessionId, webMode);
     postIntent('chat.session.web.set', { localSessionId: sessionId, webMode });
   }
-  else if (action === 'nav') { closeDrawerIfOverlay(); postIntent('nav.open', { route: target.dataset.route }); }
+  else if (action === 'nav') { closeDrawerIfOverlay(); if (target.dataset.route === 'stats') forgetStats(); postIntent('nav.open', { route: target.dataset.route }); }
   else if (action === 'theme') postIntent('appearance.set', { theme: target.dataset.theme });
   else if (action === 'tone') postIntent('appearance.set', { tone: target.dataset.tone });
   else if (action === 'toggle-delight') postIntent('ui.delight.set', { enabled: target.dataset.enabled === 'true' });
