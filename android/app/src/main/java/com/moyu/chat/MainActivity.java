@@ -6,6 +6,7 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
@@ -13,6 +14,7 @@ import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsetsController;
 import android.webkit.JavascriptInterface;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceRequest;
@@ -358,7 +360,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     private String appliedAppearance = "";
 
     /** Keeps status/navigation bars and the pre-WebView window background on the same canvas token as the UI. */
-    @SuppressWarnings("deprecation") @Override public void applyAppearance(String resolvedTheme, String tone) {
+    @Override public void applyAppearance(String resolvedTheme, String tone) {
         runOnUiThread(() -> {
             boolean dark = "dark".equals(resolvedTheme);
             String key = (dark ? "dark" : "light") + ":" + tone;
@@ -369,11 +371,25 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             window.setStatusBarColor(canvas);
             window.setNavigationBarColor(canvas);
             window.getDecorView().setBackgroundColor(canvas);
-            View decor = window.getDecorView();
-            int flags = decor.getSystemUiVisibility();
-            int lightBars = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-            decor.setSystemUiVisibility(dark ? flags & ~lightBars : flags | lightBars);
+            setLightSystemBars(window, !dark);
         });
+    }
+
+    /** Dark icons on light bars. API 30+ uses WindowInsetsController; 26–29 still need the View flags. */
+    private static void setLightSystemBars(Window window, boolean light) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController controller = window.getInsetsController();
+            if (controller == null) return;
+            int mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            controller.setSystemBarsAppearance(light ? mask : 0, mask);
+        } else setLegacyLightSystemBars(window.getDecorView(), light);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void setLegacyLightSystemBars(View decor, boolean light) {
+        int flags = decor.getSystemUiVisibility();
+        int lightBars = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        decor.setSystemUiVisibility(light ? flags | lightBars : flags & ~lightBars);
     }
 
     /** Mirrors --canvas in src/styles.css. */
