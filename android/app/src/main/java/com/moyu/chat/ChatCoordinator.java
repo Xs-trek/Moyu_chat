@@ -26,7 +26,7 @@ final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_ITEMS = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
     private static final long STREAM_PROJECTION_INTERVAL_MS = 50L;
-    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); }
+    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } }
 
     /** Immutable user-selected/deployment turn configuration frozen on the serialized intent worker. */
     private static final class TurnConfig {
@@ -144,6 +144,11 @@ final class ChatCoordinator implements AutoCloseable {
     private volatile String route;
     private volatile String activeSessionId;
     private String theme;
+    private String tone;
+    private boolean delight;
+    private final java.util.function.BooleanSupplier systemDark;
+    private String usageTodayKey = "";
+    private JSONObject usageTodayCache;
     private boolean showReasoning;
     private boolean crossChatMemoryEnabled;
     private String defaultContextMode;
@@ -155,12 +160,15 @@ final class ChatCoordinator implements AutoCloseable {
     /** JVM tests inject an in-memory secret store. */
     ChatCoordinator(MoyuChatApplication app, Host host, ChatSecretStore secrets) {
         this.db = app.database(); this.secrets = secrets; this.mediaStore = app.mediaStore(); this.host = host;
+        this.systemDark = () -> (app.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES;
         this.contexts = new ContextBuilder(db, mediaStore); this.snapshots = new SnapshotService(db);
         // Recovery runs on the same single worker as every intent, so it is ordered before any send.
         worker.execute(() -> { db.recoverInterruptedSessions(); emitView(); });
         this.route = validRoute(db.setting("route", "home"));
         this.activeSessionId = empty(db.setting("activeSessionId", ""));
         this.theme = validTheme(db.setting("theme", "system"));
+        this.tone = validTone(db.setting("tone", "sage"));
+        this.delight = !"false".equals(db.setting("delight", "true"));
         this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
         this.crossChatMemoryEnabled = "true".equals(db.setting("crossChatMemoryEnabled", "false"));
         String legacySmart = db.setting("smartContextEnabled", "true");
@@ -276,7 +284,13 @@ final class ChatCoordinator implements AutoCloseable {
             switch (type) {
                 case "app.ready": uiReady = true; break;
                 case "view.reload": break;
-                case "appearance.set": theme = validTheme(required(p, "theme")); db.putSetting("theme", theme); break;
+                case "appearance.set": {
+                    if (!p.has("theme") && !p.has("tone")) throw new IllegalArgumentException("appearance.set requires theme or tone");
+                    if (p.has("theme")) { theme = validTheme(required(p, "theme")); db.putSetting("theme", theme); }
+                    if (p.has("tone")) { tone = validTone(required(p, "tone")); db.putSetting("tone", tone); }
+                    break;
+                }
+                case "ui.delight.set": delight = p.optBoolean("enabled", true); db.putSetting("delight", delight ? "true" : "false"); break;
                 case "chat.reasoning.visibility.set": showReasoning = p.optBoolean("show", false); db.putSetting("showReasoning", showReasoning ? "true" : "false"); break;
                 case "memory.global.set": crossChatMemoryEnabled = p.optBoolean("enabled", false); db.putSetting("crossChatMemoryEnabled", crossChatMemoryEnabled ? "true" : "false"); break;
                 case "context.mode.default.set": defaultContextMode = ContextMode.normalize(required(p, "mode")); db.putSetting("defaultContextMode", defaultContextMode); break;
@@ -497,7 +511,7 @@ final class ChatCoordinator implements AutoCloseable {
     void handleSystemBack(Runnable exitApp) {
         worker.execute(() -> {
             if (!"home".equals(route)) {
-                route = "home";
+                route = ("providers".equals(route) || "settings".equals(route)) && activeSessionId != null && db.getSession(activeSessionId) != null ? "conversation" : "home";
                 db.putSetting("route", route);
                 emitView();
             } else if (exitApp != null) exitApp.run();
@@ -1626,7 +1640,10 @@ final class ChatCoordinator implements AutoCloseable {
     private synchronized void emitView() {
         if (closed || !uiReady) return;
         try {
-            JSONObject view = new JSONObject().put("route", route).put("now", Instant.now().toString()).put("appearance", new JSONObject().put("theme", theme).put("resolvedTheme", "dark".equals(theme) ? "dark" : "light"));
+            String resolvedTheme = resolvedTheme();
+            host.applyAppearance(resolvedTheme, tone);
+            JSONObject view = new JSONObject().put("route", route).put("now", Instant.now().toString())
+                    .put("appearance", new JSONObject().put("theme", theme).put("resolvedTheme", resolvedTheme).put("tone", tone).put("delight", delight));
             JSONArray providers = new JSONArray();
             for (ChatDatabase.Provider p : db.listProviders()) {
                 JSONArray models = new JSONArray();
@@ -1653,7 +1670,9 @@ final class ChatCoordinator implements AutoCloseable {
                         .put("configured", secrets.has(p.id) && models.length() > 0).put("models", models));
             }
             view.put("providers", providers);
-            JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : db.listSessions()) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
+            java.util.List<ChatDatabase.Session> sessionRows = db.listSessions();
+            JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : sessionRows) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
+            view.put("usageToday", usageToday(sessionRows));
             if (activeSessionId != null) {
                 ChatDatabase.Session active = db.getSession(activeSessionId);
                 if (active != null) {
@@ -1781,6 +1800,40 @@ final class ChatCoordinator implements AutoCloseable {
     private static String empty(String v) { return v == null || v.isEmpty() ? null : v; }
     private static String bounded(String value, int max, String label) { String v = value == null ? "" : value.trim(); if (v.isEmpty()) throw new IllegalArgumentException(label + " required"); if (v.length() > max) throw new IllegalArgumentException(label + " too long"); return v; }
     private static String validRoute(String value) { String v = value == null ? "" : value.trim(); if (!("home".equals(v) || "conversation".equals(v) || "providers".equals(v) || "settings".equals(v))) return "home"; return v; }
+    /** "system" follows the Android night mode; the WebView never has to guess from prefers-color-scheme. */
+    private String resolvedTheme() {
+        if (!"system".equals(theme)) return theme;
+        try { return systemDark.getAsBoolean() ? "dark" : "light"; } catch (RuntimeException error) { return "light"; }
+    }
+
+    /**
+     * Local-day usage across all sessions, recomputed only when a session changes or the day rolls over.
+     * Reads only rows of sessions touched today through the session index; never scans the whole timeline.
+     */
+    private JSONObject usageToday(java.util.List<ChatDatabase.Session> sessionRows) throws Exception {
+        String since = java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toString();
+        String latest = "";
+        for (ChatDatabase.Session s : sessionRows) if (s.updatedAt != null && s.updatedAt.compareTo(latest) > 0) latest = s.updatedAt;
+        String key = since + "|" + latest + "|" + sessionRows.size();
+        if (key.equals(usageTodayKey) && usageTodayCache != null) return usageTodayCache;
+        long turns = 0, input = 0, output = 0, cached = 0, cacheBase = 0;
+        JSONArray rows = db.usageSince(since);
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject u = rows.optJSONObject(i); if (u == null) continue;
+            turns++;
+            input += Math.max(0L, u.optLong("totalInputTokens", u.optLong("inputTokens", 0L)));
+            output += Math.max(0L, u.optLong("totalOutputTokens", u.optLong("outputTokens", 0L)));
+            cached += Math.max(0L, u.optLong("cachedInputTokens", 0L));
+            cacheBase += Math.max(0L, u.optLong("cacheHitBaseTokens", 0L));
+        }
+        usageTodayCache = new JSONObject().put("since", since).put("turns", turns).put("inputTokens", input).put("outputTokens", output)
+                .put("cachedInputTokens", cached).put("cacheHitBaseTokens", cacheBase);
+        usageTodayKey = key;
+        return usageTodayCache;
+    }
+
+    private static String validTone(String value) { String v = value == null ? "" : value.trim(); return "warm".equals(v) || "neutral".equals(v) ? v : "sage"; }
+
     private static String validTheme(String value) { String v = value == null ? "" : value.trim(); if (!("system".equals(v) || "light".equals(v) || "dark".equals(v))) return "system"; return v; }
 
     @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); webService.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); worker.shutdownNow(); }

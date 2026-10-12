@@ -12,6 +12,7 @@ import android.text.InputType;
 import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.webkit.JavascriptInterface;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceRequest;
@@ -341,10 +342,45 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         super.onPause();
     }
 
+    /** The WebView owns transient overlays (drawer, sheets, dialogs); it consumes Back before native route handling. */
     @Override @SuppressWarnings("deprecation") public void onBackPressed() {
         ChatCoordinator c = coordinator;
         if (c == null) { super.onBackPressed(); return; }
-        c.handleSystemBack(() -> runOnUiThread(this::finish));
+        WebView view = webView;
+        if (view == null) { c.handleSystemBack(() -> runOnUiThread(this::finish)); return; }
+        view.evaluateJavascript("(window.moyuHandleBack && window.moyuHandleBack()) ? 'handled' : ''", value -> {
+            if ("\"handled\"".equals(value)) return;
+            ChatCoordinator current = coordinator;
+            if (current != null) current.handleSystemBack(() -> runOnUiThread(this::finish));
+        });
+    }
+
+    private String appliedAppearance = "";
+
+    /** Keeps status/navigation bars and the pre-WebView window background on the same canvas token as the UI. */
+    @SuppressWarnings("deprecation") @Override public void applyAppearance(String resolvedTheme, String tone) {
+        runOnUiThread(() -> {
+            boolean dark = "dark".equals(resolvedTheme);
+            String key = (dark ? "dark" : "light") + ":" + tone;
+            if (key.equals(appliedAppearance)) return;
+            appliedAppearance = key;
+            int canvas = canvasColor(dark, tone);
+            Window window = getWindow();
+            window.setStatusBarColor(canvas);
+            window.setNavigationBarColor(canvas);
+            window.getDecorView().setBackgroundColor(canvas);
+            View decor = window.getDecorView();
+            int flags = decor.getSystemUiVisibility();
+            int lightBars = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            decor.setSystemUiVisibility(dark ? flags & ~lightBars : flags | lightBars);
+        });
+    }
+
+    /** Mirrors --canvas in src/styles.css. */
+    static int canvasColor(boolean dark, String tone) {
+        if ("warm".equals(tone)) return dark ? 0xFF18171A : 0xFFEBE6DD;
+        if ("neutral".equals(tone)) return dark ? 0xFF16181B : 0xFFE6E8EB;
+        return dark ? 0xFF15181A : 0xFFE5E9E3;
     }
 
     @Override protected void onDestroy() {

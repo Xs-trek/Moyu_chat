@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,11 +14,8 @@ let failed = false;
 function fail(message) { console.error(`FAIL: ${message}`); failed = true; }
 function read(relative) { return readFileSync(join(projectRoot, relative), 'utf8'); }
 function assertJsSyntax(relative) {
-  const source = read(relative)
-    .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
-    .replace(/\bexport\s+(?=(?:async\s+)?function\b|class\b|const\b|let\b|var\b)/g, '');
-  try { new Function(source); }
-  catch (error) { fail(`${relative}: JavaScript syntax error: ${error.message}`); }
+  try { execFileSync(process.execPath, ['--check', join(projectRoot, relative)], { stdio: 'pipe' }); }
+  catch (error) { fail(`${relative}: JavaScript syntax error: ${String(error.stderr || error.message).trim().split('\n').slice(0, 4).join(' ')}`); }
 }
 function walk(path, suffix, visit) {
   for (const name of readdirSync(path)) {
@@ -28,7 +26,7 @@ function walk(path, suffix, visit) {
 }
 
 const forbiddenUi = [/\bfetch\s*\(/, /new\s+WebSocket\s*\(/, /localStorage/, /indexedDB/, /api[_-]?key/i, /authorization/i];
-for (const file of ['src/main.js','src/render.js','src/markdown.js','src/scroll-anchor.js','src/render-gate.js','src/state.js','src/bridge.js']) assertJsSyntax(file);
+for (const file of readdirSync(uiRoot).filter((name) => name.endsWith('.js'))) assertJsSyntax(`src/${file}`);
 walk(uiRoot, '.js', (file, text) => {
   for (const pattern of forbiddenUi) if (pattern.test(text)) fail(`${file}: forbidden WebView surface ${pattern}`);
 });
@@ -201,66 +199,79 @@ if (!mainActivity.includes('activeConfigDialog') || !mainActivity.includes('conf
 if (!coordinator.includes('此 Provider 已存在 Model ID') || !coordinator.includes('ModelProfileValidator.validateResolvedProfile')) fail('duplicate Model IDs and strict deployment validation must fail before low-level SQLite/runtime errors');
 
 const styles = read('src/styles.css');
-for (const marker of ['overflow-x:hidden', 'conversation-active', '100dvh', 'timeline-scroll']) if (!styles.includes(marker)) fail(`native-feeling viewport/scroll constraint missing: ${marker}`);
-if (!styles.includes('html[data-route="conversation"]') || !styles.includes('touch-action:pan-y') || !styles.includes('overflow-y:scroll')) fail('Android WebView vertical scroll ownership must be explicit for document pages and the conversation timeline');
-if (!styles.includes('#app { min-height:100%; -webkit-user-select:none; user-select:none; }') || !styles.includes('[data-selection-scope],[data-selection-scope] *,textarea,input') || !styles.includes('[data-selection-scope] button,[data-selection-scope] .md-code-head')) fail('UI chrome must be non-selectable while conversation text/reasoning and editable controls remain selectable');
 const bridge = read('src/bridge.js');
 const stateJs = read('src/state.js');
-if (!bridge.includes('MAX_MESSAGE_BYTES = 1024 * 1024') || !bridge.includes('revision <= getState().revision')) fail('WebView Host bridge size/revision guards missing');
-if (!bridge.includes('patchView(envelope.patch, revision)') || !stateJs.includes("patch?.scope !== 'conversation.stream'") || !stateJs.includes("emit({ scope: 'stream' })")) fail('WebView bridge must merge bounded streaming patches locally instead of round-tripping every delta through view.reload');
 const renderGate = read('src/render-gate.js');
 const render = read('src/render.js');
+const overlays = read('src/overlays.js');
+const viewModel = read('src/view-model.js');
+const mascot = read('src/mascot.js');
 const mainUi = read('src/main.js');
-if (!renderGate.includes('pointerActive') || !renderGate.includes('composing') || !renderGate.includes('document.activeElement')) fail('destructive render gate missing interaction guards');
-if (!mainUi.includes('selectionScopeForNode') || !mainUi.includes('editableTextControlForNode') || !mainUi.includes("document.addEventListener('selectstart'") || !mainUi.includes('pointerMaySelectText') || !mainUi.includes('pointerUp(pointerMaySelectText ? 160 : 0)')) fail('text selection must be limited to conversation content/editable text while ordinary chrome taps bypass selection grace');
-if (mainUi.includes("['pointerdown', 'touchstart']") || mainUi.includes("['pointerup', 'pointercancel', 'touchend', 'touchcancel']")) fail('duplicate global touch/pointer render leases must not return');
-if (!mainUi.includes('positionChoiceMenu') || !mainUi.includes('window.visualViewport')) fail('choice menus must clamp to the Android visual viewport');
-if (!styles.includes('.choice-scrim') || !styles.includes('background:transparent')) fail('mobile model/reasoning sheet must not dim the entire conversation');
-if (!styles.includes('.choice-scrim { position:fixed; inset:0; z-index:11;')
-    || !mainUi.includes("const openSheetField = document.querySelector('.choice-field.open.sheet');")
-    || !mainUi.includes('if (openSheetField && !openSheetField.contains(event.target))')) fail('mobile choice sheet scrim must stay below the composer stacking context while outside taps are consumed as close-only');
-if (mainUi.includes('input.blur()')) fail('composer must not blur immediately after send; stale pre-send views can repopulate the draft');
-if (!mainUi.includes('draftGenerations') || !mainUi.includes('advanceDraftGeneration(sessionId)') || !coordinator.includes('db.setDraft(sessionId, "")')) fail('submitted composer text must not be resurrected by stale draft writes or preflight failures');
-if (!mainUi.includes('if (activeSession && !activeSession.canSend)') || !coordinator.includes('session busy; message kept as next draft') || coordinator.includes('if (sessionBusy(id)) return;')) fail('typing/submitting during an active turn must preserve the next-turn draft across WebView/native races');
-if (!render.includes('projectedDraft') || !render.includes('const timelineDeferred = Boolean(timeline && selectionInside(timeline))') || !render.includes('return !timelineDeferred;') || !mainUi.includes("document.addEventListener('selectionchange'")) fail('edit-draft projection and selection-deferred final conversation rendering must remain lossless');
-if (!render.includes("button('分支', 'branch-local', { sessionId: session.localSessionId }") || !coordinator.includes('if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching")')) fail('local branching must be reachable from conversation UI and blocked during incomplete turns');
-if (!coordinator.includes('if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching")')) fail('local branching must cover starting/preparing/Web/post-processing states, not only active provider calls');
 const markdown = read('src/markdown.js');
 const scrollAnchor = read('src/scroll-anchor.js');
-for (const marker of ['md-table-wrap', 'md-code-block', 'md-task-item', 'safeHttps', 'tableDelimiter', 'renderSafeMarkdown']) if (!markdown.includes(marker)) fail(`safe GFM-style Markdown renderer missing: ${marker}`);
+const indexHtml = read('index.html');
+const ui = [render, overlays, viewModel, mascot, mainUi].join('\n');
+
+// Host boundary: bounded, revisioned envelopes; streaming patches merge locally.
+if (!bridge.includes('MAX_MESSAGE_BYTES = 1024 * 1024') || !bridge.includes('revision <= getState().revision')) fail('WebView Host bridge size/revision guards missing');
+if (!bridge.includes('patchView(envelope.patch, revision)') || !stateJs.includes("patch?.scope !== 'conversation.stream'") || !stateJs.includes("emit({ scope: 'stream' })")) fail('WebView bridge must merge bounded streaming patches locally instead of round-tripping every delta through view.reload');
+if (!viewModel.includes('protocol ≠ capability') || !viewModel.includes('export function capabilities(session)')) fail('UI capability display must come only from the deployment declaration (protocol ≠ capability)');
+
+// Security surface of the page itself.
+if (!indexHtml.includes("default-src 'none'; script-src 'self'; style-src 'self'") || !indexHtml.includes("connect-src 'none'")) fail('index.html must keep the strict local-only CSP');
+for (const [file, text] of [['render.js', render], ['overlays.js', overlays], ['mascot.js', mascot], ['main.js', mainUi], ['dom.js', read('src/dom.js')]]) {
+  if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(|outerHTML\s*=/.test(text)) fail(`src/${file}: UI must build DOM nodes, never HTML strings`);
+}
 if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(/.test(markdown) || markdown.includes("createElement('img')") || markdown.includes('createElement("img")')) fail('model Markdown must remain inert DOM text: no HTML injection or remote Markdown image creation');
-if (!mainUi.includes("action === 'copy-code'") || !mainUi.includes("'(pointer: coarse)'") || !mainUi.includes('resizeComposerTextarea')) fail('mobile composer/code ergonomics missing');
-for (const marker of ['md-table-wrap', 'md-code-head', 'md-code-copy', 'composer-actions', 'composer-send']) if (!styles.includes(marker)) fail(`Markdown/mobile composer styling missing: ${marker}`);
-for (const marker of ['--elevation-flat', '--elevation-control', '--elevation-card', '--elevation-popover', '--elevation-dialog', '--motion-fast:120ms', 'badge.context-mode']) if (!styles.includes(marker)) fail(`quantized Moyu UI semantic token missing: ${marker}`);
-for (const marker of ['--control-height:44px', '--page-max:880px', '--chat-max:820px', '.page-head', '.home-start', '.btn.ghost', '.composer-primary', '.choice-scrim']) if (!styles.includes(marker)) fail(`unified lightweight Chat UI primitive missing: ${marker}`);
-if (render.includes("class: 'hero") || styles.includes('.hero') || render.includes('composer-scope') || render.includes('composer-hint')) fail('legacy fragmented Hero/composer chrome must not return');
-if (!styles.includes('.bubble.assistant { justify-self:start; width:100%; max-width:100%;') || !styles.includes('border:0; border-radius:0; background:transparent; box-shadow:none')) fail('assistant answers must remain a document-style reading plane');
-if (!styles.includes('.composer textarea') || !styles.includes('font-size:1rem')) fail('mobile composer text must remain 16px to avoid WebView auto-zoom');
-if (!styles.includes('.composer .reasoning-choice,.composer .web-choice') || !styles.includes('.composer .model-choice,.composer .reasoning-choice,.composer .web-choice')) fail('conversation Web mode control must share the bounded composer layout with model/reasoning controls');
-if (!render.includes("class: 'composer-primary'") || !mainUi.includes('mobileSheet') || !mainUi.includes("field.classList.add('sheet')") || !mainUi.includes('choiceScrim')) fail('single send/stop slot and mobile bottom-sheet choice behavior missing');
-if (!styles.includes('.choice-menu { display:none; position:fixed') || styles.includes('.composer .choice-menu { left:auto; right:0; }')) fail('model/reasoning menu must use viewport-clamped fixed positioning');
-if (!render.includes('export function patchConversation()') || !render.includes('streaming-state')) fail('conversation volatile state patch missing');
-if (!render.includes("const reasoningBlock = node.querySelector('.reasoning-block')") || !render.includes("(reasoningBlock || node.querySelector('.bubble-head'))?.after(desiredBody)")) fail('streaming visible output must remain below the reasoning block');
+if (mainUi.includes('window.confirm(') || !overlays.includes('export function openConfirmDialog') || !styles.includes('.modal-backdrop')) fail('WebView actions must use app-owned confirmation UI, not browser JS dialogs');
+if (!mainUi.includes("postIntent('external.open'") || !render.includes("'open-source'") || !markdown.includes('safeHttps')) fail('Web source links must cross the native external.open boundary and stay HTTPS-only');
+
+// Text selection and render gating.
+if (!styles.includes('#app { min-height:100%; -webkit-user-select:none; user-select:none; }') || !styles.includes('[data-selection-scope],[data-selection-scope] *,textarea,input') || !styles.includes('[data-selection-scope] button,[data-selection-scope] .md-code-head')) fail('UI chrome must be non-selectable while conversation text/reasoning and editable controls remain selectable');
+if (!renderGate.includes('pointerActive') || !renderGate.includes('composing') || !renderGate.includes('document.activeElement')) fail('destructive render gate missing interaction guards');
+if (!mainUi.includes('selectionScopeForNode') || !mainUi.includes('editableTextControlForNode') || !mainUi.includes("document.addEventListener('selectstart'") || !mainUi.includes('pointerMaySelectText') || !mainUi.includes('pointerUp(pointerMaySelectText ? 160 : 0)')) fail('text selection must be limited to conversation content/editable text while ordinary chrome taps bypass selection grace');
+if (!render.includes('projectedDraft') || !render.includes('const timelineDeferred = Boolean(timeline && selectionInside(timeline))') || !render.includes('return !timelineDeferred;') || !mainUi.includes("document.addEventListener('selectionchange'")) fail('edit-draft projection and selection-deferred final conversation rendering must remain lossless');
+
+// Viewport, scrolling and the keyboard.
+if (!styles.includes('overflow-x:hidden') || !styles.includes('100dvh') || !styles.includes('.timeline-scroll')) fail('native-feeling viewport/scroll constraint missing');
+if (!styles.includes('html[data-route="conversation"]') || !styles.includes('touch-action:pan-y') || !/\.timeline-scroll \{[^}]*overflow-y: scroll/.test(styles)) fail('Android WebView vertical scroll ownership must be explicit for document pages and the conversation timeline');
+if (/\*\s*\{[^}]*scrollbar-width:\s*none/.test(styles)) fail('scrollbars must not be hidden globally; long conversations need a position cue');
+if (!/\.composer textarea \{[^}]*font-size: 1rem/.test(styles)) fail('mobile composer text must remain 16px to avoid WebView auto-zoom');
 if (!scrollAnchor.includes('followLatest') || !scrollAnchor.includes('nextTop < state.lastScrollTop') || !mainUi.includes('requestAnimationFrame(() =>') || !mainUi.includes('noteTimelineScroll')) fail('streaming scroll must release follow-latest immediately when the user scrolls upward and throttle derived chrome');
 if (!render.includes('Opening a conversation from a non-conversation route has no prior anchor') || !render.includes('restoreTimelineAnchor(anchor, sessionId);')) fail('opening or switching conversations must default to the latest turn while same-session anchors preserve intentional reading position');
-if (!mainUi.includes("else if (!patchConversation()) renderGate.request();")) fail('Host view updates must patch volatile conversation state before deferred full render');
-if (render.includes('timeline.replaceChildren(...session.messages')) fail('streaming conversation updates must not rebuild the whole timeline');
-if (!render.includes('reconcileTimeline(') || !render.includes('data-item-key') && !render.includes('itemKey: timelineKey')) fail('keyed conversation DOM reconciliation missing');
-if (!mainUi.includes("postIntent('chat.session.delete'") || !render.includes("'delete-session'")) fail('session delete intent exists natively but is not exposed by the WebView UI');
-if (mainUi.includes('window.confirm(')) fail('WebView actions must not depend on browser JS dialogs; use app-owned confirmation UI');
-if (!render.includes('openConfirmDialog') || !styles.includes('modal-backdrop')) fail('app-owned confirmation surface missing');
-if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'")) fail('history edit/rollback UI intents missing');
-if (!coordinator.includes('editMessageInPlace(') || !coordinator.includes('rollbackMessageInPlace(') || !db.includes('truncateTimelineFrom(')) fail('edit/rollback must rewind the current local session in place');
+if (!render.includes("loading: 'lazy', width: item.width || undefined, height: item.height || undefined")) fail('timeline images must reserve their intrinsic size so late decodes cannot move the reading position');
+
+// Touch targets and theme tokens.
+if (!styles.includes('--control-height: 44px') || !/\.icon-btn \{[^}]*width: var\(--control-height\)/.test(styles) || !/\.btn \{[^}]*min-height: var\(--control-height\)/.test(styles)) fail('interactive controls must keep a 44px touch target');
+for (const token of ['--canvas', '--surface', '--raised', '--inset', '--line', '--ink', '--muted', '--accent', '--motion-fast', '--page-max', '--chat-max']) if (!styles.includes(`${token}:`)) fail(`UI design token missing: ${token}`);
+if (!styles.includes(':root[data-theme="dark"]') || !styles.includes(':root[data-tone="warm"]') || !styles.includes(':root[data-tone="neutral"]') || !styles.includes('@media (prefers-color-scheme: dark)')) fail('light/dark and tone token sets missing');
+if (/--(canvas|surface|ink):\s*#(fff|ffffff|000|000000)\b/i.test(styles)) fail('large surfaces must not use pure white or pure black');
+if (!viewModel.includes('appearance?.resolvedTheme') || !coordinator.includes('private String resolvedTheme()') || !coordinator.includes('host.applyAppearance(resolvedTheme, tone)')) fail('"system" theme must be resolved natively and applied to the window chrome');
+if (!mainActivity.includes('static int canvasColor(boolean dark, String tone)') || !styles.includes('--canvas: #e5e9e3') || !mainActivity.includes('0xFFE5E9E3') || !styles.includes('--canvas: #15181a') || !mainActivity.includes('0xFF15181A')) fail('native window/system-bar canvas colours must mirror the CSS --canvas tokens');
+
+// Shell: drawer, sheets and Back.
+if (!indexHtml.includes('id="drawer-root"') || !indexHtml.includes('id="sheet-root"') || !overlays.includes('export function renderDrawer') || !overlays.includes('export function handleBack')) fail('drawer and sheets must live outside #app so full renders cannot tear them down');
+if (!mainUi.includes('window.moyuHandleBack = () => handleBack()') || !mainActivity.includes('window.moyuHandleBack')) fail('Android Back must close WebView overlays before native route handling');
+
+// Conversation behaviour.
+if (!render.includes('export function patchConversation()') || !mainUi.includes('else if (!patchConversation()) renderGate.request();')) fail('Host view updates must patch volatile conversation state before deferred full render');
+if (!render.includes('reconcileTimeline(') || !render.includes('node.dataset.itemKey = key') || render.includes('timeline.replaceChildren(...session.messages')) fail('keyed conversation DOM reconciliation missing');
+if (!markdown.includes('export function renderMarkdownInto') || !markdown.includes('export function stableBoundary') || !render.includes('renderMarkdownInto(body, item.text, streaming)')) fail('streaming replies must render Markdown incrementally and keep the DOM when finalized');
+for (const marker of ['md-table-wrap', 'md-code-block', 'md-task-item', 'safeHttps', 'tableDelimiter', 'renderSafeMarkdown']) if (!markdown.includes(marker)) fail(`safe GFM-style Markdown renderer missing: ${marker}`);
+if (!render.includes("// Visible output always sits below the reasoning block.") || !render.includes('if (reasoningBlockNode) reasoningBlockNode.after(body)')) fail('streaming visible output must remain below the reasoning block');
+if (!render.includes('setPose(live.querySelector') || !mascot.includes('export function setPose')) fail('the live stage mascot must change pose in place instead of being rebuilt per patch');
+if (!render.includes("class: 'composer-primary'") || !render.includes("dataset: { action: 'interrupt'")) fail('single send/stop slot missing');
+if (!overlays.includes("'session-model-set'") || !overlays.includes("'session-reasoning-set'") || !overlays.includes("'session-web-set'") || !mainUi.includes("postIntent('chat.session.model.set'") || !mainUi.includes("postIntent('chat.session.reasoning.set'") || !mainUi.includes('setOptimisticWebMode')) fail('per-turn model/reasoning/Web settings must stay reachable from the conversation');
+if (!overlays.includes("const locked = !session.canConfigureTurn")) fail('turn settings must be locked while a turn is running');
+if (!mainUi.includes("action: 'branch-local'") || !mainUi.includes('disabled: running') || !coordinator.includes('if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching")')) fail('local branching must be reachable from conversation UI and blocked during incomplete turns');
 if (!mainUi.includes("action === 'branch-message'") || !coordinator.includes('createLocalBranch(')) fail('branching must remain a separate explicit user action');
-if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.includes('reasoning-block') || !render.includes('reasoningToggle.dataset.show = reasoningVisible') || !render.includes("reasoningToggle.setAttribute('aria-pressed'")) fail('provider-emitted reasoning visibility must remain a synchronized two-way toggle during incremental patches');
-if (!render.includes("const title = document.querySelector('.conversation-title strong')") || !render.includes('renameButton.dataset.sessionTitle = session.title')) fail('conversation title and rename metadata must remain synchronized during incremental patches');
-if (!mainUi.includes("postIntent('context.mode.default.set'") || !render.includes('上下文 · 极简') || !render.includes('上下文 · 标准') || !render.includes('上下文 · Moyu 智能')) fail('minimal/standard/smart context modes must be explicitly selectable when creating sessions');
-if (!coordinator.includes('if (p.has("contextMode")) { defaultContextMode = contextMode; db.putSetting("defaultContextMode", defaultContextMode); }')) fail('explicit new-chat context selection must become the durable next-new-chat preference');
-if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('联网 · 关闭') || !render.includes('联网 · 自动') || !render.includes('联网 · 开启')) fail('Web modes must be explicitly selectable for new chats/settings');
-if (!render.includes('reasoningCapability(model)') || !render.includes('深度支持 ·') || render.includes('data-reasoning-select')) fail('Provider/Model overview must show a read-only reasoning capability range; actual effort selection belongs to the conversation');
-if (!mainUi.includes("action === 'rename-session'") || !mainUi.includes("postIntent('chat.session.rename'") || !render.includes('openTextDialog') || !render.includes("'rename-session'")) fail('manual session rename must be exposed through app-owned UI');
+if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'") || !coordinator.includes('editMessageInPlace(') || !coordinator.includes('rollbackMessageInPlace(') || !db.includes('truncateTimelineFrom(')) fail('edit/rollback must rewind the current local session in place');
+if (!mainUi.includes("postIntent('chat.session.delete'") || !mainUi.includes("action: 'delete-session'")) fail('session delete intent exists natively but is not exposed by the WebView UI');
+if (!mainUi.includes("action === 'rename-session'") || !mainUi.includes("postIntent('chat.session.rename'") || !mainUi.includes('openTextDialog')) fail('manual session rename must be exposed through app-owned UI');
+if (!render.includes("menu.dataset.sessionTitle = session.title") || !render.includes("const title = document.querySelector('.conversation-title strong')")) fail('conversation title and rename metadata must remain synchronized during incremental patches');
+if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.includes('reasoning-block')) fail('provider-emitted reasoning visibility toggle missing');
 if (!render.includes('TURN_NAV_MIN_TURNS = 6')
-    || !render.includes("item?.kind === 'message' && item?.role === 'user'")
+    || !viewModel.includes("item?.kind === 'message' && item?.role === 'user'")
     || !render.includes("turnAnchor: 'user'")
     || !render.includes('reconcileTurnNavigator(layout, session)')
     || !render.includes('export function syncTurnNavigator(')
@@ -268,21 +279,35 @@ if (!render.includes('TURN_NAV_MIN_TURNS = 6')
     || !mainUi.includes("action === 'jump-turn'")
     || !mainUi.includes("setTimelineFollowLatest(scroller.dataset.sessionId || '', false)")
     || !mainUi.includes('nodeRect.top - scrollerRect.top - 8')
-    || !styles.includes('.turn-nav-item.active')) fail('v0.0.3 long-conversation navigation must be a local user-turn rail with active markers and top-aligned jumps');
-if (!mainUi.includes("postIntent('external.open'") || !render.includes("'open-source'")) fail('Web source links must cross the native external.open boundary');
-if (!render.includes('renderSafeMarkdown') || !render.includes('assistant-footer') || !render.includes("'copy-message'") || !render.includes("'jump-latest'")) fail('safe Markdown/assistant footer/copy/jump-latest UX missing');
-if (!render.includes("verification?.status === 'valid'") || !render.includes('verification?.coverageComplete === true')) fail('verifier feedback UI must reject invalid or incomplete verification');
+    || !styles.includes('.turn-nav-item.active')) fail('long-conversation navigation must be a local user-turn rail with active markers and top-aligned jumps');
+if (!render.includes("'copy-message'") || !render.includes("'jump-latest'") || !mainUi.includes("action === 'copy-code'")) fail('copy/jump-latest UX missing');
+if (!viewModel.includes("verification?.status === 'valid' && verification?.coverageComplete === true")) fail('verifier feedback UI must reject invalid or incomplete verification');
 if (!coordinator.includes('boundedInheritedDisplay(') || !coordinator.includes('displayOmittedInheritedItems')) fail('large inherited history must be bounded before WebView projection without deleting durable context');
-if (!render.includes('choice-field') || !render.includes('webChoiceField(session)') || !mainUi.includes("postIntent('chat.session.model.set'") || !mainUi.includes("postIntent('chat.session.reasoning.set'") || !mainUi.includes("action === 'session-web-set'") || !mainUi.includes('setOptimisticWebMode')) fail('conversation model/reasoning/Web custom selectors missing');
-if (!render.includes('sessionContextModeBadge(session)') || !render.includes("minimal: '极简'") || !render.includes("standard: '标准'") || !render.includes("smart: '智能'")) fail('home conversation cards must visibly distinguish minimal/standard/smart modes');
-if (render.includes('contextModeBadge(item)')) fail('context mode belongs on the conversation card, not repeated inside each assistant message');
-if (!render.includes('draftMediaStrip(session.draftMedia') || !render.includes("querySelector('[data-draft-media]')") || render.includes('mediaGallery(session.draftMedia')) fail('draft image attachment state must reconcile in-place without leaving/re-entering the conversation');
-if (!styles.includes('.draft-media-strip') || !styles.includes('height:62px') || !styles.includes('.draft-media-remove')) fail('composer draft images require a bounded compact horizontal strip instead of the full message gallery');
-if (!render.includes("['模型'") || !render.includes("['深度'") || !render.includes("['入/出'") || !render.includes("['总耗'") || !styles.includes('grid-template-columns:repeat(4')) fail('assistant turn facts must use the Moyu UI 2x4 metric layout');
+if (!render.includes("draftMediaStrip(session.draftMedia") || !render.includes("querySelector('[data-draft-media]')") || !styles.includes('.draft-media-strip') || !styles.includes('height:62px')) fail('draft image attachment state must reconcile in place as a compact strip');
 if (!render.includes('当前模型未声明图片输入能力') || !mainActivity.includes('输入模态 (inputModalities)') || !mainActivity.includes('输出模态 (outputModalities)')) fail('image capability must be visible/configurable on the Model Profile instead of silently absent');
-if (!render.includes('contextPreparing') || !render.includes('整理上下文')) fail('hidden preprocessing must be visible as a bounded UI state');
+if (!viewModel.includes("contextPreparing") || !viewModel.includes('整理上下文')) fail('hidden preprocessing must be visible as a bounded UI state');
+if (!render.includes(' token/s') || !render.includes("['主调用 入/出'") || !render.includes("[`辅助调用 ×${u.auxiliary}`")) fail('expanded turn details must keep main, auxiliary and subagent usage separate');
 if (!coordinator.includes('reasoningOut') || !coordinator.includes('outputTokensPerSecond') || !coordinator.includes('cachedInputTokens')) fail('reasoning/usage observability pipeline missing');
-if (!styles.includes('text-align:left') || !render.includes(' token/s')) fail('usage statistics must be left-aligned and use token units');
+if (!viewModel.includes("minimal: '极简'") || !viewModel.includes("standard: '标准'") || !viewModel.includes("smart: '智能'") || !overlays.includes('mode-tag')) fail('session lists must visibly distinguish minimal/standard/smart modes');
+
+// Draft and send races.
+if (mainUi.includes('input.blur()')) fail('composer must not blur immediately after send; stale pre-send views can repopulate the draft');
+if (!mainUi.includes('draftGenerations') || !mainUi.includes('advanceDraftGeneration(sessionId)') || !coordinator.includes('db.setDraft(sessionId, "")')) fail('submitted composer text must not be resurrected by stale draft writes or preflight failures');
+if (!mainUi.includes('if (activeSession && !activeSession.canSend)') || !coordinator.includes('session busy; message kept as next draft') || coordinator.includes('if (sessionBusy(id)) return;')) fail('typing/submitting during an active turn must preserve the next-turn draft across WebView/native races');
+if (!mainUi.includes("action === 'copy-code'") || !mainUi.includes("'(pointer: coarse)'") || !mainUi.includes('resizeComposerTextarea')) fail('mobile composer/code ergonomics missing');
+
+// New-chat defaults.
+if (!mainUi.includes("postIntent('context.mode.default.set'") || !render.includes('上下文 · 极简') || !render.includes('上下文 · 标准') || !render.includes('上下文 · Moyu 智能')) fail('minimal/standard/smart context modes must be explicitly selectable when creating sessions');
+if (!coordinator.includes('if (p.has("contextMode")) { defaultContextMode = contextMode; db.putSetting("defaultContextMode", defaultContextMode); }')) fail('explicit new-chat context selection must become the durable next-new-chat preference');
+if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('联网 · 关闭') || !render.includes('联网 · 自动') || !render.includes('联网 · 开启')) fail('Web modes must be explicitly selectable for new chats/settings');
+if (!render.includes('reasoningCapability(model)') || !render.includes('深度支持 ·')) fail('Provider/Model overview must show a read-only reasoning capability range; actual effort selection belongs to the conversation');
+
+// Delights must stay cheap and switchable.
+if (!coordinator.includes('case "ui.delight.set"') || !mainUi.includes("postIntent('ui.delight.set'") || !styles.includes('[data-delight="off"]')) fail('animations and easter eggs need a persisted off switch');
+if (!styles.includes('@media (prefers-reduced-motion: reduce)')) fail('motion must respect prefers-reduced-motion');
+for (const block of styles.matchAll(/@keyframes[^{]+\{((?:[^{}]*\{[^}]*\})*)\s*\}/g)) if (/\b(width|height|top|left|right|bottom|margin|padding)\s*:/.test(block[1])) fail('animations must only touch transform/opacity');
+if (/backdrop-filter|filter:\s*blur/.test(styles)) fail('avoid blur filters: they are expensive in Android WebView');
+if (/requestAnimationFrame\(function loop|setInterval\(/.test(ui)) fail('UI must not run perpetual JS animation loops');
 
 // The browser preview (dev/) replaces MoyuHost with a mock; it must never reach the APK or the shipped page.
 const uiGradle = read('android/app/build.gradle');
@@ -314,7 +339,7 @@ if (!contract.includes('export interface ConversationStreamPatch') || !contract.
 const packageJson = JSON.parse(read('package.json'));
 // Exercise the actual pure projection: failed turns must not overwrite a previous reply's usage.
 try {
-  const projection = new Function(render
+  const projection = new Function(viewModel
     .replace(/^\s*import\s+[^;]+;\s*$/gm, '')
     .replace(/\bexport\s+(?=(?:async\s+)?function\b|class\b|const\b|let\b|var\b)/g, '')
     + '\nreturn timelineProjection;')();

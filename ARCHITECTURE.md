@@ -31,6 +31,8 @@ The product is Chat + bounded feasible tools, not an Android agent executor.
 
 Presentation only. It posts versioned intents through `window.MoyuHost.postMessage` and receives full/patch view projections through the `moyu:view` event. Credentials, database access, provider networking and tool execution remain native.
 
+Inside the page, `src/view-model.js` is the only module that interprets native view fields (usage, stages, verification, capabilities); renderers consume its output, so native projection changes are absorbed in one place. Transient surfaces (drawer, sheets, dialogs) live outside `#app` and survive full renders; Android Back first calls `window.moyuHandleBack()`. The native side resolves the "system" theme from the Android night mode and paints the window and system bars with the same canvas colour as the CSS tokens (`Host.applyAppearance`).
+
 ### ChatCoordinator
 
 Owns intent validation, local session lifecycle, local branching, turn cancellation/runtime ownership, context preparation, bounded client-tool rounds and Smart post-processing. Provider-specific wire parsing belongs to transports.

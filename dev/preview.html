@@ -11,8 +11,10 @@
   <link rel="stylesheet" href="/dev/dev.css">
 </head>
 <body>
-  <div id="app" aria-live="polite"></div>
-  <div id="toast-root"></div>
+  <div id="app"></div>
+  <div id="drawer-root" class="drawer-root"></div>
+  <div id="sheet-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
   <!-- Module scripts run in document order: the mock MoyuHost exists before main.js posts app.ready. -->
   <script type="module" src="/dev/mock-host.js"></script>
   <script type="module" src="/src/main.js"></script>

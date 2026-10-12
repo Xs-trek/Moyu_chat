@@ -634,6 +634,17 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized void deleteTimelineItem(String itemKey) { getWritableDatabase().delete("timeline", "item_key=?", new String[]{itemKey}); }
     public synchronized JSONArray timeline(String sessionId) { return timelineThrough(sessionId, null); }
 
+    /** Usage rows created at or after {@code sinceIso}, limited to sessions updated since then (session index, not a table scan). */
+    public synchronized JSONArray usageSince(String sinceIso) {
+        JSONArray out = new JSONArray();
+        if (sinceIso == null) return out;
+        String sql = "SELECT t.body FROM sessions s JOIN timeline t ON t.session_id=s.local_id WHERE s.updated_at>=? AND t.created_at>=? AND instr(t.body,'\"kind\":\"usage\"')>0";
+        try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sinceIso, sinceIso})) {
+            while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
+        }
+        return out;
+    }
+
     public synchronized JSONArray timelineThrough(String sessionId, Integer throughSeq) {
         JSONArray out = new JSONArray();
         if (sessionId == null) return out;

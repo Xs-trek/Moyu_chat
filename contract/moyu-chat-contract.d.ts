@@ -1,5 +1,7 @@
 export type RequestId = string;
 export type Theme = 'system' | 'light' | 'dark';
+/** Background tone of the soft palette; colours themselves live in src/styles.css and MainActivity.canvasColor. */
+export type Tone = 'sage' | 'warm' | 'neutral';
 export type Route = 'home' | 'conversation' | 'providers' | 'settings';
 export type SessionState = 'idle' | 'running' | 'completed' | 'failed';
 export type ContextMode = 'minimal' | 'standard' | 'smart';
@@ -16,7 +18,10 @@ export interface UiIntent<T extends string = string, P = unknown> {
 export type MoyuChatIntent =
   | UiIntent<'app.ready', { uiVersion: string }>
   | UiIntent<'view.reload', Record<string, never>>
-  | UiIntent<'appearance.set', { theme: Theme }>
+  /** At least one of theme / tone. */
+  | UiIntent<'appearance.set', { theme?: Theme; tone?: Tone }>
+  /** Mascot motion and easter eggs; verification seals stay visible either way. */
+  | UiIntent<'ui.delight.set', { enabled: boolean }>
   | UiIntent<'chat.reasoning.visibility.set', { show: boolean }>
   | UiIntent<'memory.global.set', { enabled: boolean }>
   | UiIntent<'context.mode.default.set', { mode: ContextMode }>
@@ -227,10 +232,22 @@ export interface ConversationStreamPatch {
   item: Extract<TimelineItem, { kind: 'message' }>;
 }
 
+export interface UsageTodayView {
+  since: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheHitBaseTokens: number;
+}
+
 export interface AppViewModel {
   route: Route;
   now: string;
-  appearance: { theme: Theme; resolvedTheme: 'light' | 'dark' };
+  /** resolvedTheme is computed natively from the Android night mode when theme is 'system'. */
+  appearance: { theme: Theme; resolvedTheme: 'light' | 'dark'; tone: Tone; delight: boolean };
+  /** Local-day usage across sessions (usage rows created since local midnight). */
+  usageToday?: UsageTodayView;
   providers: ProviderView[];
   sessions: SessionView[];
   activeLocalSessionId?: string;
@@ -239,6 +256,10 @@ export interface AppViewModel {
 }
 
 declare global {
-  interface Window { MoyuHost?: { postMessage(message: string): void }; }
+  interface Window {
+    MoyuHost?: { postMessage(message: string): void };
+    /** Called by MainActivity on Android Back; returns true when a drawer, sheet or dialog was closed. */
+    moyuHandleBack?: () => boolean;
+  }
   interface WindowEventMap { 'moyu:view': CustomEvent<{ version: 1; type: string; revision?: number; view?: AppViewModel; patch?: ConversationStreamPatch; requestId?: string; ok?: boolean; error?: { summary?: string } }> }
 }

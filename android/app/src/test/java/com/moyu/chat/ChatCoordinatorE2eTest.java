@@ -51,11 +51,13 @@ public class ChatCoordinatorE2eTest {
         volatile ChatDatabase.Provider editorProvider;
         volatile boolean editorOpened;
         volatile boolean runtimeLeaseAllowed = true;
+        volatile String appearance = "";
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
         @Override public void openProviderEditor(ChatDatabase.Provider existing) { editorProvider = existing; editorOpened = true; }
         @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
         @Override public boolean setTurnRuntimeActive(String sessionId, boolean active) { return !active || runtimeLeaseAllowed; }
         @Override public void showMessage(String text) { toasts.add(text); }
+        @Override public void applyAppearance(String resolvedTheme, String tone) { appearance = resolvedTheme + ":" + tone; }
     }
 
     /** JVM stand-in: same contract as the Keystore-backed store, which Robolectric cannot host. */
@@ -170,6 +172,48 @@ public class ChatCoordinatorE2eTest {
         assertFalse("first back from an internal route must not exit", exitRequested.get());
         coordinator.handleSystemBack(() -> exitRequested.set(true));
         await("second back from home requests Activity exit", exitRequested::get);
+    }
+
+    private JSONObject intentResult(String requestId) {
+        synchronized (host.envelopes) {
+            for (JSONObject e : host.envelopes) if ("intent.result".equals(e.optString("type")) && requestId.equals(e.optString("requestId"))) return e;
+        }
+        return null;
+    }
+
+    @Test public void appearanceAndTodayUsageReachTheViewAndWindowChrome() throws Exception {
+        await("initial view", () -> latestView() != null);
+        JSONObject appearance = latestView().getJSONObject("appearance");
+        assertEquals("system", appearance.optString("theme"));
+        assertEquals("sage", appearance.optString("tone"));
+        assertTrue(appearance.optBoolean("delight"));
+        assertEquals("system theme resolves natively from the (day) uiMode", "light", appearance.optString("resolvedTheme"));
+        assertEquals("light:sage", host.appearance);
+
+        post("appearance.set", new JSONObject().put("tone", "warm"));
+        post("ui.delight.set", new JSONObject().put("enabled", false));
+        post("appearance.set", new JSONObject().put("theme", "dark"));
+        await("appearance applied", () -> {
+            JSONObject a = latestView().optJSONObject("appearance");
+            return a != null && "warm".equals(a.optString("tone")) && !a.optBoolean("delight", true) && "dark".equals(a.optString("resolvedTheme"));
+        });
+        assertEquals("window chrome follows the resolved theme and tone", "dark:warm", host.appearance);
+        String empty = post("appearance.set", new JSONObject());
+        await("empty appearance rejected", () -> intentResult(empty) != null);
+        assertFalse(intentResult(empty).optBoolean("ok", true));
+
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "hi"));
+        await("today usage counts the finished turn", () -> {
+            JSONObject today = latestView().optJSONObject("usageToday");
+            return today != null && today.optLong("turns") == 1 && today.optLong("inputTokens") == 7 && today.optLong("outputTokens") == 2;
+        });
+
+        post("nav.open", new JSONObject().put("route", "settings"));
+        await("settings route", () -> "settings".equals(latestView().optString("route")));
+        coordinator.handleSystemBack(() -> { });
+        await("back from settings returns to the open conversation", () -> "conversation".equals(latestView().optString("route")));
     }
 
     @Test public void worksFullyStandaloneAndNeverLeaksApiKey() throws Exception {

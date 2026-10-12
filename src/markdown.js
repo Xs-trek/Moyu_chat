@@ -246,7 +246,7 @@ function paragraph(lines) {
 /**
  * Safe, local GFM-style renderer for model output. It never uses innerHTML, executes raw HTML,
  * loads remote Markdown images, or turns non-HTTPS targets into active links. Unsupported syntax
- * remains visible inert text. Streaming messages intentionally stay plain text until finalized.
+ * remains visible inert text. Streaming replies go through renderMarkdownInto() below.
  */
 export function renderSafeMarkdown(value) {
   const root = document.createDocumentFragment();
@@ -313,4 +313,63 @@ export function renderSafeMarkdown(value) {
     root.append(paragraph(paragraphLines));
   }
   return root;
+}
+
+/**
+ * Offset just past the last blank line that is outside a code fence. Everything before it is a sequence of
+ * finished blocks; only the text after it can still change shape as more tokens arrive. The last line is
+ * ignored because it may be incomplete.
+ */
+export function stableBoundary(source) {
+  const lines = source.split('\n');
+  let offset = 0;
+  let fence = '';
+  let boundary = 0;
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    const line = lines[i];
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && /^ {0,3}(`{3,}|~{3,})\s*$/.test(line)) fence = '';
+    } else if (marker) fence = marker[1];
+    offset += line.length + 1;
+    if (!fence && !line.trim()) boundary = offset;
+  }
+  return boundary;
+}
+
+/**
+ * Renders Markdown into `container`, incrementally while streaming: finished blocks are rendered once and
+ * kept, and only the growing tail is rebuilt on each patch. An unclosed fence in the tail already shows as a
+ * code block. Finalizing with the same text keeps the DOM as is, so the reply never jumps at the end.
+ */
+export function renderMarkdownInto(container, text, streaming = false) {
+  const source = String(text ?? '').replace(/\r\n?/g, '\n');
+  let state = container.__md;
+  if (!streaming) {
+    if (state && state.text === source) { state.final = true; return; }
+    container.replaceChildren(renderSafeMarkdown(source));
+    container.__md = { text: source, stable: source.length, tail: null, tailText: '', final: true };
+    return;
+  }
+  if (!state || state.final || !source.startsWith(state.text.slice(0, state.stable))) {
+    container.replaceChildren();
+    state = { text: '', stable: 0, tail: null, tailText: null, final: false };
+  }
+  const boundary = stableBoundary(source);
+  if (boundary > state.stable) {
+    const finished = renderSafeMarkdown(source.slice(state.stable, boundary));
+    if (state.tail) state.tail.before(finished); else container.append(finished);
+    state.stable = boundary;
+  }
+  const tailText = source.slice(state.stable);
+  if (tailText !== state.tailText) {
+    const tail = document.createElement('div');
+    tail.className = 'md-tail';
+    tail.append(renderSafeMarkdown(tailText));
+    if (state.tail) state.tail.replaceWith(tail); else container.append(tail);
+    state.tail = tail;
+    state.tailText = tailText;
+  }
+  state.text = source;
+  container.__md = state;
 }

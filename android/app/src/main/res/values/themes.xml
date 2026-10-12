@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Window colors mirror the canvas token in src/styles.css (sage tone) so there is no white flash before the WebView paints.
+     The parent decides android:isLightTheme, which Android 13+ WebView uses for prefers-color-scheme. -->
+<resources>
+    <style name="Theme.Moyu" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/moyu_canvas</item>
+        <item name="android:statusBarColor">@color/moyu_canvas</item>
+        <item name="android:navigationBarColor">@color/moyu_canvas</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

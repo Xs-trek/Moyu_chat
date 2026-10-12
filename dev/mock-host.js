@@ -7,6 +7,8 @@ const fixtureKey = fixtures[params.get('f')] ? params.get('f') : 'reading';
 const fixture = fixtures[fixtureKey];
 const world = fixture.build();
 world.theme = ['system', 'light', 'dark'].includes(params.get('theme')) ? params.get('theme') : 'system';
+world.tone = ['sage', 'warm', 'neutral'].includes(params.get('tone')) ? params.get('tone') : 'sage';
+world.delight = params.get('delight') !== 'off';
 let revision = 0;
 let stream = null;
 const PATCH_MS = 50; // ChatCoordinator caps streaming views at 20 fps.
@@ -39,10 +41,22 @@ function emitView() {
   const s = active();
   const resolved = world.theme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : world.theme;
   dispatch({ version: 1, type: 'view.full', revision: ++revision, view: {
-    route: world.route, now: now(), appearance: { theme: world.theme, resolvedTheme: resolved }, providers: world.providers,
+    route: world.route, now: now(), appearance: { theme: world.theme, resolvedTheme: resolved, tone: world.tone, delight: world.delight }, providers: world.providers, usageToday: usageToday(),
     sessions: [...world.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((x) => ({ ...summary(x), state: busy(x) ? 'running' : x.state })),
     activeLocalSessionId: world.activeSessionId, activeSession: s ? detail(s) : undefined, ui: world.ui,
   } });
+}
+
+/** Mirrors ChatCoordinator.usageToday: usage rows created since local midnight. */
+function usageToday() {
+  const since = new Date(); since.setHours(0, 0, 0, 0);
+  const out = { since: since.toISOString(), turns: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheHitBaseTokens: 0 };
+  for (const s of world.sessions) for (const u of s.messages) {
+    if (u.kind !== 'usage' || new Date(u.createdAt) < since) continue;
+    out.turns += 1; out.inputTokens += u.totalInputTokens ?? u.inputTokens ?? 0; out.outputTokens += u.totalOutputTokens ?? u.outputTokens ?? 0;
+    out.cachedInputTokens += u.cachedInputTokens ?? 0; out.cacheHitBaseTokens += u.cacheHitBaseTokens ?? 0;
+  }
+  return out;
 }
 
 function emitPatch(s, item) {
@@ -134,7 +148,8 @@ function handle(type, p) {
   switch (type) {
     case 'app.ready': case 'view.reload': emitView(); if (fixture.autoplay === 'stream' && type === 'app.ready') setTimeout(() => active() && startStream(active(), '再详细讲讲长文阅读排版，给出代码和表格。', { web: true }), 600); return;
     case 'nav.open': world.route = p.route; break;
-    case 'appearance.set': world.theme = p.theme; break;
+    case 'appearance.set': if (p.theme) world.theme = p.theme; if (p.tone) world.tone = p.tone; break;
+    case 'ui.delight.set': world.delight = Boolean(p.enabled); break;
     case 'chat.reasoning.visibility.set': world.ui.showReasoning = Boolean(p.show); break;
     case 'memory.global.set': world.ui.crossChatMemoryEnabled = Boolean(p.enabled); break;
     case 'context.mode.default.set': world.ui.defaultContextMode = p.mode; break;

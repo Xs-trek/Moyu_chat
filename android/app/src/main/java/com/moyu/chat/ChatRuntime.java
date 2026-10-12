@@ -79,6 +79,11 @@ final class ChatRuntime implements ChatCoordinator.Host {
         if (current != null) current.openImagePicker(sessionId);
     }
 
+    @Override public void applyAppearance(String resolvedTheme, String tone) {
+        MainActivity current = activity.get();
+        if (current != null) current.applyAppearance(resolvedTheme, tone);
+    }
+
     @Override public void openExternalUrl(String url) {
         MainActivity current = visibleActivity();
         if (current != null) current.openExternalUrl(url);
