@@ -11,16 +11,18 @@ final class TurnUsage {
 
     private static final class RequestUsage {
         final Kind kind;
+        /** Pipeline stage that issued the call (TurnTrace stage id), so helper cost is attributable. */
+        final String stage;
         Integer input, output;
         boolean ended;
-        RequestUsage(Kind kind) { this.kind = kind; }
+        RequestUsage(Kind kind, String stage) { this.kind = kind; this.stage = stage; }
     }
 
     private final ArrayList<RequestUsage> requests = new ArrayList<>();
     synchronized boolean hasRequests() { return !requests.isEmpty(); }
 
-    private synchronized RequestUsage begin(Kind kind) {
-        RequestUsage request = new RequestUsage(kind);
+    private synchronized RequestUsage begin(Kind kind, String stage) {
+        RequestUsage request = new RequestUsage(kind, stage);
         requests.add(request);
         return request;
     }
@@ -35,7 +37,9 @@ final class TurnUsage {
 
     private synchronized void end(RequestUsage request) { request.ended = true; }
 
-    ChatTransport track(ChatTransport delegate, Kind kind) {
+    ChatTransport track(ChatTransport delegate, Kind kind) { return track(delegate, kind, kind.name().toLowerCase(java.util.Locale.ROOT)); }
+
+    ChatTransport track(ChatTransport delegate, Kind kind, String stage) {
         return new ChatTransport() {
             @Override public Turn stream(ChatDatabase.Provider provider, String key, String model, String effort,
                                          CanonicalPrompt prompt, Sink sink) {
@@ -44,7 +48,7 @@ final class TurnUsage {
 
             @Override public Turn stream(ChatDatabase.Provider provider, String key, String model, String effort,
                                          CanonicalPrompt prompt, ChatTurnOptions options, Sink sink) {
-                RequestUsage request = begin(kind);
+                RequestUsage request = begin(kind, stage);
                 Sink tracked = new Sink() {
                     @Override public void onStage(String stage) { sink.onStage(stage); }
                     @Override public void onReasoningDelta(String text) { sink.onReasoningDelta(text); }
@@ -79,6 +83,23 @@ final class TurnUsage {
                 }
             }
         };
+    }
+
+    /**
+     * Per-stage call counts and reported tokens: {stage: {calls, inputTokens?, outputTokens?, incomplete}}.
+     * Unknown usage stays absent, as in {@link #project}.
+     */
+    synchronized JSONObject stageUsage() throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        for (RequestUsage request : requests) {
+            JSONObject stage = out.optJSONObject(request.stage);
+            if (stage == null) { stage = new JSONObject().put("calls", 0).put("incomplete", false); out.put(request.stage, stage); }
+            stage.put("calls", stage.optInt("calls") + 1);
+            if (request.input != null) stage.put("inputTokens", stage.optLong("inputTokens", 0L) + request.input);
+            if (request.output != null) stage.put("outputTokens", stage.optLong("outputTokens", 0L) + request.output);
+            if (request.input == null || request.output == null) stage.put("incomplete", true);
+        }
+        return out;
     }
 
     /** Unknown usage stays unknown; zero is written only when a provider reported it. */

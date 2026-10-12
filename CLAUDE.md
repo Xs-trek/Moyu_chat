@@ -9,6 +9,14 @@ Moyu Chat 的开发依据。项目事实以当前源码为准；`docs/history/` 
 - 原生层的复杂度是有意为之。不要以“简化”为由删减编排、上下文、校验或观察能力。
 - 本仓库是 beta 线：`applicationId` 为 `com.moyu.chat.beta`，可与原版 `com.moyu.chat` 并存安装；Java namespace 仍是 `com.moyu.chat`。
 
+## 开发原则
+
+1. **可用的 Chat 永远第一。** 观察、实验和编排改动都不能让日常使用变慢、变不稳定或变难用；实验功能默认折叠，不打扰使用。
+2. **评测在使用中进行。** 不做批量评测框架。信号来自真实对话：调用链、用量、耗时、校验与用户反馈、分支对比；长期积累后看按模型、按模式的趋势，不追求统计显著性。
+3. **极简 / 标准 / 智能是功能裁剪档位**，对应“编排帮多少忙”；日常切换使用即可对比同一模型在不同档位下的表现和成本。
+4. **编排要能随模型进步而退场。** 每个辅助模块（Router、压缩、联网规划、校验修正、子任务）都要能单独关闭，并在调用链里看得到它的投入（token、耗时）和产出（判断、修正），用来决定它是否还值得开。
+5. **界面偏好不需要论证**；编排调整要有前后对比的依据，哪怕只是使用中的观察数据。
+
 ## 必须保持的约束
 
 1. **API Key** 只存在原生安全存储（`ChatSecretStore`）中，不进 WebView、不进 SQLite、不进日志或观察视图。
@@ -27,13 +35,14 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 区域 | 主要文件 |
 |---|---|
 | 进程与宿主 | `MoyuChatApplication`、`ChatRuntime`（进程级，Activity 只是挂载点）、`MainActivity`（WebView、配置对话框、图片选择）、`ChatTurnService`（回合期间前台服务） |
-| 编排中枢 | `ChatCoordinator`：intent 分发、会话生命周期、分支、`send()` 回合流程（Router → Checkpoint → 联网规划/检索 → 主调用 → 客户端工具轮次 → 校验/修正）、视图投影 |
+| 编排中枢 | `ChatCoordinator`：intent 分发、会话生命周期、分支、视图投影；通过 `TurnPipeline.Env` 向回合提供执行器、忙碌标记和视图推送 |
+| 回合管线 | `TurnPipeline`：接收 → 上下文 → 路由 → 压缩检查点 → 联网规划 → 工具选择 → 联网检索 → 生成 → 校验/修正 → 收尾；`ProviderRoundLoop`（生成阶段：多轮主调用、客户端工具轮次、20 fps 流式投影）；`TurnRun`（回合内状态）、`TurnConfig`（冻结配置）、`TurnControl`（取消、用量、调用链） |
 | 协议适配 | `ChatTransport`、`ChatTransportRegistry`、`OpenAiCompatibleTransport`（Chat Completions + Responses）、`AnthropicMessagesTransport`、`ProviderEndpoint`、`ProviderAuth` |
 | 能力与配置 | `ModelCatalog`、`ModelProfileValidator`、`ModelPreflight`、`ConfigurationValidator`、`ReasoningPolicy`、`ProviderContinuationPolicy/Identity` |
 | 上下文 | `ContextMode`（minimal/standard/smart）、`ContextBuilder`、`ContextBudgetManager`、`ContextCheckpoint(Service)`、`CanonicalPrompt`、`PromptPolicy`、`PromptModules`、`LocalKnowledgeStore` + `KnowledgeLexicon`（FTS 记忆/检索）、`SnapshotService`（本地分支快照） |
 | Harness | `HarnessProfile`、`HarnessPolicyResolver`、`TaskRouter`、`TaskProfile`、`ReliabilityModules`、`SmartVerifierService`、`SmartVerifierCalibration`、`FocusedSubagentService` |
 | 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask）、`WebOrchestrator`（规划）、`MoyuWebService`（检索/抓取） |
-| 观察 | `TurnUsage`（按主调用 / 辅助调用 / 子任务分类记录用量） |
+| 观察 | `TurnUsage`（按主调用 / 辅助调用 / 子任务分类，并按发起阶段归属每次模型调用）、`TurnTrace`（每个阶段的状态、耗时、判断摘要，跳过时记录原因） |
 | 存储 | `ChatDatabase`（`moyu-beta.db`，schema 1）、`ChatMediaStore`、`ChatSecretStore` |
 | 前端 | `src/bridge.js`（intent 发送、视图接收）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/mascot.js`（像素小鱼与彩蛋）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
 | 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |

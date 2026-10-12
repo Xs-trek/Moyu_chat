@@ -82,8 +82,19 @@ if (!promptPolicy.includes('Moyu trusted runtime metadata') || !promptPolicy.inc
 if (!promptPolicy.includes('compactInstructions(') || !read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('selectWithPolicy(')) fail('weak-context models require deterministic compact Harness fallback instead of an arbitrary occupancy threshold');
 if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('searchUserMemory(') || !knowledgeStore.includes('the current session is excluded')) fail('snapshot + cross-chat retrieval boundary missing');
 
-const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
-if (!coordinator.includes('contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
+// Native turn authority: the coordinator (intents, sessions, views) plus the turn pipeline it delegates to.
+const turnFiles = ['ChatCoordinator', 'TurnPipeline', 'ProviderRoundLoop', 'TurnControl', 'TurnRun', 'TurnConfig', 'TurnTrace'];
+const coordinator = turnFiles.map(name => read(`android/app/src/main/java/com/moyu/chat/${name}.java`)).join('\n');
+const coordinatorOnly = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
+const turnPipeline = read('android/app/src/main/java/com/moyu/chat/TurnPipeline.java');
+// The turn runs as explicit stages; ChatCoordinator must not grow a monolithic send() again.
+if (coordinatorOnly.includes('private void send(') || coordinatorOnly.includes('new ChatTransport.Sink()') || !coordinatorOnly.includes('pipeline.run(sessionId, message, turnConfig, turnControl)')) fail('the turn must run through TurnPipeline, not inline in ChatCoordinator');
+for (const stage of ['ACCEPT', 'CONTEXT', 'ROUTE', 'CHECKPOINT', 'WEB_PLAN', 'TOOLS', 'WEB_RETRIEVE', 'GENERATE', 'VERIFY', 'REPAIR']) {
+  if (!coordinator.includes(`TurnTrace.${stage}`)) fail(`turn stage ${stage} must record a trace span`);
+}
+if (!turnPipeline.includes('r.trace().skip(TurnTrace.ROUTE') || !turnPipeline.includes('r.trace().skip(TurnTrace.CHECKPOINT') || !turnPipeline.includes('r.trace().skip(TurnTrace.WEB_RETRIEVE') || !coordinator.includes('r.trace().skip(TurnTrace.VERIFY')) fail('skipped helper stages must record why they were skipped');
+if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
+if (!coordinator.includes('contexts.buildCommitted(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
 if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_id')) fail('deployment-scoped model profile/session binding missing');
 if (!db.includes('input_modalities') || !db.includes('output_modalities') || !db.includes('draft_media')) fail('model/session multimodal capability persistence missing');
@@ -101,10 +112,10 @@ if (!coordinator.includes('chat.session.model.set') || !coordinator.includes('ch
 if (!coordinator.includes('if (p.has("webMode")) setSessionWebMode(')) fail('Send must persist the visible session Web mode before freezing TurnConfig');
 if (coordinator.indexOf('db.beginTurn(') < 0 || coordinator.indexOf('webService.prepare(') < 0 || coordinator.indexOf('db.beginTurn(') > coordinator.indexOf('webService.prepare(')) fail('accepted user turn must become visible before Web retrieval starts');
 if (!coordinator.includes('.put("modelName"') || !coordinator.includes('.put("reasoningEffort"') || !coordinator.includes('.put("reasoningAvailable"')) fail('assistant turns must freeze model/reasoning metadata');
-if (!coordinator.includes('.put("contextMode", turnConfig.contextMode)') || !coordinator.includes('.put("effectiveContextMode", contextPolicy.effectiveLabel)')) fail('assistant turns must freeze context mode metadata');
+if (!coordinator.includes('.put("contextMode", turnConfig.contextMode)') || !coordinator.includes('.put("effectiveContextMode", r.contextPolicy.effectiveLabel)')) fail('assistant turns must freeze context mode metadata');
 const chatTransport = read('android/app/src/main/java/com/moyu/chat/ChatTransport.java');
 const modelPreflight = read('android/app/src/main/java/com/moyu/chat/ModelPreflight.java');
-if (!chatTransport.includes('Preflight callers use the legacy overload and therefore NONE') || !modelPreflight.includes('transport.stream(provider, apiKey, model, ReasoningPolicy.DEFAULT, prompt, sink)')) fail('hidden preprocessing must use the legacy no-Web transport overload');
+if (!chatTransport.includes('Preflight callers use the options-free overload and therefore NONE') || !modelPreflight.includes('transport.stream(provider, apiKey, model, ReasoningPolicy.DEFAULT, prompt, sink)')) fail('hidden preprocessing must use the options-free (no-Web) transport overload');
 if (!coordinator.includes('ContextMode.resolve(') || !coordinator.includes('taskRouter.route(') || !coordinator.includes('checkpointService.update(')) fail('v0.0.2 session context-mode/router/checkpoint orchestration missing');
 if (!coordinator.includes('webCalls = ConcurrentHashMap.newKeySet()') || !coordinator.includes('for (okhttp3.Call call : webCalls)') || !coordinator.includes('batchCalls.length() > ClientToolRuntime.MAX_TOOL_CALLS_PER_BATCH')) fail('parallel client tools require all-call cancellation ownership and a bounded batch size');
 if (!coordinator.includes('.put("incomplete", true).put("terminalCode"')) fail('partial provider turns must preserve incomplete semantics');
@@ -137,7 +148,7 @@ if (db.includes('defaultReasoning') || db.includes('default_reasoning')) fail('M
 if (!db.includes('reasoning_levels') || !coordinator.includes('ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort)')) fail('accepted turns must validate durable session effort against the session-frozen reasoning capability boundary');
 if (!continuationPolicy.includes('static final String NONE = "none"') || !continuationPolicy.includes('static final String NATIVE = "native"')) fail('provider-private continuation must be an explicit deployment capability');
 if (!contextBuilder.includes('mode.providerContinuationEnabled && ProviderContinuationPolicy.enabled(session.continuationMode)') || !coordinator.includes('ProviderContinuationPolicy.enabled(turnConfig.continuationMode)')) fail('native continuation requires both Harness-mode and frozen deployment-capability gates');
-if (!coordinator.includes('final TurnConfig turnConfig = freezeTurnConfig(sessionId)') || !coordinator.includes('turnConfig.deploymentFingerprint') || !coordinator.includes('turnConfig.reasoningEffort') || !coordinator.includes('calibrationKey(turnConfig.deploymentFingerprint)') || !coordinator.includes('.put("deploymentFingerprint", turnConfig.deploymentFingerprint)')) fail('provider/model/reasoning capabilities and provider-private identity must be frozen in one TurnConfig before asynchronous preparation');
+if (!coordinator.includes('final TurnConfig turnConfig = freezeTurnConfig(sessionId)') || !coordinator.includes('turnConfig.deploymentFingerprint') || !coordinator.includes('turnConfig.reasoningEffort') || !coordinator.includes('calibrationKey(r.config.deploymentFingerprint)') || !coordinator.includes('.put("deploymentFingerprint", turnConfig.deploymentFingerprint)')) fail('provider/model/reasoning capabilities and provider-private identity must be frozen in one TurnConfig before asynchronous preparation');
 if (!terminalSink.includes('onProviderContinuation(JSONObject state)') || !terminalSink.includes('delegate.onProviderContinuation(state)')) fail('TerminalSink must forward provider-private continuation before the terminal callback');
 if (!contextBuilder.includes('requiredProjection') || !contextBuilder.includes('Optional Web/Memory/RAG must never turn an otherwise valid current request into a hard failure')) fail('optional Web/Memory/RAG requires a deterministic provider-neutral fallback');
 if (!turnOptions.includes('web_search_20260209') || !turnOptions.includes('web_fetch_20250910') || !turnOptions.includes('String wireType(String capability)') || !turnOptions.includes('ANTHROPIC_SEARCH_WIRES.contains(item) || ANTHROPIC_FETCH_WIRES.contains(item)')) fail('third-party Messages hosted-Web capability must require explicit tool wire versions');
@@ -179,10 +190,10 @@ if (!webService.includes('Moyu Fetch only allows HTTPS URLs') || !webService.inc
 if (!webService.includes('validateToolFetchArgument(') || !webService.includes('web_fetch.url must be exactly one absolute HTTPS URL with no surrounding text') || !webService.includes('Never salvage a URL from')) fail('client web_fetch must reject free-form prompt text and return a correctable typed tool error instead of guessing a URL');
 if (!webService.includes('untrusted reference material') || !webService.includes('never as instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
 if (!webService.includes(`MoyuChat/${VERSION_NAME}`)) fail(`Moyu Fetch User-Agent version must match v${VERSION_NAME}`);
-if (!coordinator.includes('final CanonicalPrompt preWebPrompt = prompt;')
-    || !coordinator.includes('contexts.appendRequiredUserSuffix(preWebPrompt')
+if (!coordinator.includes('r.preWebPrompt = r.prompt;')
+    || !coordinator.includes('contexts.appendRequiredUserSuffix(r.preWebPrompt')
     || !coordinator.includes('promptContainsLatestUserSuffix(webPrompt, candidate.promptSuffix)')
-    || !coordinator.includes('new String[]{"web_context_budget"')
+    || !coordinator.includes('finishEarly(r, "web_context_budget", "Required Web evidence does not fit the configured model input window")')
     || !coordinator.includes('preparedWeb = MoyuWebService.Prepared.none();')
     || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('required ephemeral Web evidence/source projection/fail-closed budget fallback missing');
 
@@ -197,7 +208,7 @@ if (!turnService.includes('static boolean start(Context context)') || !turnServi
 if (!coordinator.includes('preparationWorker = Executors.newFixedThreadPool(2)') || !coordinator.includes('preparationWorker.execute(')) fail('blocking Router/Checkpoint/Web preparation must not occupy the UI intent queue');
 if (!coordinator.includes('emitStreamingPatch(String sessionId, JSONObject liveItem)') || !coordinator.includes('"conversation.stream"') || !coordinator.includes('STREAM_PROJECTION_INTERVAL_MS = 50L')) fail('streaming data plane must use a bounded visible-session patch instead of rebuilding full application snapshots per delta');
 if (!coordinator.includes('if ("conversation".equals(route)) view.put("activeSession", sessionJson(active, true))')) fail('non-conversation routes must not serialize/bridge the active conversation timeline');
-if (!coordinator.includes('if (!streamTerminal.get()) {') || !coordinator.includes('activeTurns.put(id, turn)')) fail('a terminal callback that wins the stream-start race must not be resurrected as an active turn');
+if (!coordinator.includes('if (!streamTerminal.get()) {') || !coordinator.includes('env.putActiveTurn(id, turn)')) fail('a terminal callback that wins the stream-start race must not be resurrected as an active turn');
 if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
 if (!mainActivity.includes('openExternalUrl(String url)') || !mainActivity.includes('Intent.ACTION_VIEW') || !mainActivity.includes('"https".equalsIgnoreCase(uri.getScheme())')) fail('external.open must leave the WebView through an HTTPS-only Android VIEW intent');
 if (!mainActivity.includes('STATE_PENDING_IMAGE_SESSION') || !mainActivity.includes('onSaveInstanceState(Bundle outState)') || !mainActivity.includes('无法打开系统文件选择器')) fail('image picker session state must survive Activity recreation and picker launch failures must be visible');

@@ -34,7 +34,7 @@ interface ChatTransport {
 
     Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort, CanonicalPrompt prompt, Sink sink);
 
-    /** Main user turns may opt into provider-hosted web tools. Preflight callers use the legacy overload and therefore NONE. */
+    /** Main user turns may opt into provider-hosted web tools. Preflight callers use the options-free overload and therefore NONE. */
     default Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort,
                         CanonicalPrompt prompt, ChatTurnOptions options, Sink sink) {
         return stream(provider, apiKey, model, reasoningEffort, prompt, sink);

@@ -140,7 +140,7 @@ final class MoyuWebService implements AutoCloseable {
     Prepared prepare(String userText, ChatTurnOptions options, StageSink stages, CallScope calls,
                      FollowUpContext previous) {
         ChatTurnOptions turn = options == null ? ChatTurnOptions.NONE : options;
-        WebOrchestrator.Plan plan = WebOrchestrator.legacyPlan(userText, turn.webMode, previous, java.time.ZonedDateTime.now());
+        WebOrchestrator.Plan plan = WebOrchestrator.rulePlan(userText, turn.webMode, previous, java.time.ZonedDateTime.now());
         return prepare(plan, stages, calls, previous);
     }
 
@@ -245,7 +245,7 @@ final class MoyuWebService implements AutoCloseable {
     ToolResult executeSearch(String query, CallScope callScope) throws Exception {
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) throw new IllegalArgumentException("web_search.query is required");
-        WebOrchestrator.Plan plan = WebOrchestrator.legacyPlan(q, ChatTurnOptions.WEB_ON,
+        WebOrchestrator.Plan plan = WebOrchestrator.rulePlan(q, ChatTurnOptions.WEB_ON,
                 FollowUpContext.none(), java.time.ZonedDateTime.now());
         String result = searchExa(plan, callScope == null ? NO_CANCEL : callScope);
         if (result == null || result.trim().isEmpty()) throw new IllegalStateException("Exa returned no search context");

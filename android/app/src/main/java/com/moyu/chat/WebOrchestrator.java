@@ -135,8 +135,8 @@ final class WebOrchestrator {
         return merge(deterministic, modelPlan, webMode, userText, previous, now, true);
     }
 
-    /** Deterministic compatibility path for tests/host callers that do not own a provider planner. */
-    static Plan legacyPlan(String userText, String webMode, MoyuWebService.FollowUpContext previous, ZonedDateTime now) {
+    /** Rule-only plan (no model planner call): explicit client web_search and callers without a provider. */
+    static Plan rulePlan(String userText, String webMode, MoyuWebService.FollowUpContext previous, ZonedDateTime now) {
         return deterministicPlan(userText, webMode, previous, now == null ? ZonedDateTime.now() : now);
     }
 

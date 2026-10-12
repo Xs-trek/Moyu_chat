@@ -718,13 +718,13 @@ public class ChatCoordinatorE2eTest {
                 .put(new JSONObject().put("kind", "usage"))
                 .put(new JSONObject().put("kind", "message").put("role", "user").put("text", "继续看看"))
                 .put(new JSONObject().put("kind", "message").put("role", "assistant").put("streaming", true));
-        MoyuWebService.FollowUpContext previous = ChatCoordinator.webFollowUpContext(timeline);
+        MoyuWebService.FollowUpContext previous = TurnPipeline.webFollowUpContext(timeline);
         assertTrue(previous.previousTurnUsedWeb);
         assertEquals("检索主题", previous.previousUserText);
         assertEquals(1, previous.sources.length());
 
         timeline.put(new JSONObject().put("kind", "message").put("role", "assistant").put("text", "plain answer"));
-        MoyuWebService.FollowUpContext broken = ChatCoordinator.webFollowUpContext(timeline);
+        MoyuWebService.FollowUpContext broken = TurnPipeline.webFollowUpContext(timeline);
         assertFalse("an intervening non-Web assistant must break inheritance", broken.previousTurnUsedWeb);
         assertEquals(0, broken.sources.length());
     }

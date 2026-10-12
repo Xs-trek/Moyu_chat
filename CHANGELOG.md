@@ -4,6 +4,17 @@
 
 Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 1（beta 线重新计数，库文件 `moyu-beta.db`）。
 
+### 回合管线（阶段 2a）
+
+行为不变的重构。
+
+- 原来约 700 行的 `ChatCoordinator.send()` 拆成 `TurnPipeline` 的明确阶段：接收、上下文、路由、压缩检查点、联网规划、工具选择、联网检索、生成、校验/修正、收尾。生成阶段（多轮主调用、客户端工具轮次、流式投影）独立为 `ProviderRoundLoop`；回合状态集中在 `TurnRun`，不再靠十几个局部数组在闭包间传递。`ChatCoordinator` 从 1846 行降到约 800 行，只保留 intent、会话和视图。
+- 新增 `TurnTrace`：每个阶段记录状态、耗时和判断摘要（路由分类与置信度、联网是否触发及搜索词、工具与联网执行方式、证据来源数、校验结论 / 风险 / 是否修正），被跳过的阶段记录原因。
+- `TurnUsage` 按发起阶段归属每次模型调用：路由、压缩、联网规划、校验、修正、子任务分别计数和计 token，原来的主调用 / 辅助调用 / 子任务汇总不变。
+- 清理：去掉上下文模式 `auto` 的兼容常量；`WebOrchestrator.legacyPlan` 改名为 `rulePlan`（规则规划，不调用模型）。
+- 开发原则写入 CLAUDE.md。
+- 测试：新增 `TurnPipelineTest`，覆盖三档模式各自运行和跳过的阶段及原因、辅助调用按阶段计费、在准备阶段停止时不会发出主调用。调用链目前只保存在内存里，下一步随回合持久化。
+
 ### 数据库基线（beta schema 1）
 
 不保留旧数据：beta 线使用新的库文件 `moyu-beta.db`，schema 从 1 重新计数；原版的 `moyu-chat.db` 启动时直接删除，版本号更新的文件删除重建；原版 v1→v16 的迁移链和对应测试一并移除。设计参照 OpenAI Agents SDK 的 `SQLiteSession` / `AdvancedSQLiteSession`：会话表加有序的 JSON 条目日志，用量、分支、校验这类结构化信息放在侧表。

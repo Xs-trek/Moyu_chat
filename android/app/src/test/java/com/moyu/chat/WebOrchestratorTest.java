@@ -12,14 +12,14 @@ public class WebOrchestratorTest {
             2026, 9, 1, 21, 30, 0, 0, ZoneId.of("Asia/Singapore"));
 
     @Test public void pureDeviceDateDoesNotBecomeWebFreshnessRequest() {
-        WebOrchestrator.Plan plan = WebOrchestrator.legacyPlan(
+        WebOrchestrator.Plan plan = WebOrchestrator.rulePlan(
                 "今天是几号？", ChatTurnOptions.WEB_AUTO, MoyuWebService.FollowUpContext.none(), NOW);
         assertFalse(plan.useWeb);
         assertEquals(WebOrchestrator.INTENT_NONE, plan.intent);
     }
 
     @Test public void yesterdayNewsGetsExactDeviceLocalPublicationWindow() {
-        WebOrchestrator.Plan plan = WebOrchestrator.legacyPlan(
+        WebOrchestrator.Plan plan = WebOrchestrator.rulePlan(
                 "查一下昨天 OpenAI 发生了什么新闻", ChatTurnOptions.WEB_AUTO,
                 MoyuWebService.FollowUpContext.none(), NOW);
         assertTrue(plan.useWeb);
@@ -31,7 +31,7 @@ public class WebOrchestratorTest {
     }
 
     @Test public void latestVersionUsesFreshCacheBoundaryInsteadOfUnboundedSearch() {
-        WebOrchestrator.Plan plan = WebOrchestrator.legacyPlan(
+        WebOrchestrator.Plan plan = WebOrchestrator.rulePlan(
                 "检索一下最新版本", ChatTurnOptions.WEB_AUTO,
                 MoyuWebService.FollowUpContext.none(), NOW);
         assertTrue(plan.useWeb);
@@ -40,7 +40,7 @@ public class WebOrchestratorTest {
     }
 
     @Test public void explicitUrlIsSeparatedFromNaturalLanguageFetchInstruction() {
-        WebOrchestrator.Plan plan = WebOrchestrator.legacyPlan(
+        WebOrchestrator.Plan plan = WebOrchestrator.rulePlan(
                 "请抓取 https://example.com/page 并总结内容", ChatTurnOptions.WEB_AUTO,
                 MoyuWebService.FollowUpContext.none(), NOW);
         assertTrue(plan.useWeb);

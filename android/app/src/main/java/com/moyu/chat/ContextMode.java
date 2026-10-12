@@ -5,10 +5,6 @@ final class ContextMode {
     static final String MINIMAL = "minimal";
     static final String STANDARD = "standard";
     static final String SMART = "smart";
-    /** v0.0.2 compatibility only. New UI never emits auto. */
-    static final String LEGACY_AUTO = "auto";
-    /** Source-compatibility alias for older tests/callers; persisted value is standard. */
-    @Deprecated static final String AUTO = STANDARD;
 
     static final class Policy {
         final boolean routerEnabled;
@@ -38,7 +34,6 @@ final class ContextMode {
     static String normalize(String raw) {
         String value = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
         if (MINIMAL.equals(value) || STANDARD.equals(value) || SMART.equals(value)) return value;
-        if (LEGACY_AUTO.equals(value)) return STANDARD;
         return STANDARD;
     }
 

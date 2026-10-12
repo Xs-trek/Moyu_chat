@@ -35,7 +35,15 @@ Inside the page, `src/view-model.js` is the only module that interprets native v
 
 ### ChatCoordinator
 
-Owns intent validation, local session lifecycle, local branching, turn cancellation/runtime ownership, context preparation, bounded client-tool rounds and Smart post-processing. Provider-specific wire parsing belongs to transports.
+Owns intent validation, local session lifecycle, local branching, turn admission (frozen `TurnConfig`, runtime lease, cancellation) and view projection. It hands each accepted turn to `TurnPipeline` and exposes its runtime (executors, busy flags, view emission) through the narrow `TurnPipeline.Env` interface. Provider-specific wire parsing belongs to transports.
+
+### Turn pipeline
+
+```text
+accept → context → route → checkpoint → web plan → tools → web retrieve → generate → verify/repair → finish
+```
+
+Preparation stages run synchronously on the preparation pool and share one `TurnRun`. `ProviderRoundLoop` is the generate stage: provider rounds, bounded client-tool batches and the coalesced live projection. Verification runs on the preparation pool after the last round. Each stage records a `TurnTrace` span (status, duration, a small decision summary); a skipped helper records why (`mode_off`, `task_profile_cached`, `within_budget`, `web_not_needed`, `provider_hosted`, `not_needed`, …). Helper model calls are tracked per issuing stage, so each helper's cost is visible next to what it decided.
 
 ### Durable Chat domain
 
@@ -183,6 +191,6 @@ Official Anthropic shared root is `https://api.anthropic.com/v1`.
 
 ## 11. Turn usage and media bounds
 
-`TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is an ordinary timeline item (`kind = usage`).
+`TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category and by the pipeline stage that issued them. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is an ordinary timeline item (`kind = usage`).
 
 `ChatMediaStore` reads image bounds without decoding pixels, rejects excessive dimensions/area, and only then creates the private media file. Byte/draft-image limits remain in force.

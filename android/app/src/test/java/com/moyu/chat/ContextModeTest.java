@@ -23,7 +23,7 @@ public class ContextModeTest {
         assertTrue(smart.routerEnabled); assertTrue(smart.checkpointEnabled); assertTrue(smart.retrievalEnabled); assertTrue(smart.evidencePolicyEnabled); assertEquals("smart", smart.effectiveLabel);
     }
 
-    @Test public void legacyAutoNormalizesToStandardWithoutOriginHeuristics() {
+    @Test public void unknownModeNormalizesToStandardWithoutOriginHeuristics() {
         assertEquals(ContextMode.STANDARD, ContextMode.normalize("auto"));
         ChatDatabase.Session session = new ChatDatabase.Session(); session.contextMode = "auto";
         ChatDatabase.Snapshot branch = new ChatDatabase.Snapshot();
