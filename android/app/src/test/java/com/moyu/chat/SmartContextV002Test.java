@@ -54,7 +54,7 @@ public class SmartContextV002Test {
     }
 
     @Before public void setUp() throws Exception {
-        RuntimeEnvironment.getApplication().deleteDatabase("moyu-chat.db");
+        RuntimeEnvironment.getApplication().deleteDatabase(ChatDatabase.FILE_NAME);
         server = new MockWebServer(); server.start();
         app = (MoyuChatApplication) RuntimeEnvironment.getApplication();
         host = new Host(); secrets = new SecretStore();

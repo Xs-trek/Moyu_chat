@@ -25,7 +25,7 @@ public class SnapshotBranchContextTest {
     private ContextBuilder contexts;
 
     @Before public void setUp() {
-        RuntimeEnvironment.getApplication().deleteDatabase("moyu-chat.db");
+        RuntimeEnvironment.getApplication().deleteDatabase(ChatDatabase.FILE_NAME);
         db = new ChatDatabase(RuntimeEnvironment.getApplication());
         db.getWritableDatabase();
         snapshots = new SnapshotService(db);

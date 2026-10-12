@@ -28,7 +28,7 @@ public class ChatDatabaseTest {
 
     @Before public void setUp() {
         context = RuntimeEnvironment.getApplication();
-        context.deleteDatabase("moyu-chat.db");
+        context.deleteDatabase(ChatDatabase.FILE_NAME);
         db = new ChatDatabase(context);
         db.getWritableDatabase(); // force schema creation
     }
@@ -67,10 +67,10 @@ public class ChatDatabaseTest {
 
     // ---------- baseline ----------
 
-    @Test public void preBaselineDatabaseIsDroppedAndRecreated() throws Exception {
+    @Test public void preBetaDatabaseFileIsDeletedNotMigrated() throws Exception {
         db.close();
-        context.deleteDatabase("moyu-chat.db");
-        try (android.database.sqlite.SQLiteDatabase raw = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath("moyu-chat.db"), null)) {
+        context.deleteDatabase(ChatDatabase.FILE_NAME);
+        try (android.database.sqlite.SQLiteDatabase raw = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(ChatDatabase.LEGACY_FILE_NAME), null)) {
             raw.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,model TEXT NOT NULL,updated_at TEXT NOT NULL)");
             raw.execSQL("CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,provider_id TEXT NOT NULL,model TEXT NOT NULL,state TEXT NOT NULL,updated_at TEXT NOT NULL)");
             raw.execSQL("CREATE TABLE timeline(item_key TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,local_seq INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL)");
@@ -87,7 +87,8 @@ public class ChatDatabaseTest {
         assertTrue("no pre-baseline provider survives", db.listProviders().isEmpty());
         assertTrue("no pre-baseline session survives", db.listSessions().isEmpty());
         assertEquals("settings start empty", "", db.setting("knowledgeIndex:old-s", ""));
-        assertEquals(ChatDatabase.BASELINE_VERSION, db.getReadableDatabase().getVersion());
+        assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
+        assertFalse("the pre-beta file is removed", context.getDatabasePath(ChatDatabase.LEGACY_FILE_NAME).exists());
         assertTrue(tableExists("verifier_labels"));
         assertFalse("removed Remote table must be gone", tableExists("handoffs"));
         assertTrue("timeline carries kind", columns("timeline").contains("kind"));
@@ -100,7 +101,7 @@ public class ChatDatabaseTest {
         db.close();
         db = new ChatDatabase(context);
         assertTrue(db.listProviders().isEmpty());
-        assertEquals(ChatDatabase.BASELINE_VERSION, db.getReadableDatabase().getVersion());
+        assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
     }
 
     // ---------- per-entity state ----------
@@ -224,117 +225,6 @@ public class ChatDatabaseTest {
         assertEquals("session keeps the accepted transport protocol after profile edits", OpenAiCompatibleTransport.CHAT_COMPLETIONS, reloaded.protocol);
         assertEquals(ProviderAuth.BEARER, reloaded.authMode);
         assertEquals(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, reloaded.reasoningWire);
-    }
-
-    /** Rebuilds the v1 schema (pre token budgets / parent ids / snapshot provenance) with seed rows. */
-    private void createLegacyDatabase(int version) throws Exception {
-        android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
-        String base =
-                "CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,model TEXT NOT NULL,updated_at TEXT NOT NULL);" +
-                "CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,provider_id TEXT NOT NULL,model TEXT NOT NULL,state TEXT NOT NULL,updated_at TEXT NOT NULL,draft TEXT NOT NULL DEFAULT '',origin_snapshot_id TEXT,preview TEXT);" +
-                "CREATE TABLE timeline(item_key TEXT PRIMARY KEY,session_id TEXT NOT NULL,local_seq INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(session_id) REFERENCES sessions(local_id) ON DELETE CASCADE,UNIQUE(session_id,local_seq));" +
-                "CREATE INDEX timeline_session_seq ON timeline(session_id,local_seq);" +
-                "CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,source_id TEXT NOT NULL,source_title TEXT NOT NULL,source_runtime TEXT,created_at TEXT NOT NULL,item_count INTEGER NOT NULL,content_hash TEXT);" +
-                "CREATE TABLE snapshot_items(snapshot_id TEXT NOT NULL,ordinal INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(snapshot_id,ordinal),FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id) ON DELETE CASCADE);" +
-                "CREATE TABLE handoffs(handoff_id TEXT PRIMARY KEY,branch_session_id TEXT NOT NULL,state TEXT NOT NULL,summary TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(branch_session_id) REFERENCES sessions(local_id) ON DELETE CASCADE);" +
-                "CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);";
-        for (String statement : base.split(";")) {
-            String trimmed = statement.trim();
-            if (!trimmed.isEmpty()) raw.execSQL(trimmed);
-        }
-        raw.execSQL("INSERT INTO providers VALUES('legacy-p','Legacy','openai-responses','https://legacy.example/v1','legacy-model','2020-01-01T00:00:00Z')");
-        raw.execSQL("INSERT INTO providers VALUES('legacy-a','Legacy Anthropic','anthropic-messages','https://legacy-anthropic.example','legacy-claude','2020-01-01T00:00:00Z')");
-        raw.execSQL("INSERT INTO sessions VALUES('legacy-s','Legacy session','legacy-p','legacy-model','completed','2020-01-01T00:00:00Z','','legacy-snap',NULL)");
-        raw.execSQL("INSERT INTO timeline VALUES('k1','legacy-s',1,'{\"kind\":\"message\",\"role\":\"user\",\"text\":\"legacy user\",\"createdAt\":\"2020-01-01T00:00:00Z\"}','2020-01-01T00:00:00Z')");
-        raw.execSQL("INSERT INTO timeline VALUES('k2','legacy-s',2,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}','2020-01-01T00:00:01Z')");
-        raw.execSQL("INSERT INTO snapshots VALUES('legacy-snap','chat','legacy-s','Legacy session',NULL,'2020-01-01T00:00:00Z',1,'hash')");
-        if (version >= 2) {
-            raw.execSQL("ALTER TABLE providers ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 32000");
-            raw.execSQL("ALTER TABLE providers ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 4096");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT");
-        }
-        if (version >= 3) {
-            raw.execSQL("ALTER TABLE snapshots ADD COLUMN source_item_count INTEGER NOT NULL DEFAULT 0");
-            raw.execSQL("ALTER TABLE snapshots ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0");
-            raw.execSQL("UPDATE snapshots SET source_item_count=item_count WHERE source_item_count=0");
-        }
-        if (version >= 4) {
-            raw.execSQL("ALTER TABLE providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
-            raw.execSQL("UPDATE providers SET auth_mode='x-api-key' WHERE protocol='anthropic-messages'");
-        }
-        if (version >= 5) {
-            raw.execSQL("ALTER TABLE providers ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
-            raw.execSQL("ALTER TABLE providers ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
-            raw.execSQL("UPDATE providers SET reasoning_wire='openai-responses' WHERE protocol='openai-responses'");
-            raw.execSQL("UPDATE providers SET reasoning_wire='anthropic-effort' WHERE protocol='anthropic-messages'");
-            raw.execSQL("CREATE TABLE model_profiles(profile_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,model_id TEXT NOT NULL,display_name TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL DEFAULT 4096,reasoning_levels TEXT NOT NULL DEFAULT '',default_reasoning TEXT NOT NULL DEFAULT 'default',updated_at TEXT NOT NULL,FOREIGN KEY(provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,UNIQUE(provider_id,model_id))");
-            raw.execSQL("INSERT INTO model_profiles(profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,updated_at) SELECT provider_id || ':default',provider_id,model,model,context_tokens,input_tokens,max_output_tokens,'','default',updated_at FROM providers WHERE model<>''");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN model_profile_id TEXT");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 32000");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 4096");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'default'");
-            raw.execSQL("UPDATE sessions SET model_profile_id=provider_id || ':default' WHERE model=(SELECT model FROM providers WHERE providers.provider_id=sessions.provider_id)");
-        }
-        if (version >= 6) {
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN input_modalities TEXT NOT NULL DEFAULT 'text'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN input_modalities TEXT NOT NULL DEFAULT 'text'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN draft_media TEXT NOT NULL DEFAULT '[]'");
-        }
-        if (version >= 7) {
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN task_profile TEXT NOT NULL DEFAULT ''");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN context_checkpoint TEXT NOT NULL DEFAULT ''");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN checkpoint_covered_items INTEGER NOT NULL DEFAULT 0");
-        }
-        if (version >= 8) {
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'auto'");
-        }
-        if (version >= 9) {
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN web_mode TEXT NOT NULL DEFAULT 'auto'");
-        }
-        if (version >= 10) {
-            raw.execSQL("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'");
-            raw.execSQL("CREATE VIRTUAL TABLE knowledge_fts USING fts4(scope_id,item_ref,ordinal,role,text,terms,tokenize=simple)");
-        }
-        if (version >= 11) {
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
-        }
-        if (version >= 12) {
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
-        }
-        if (version >= 13) {
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai-chat-completions'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
-            raw.execSQL("UPDATE model_profiles SET protocol=COALESCE((SELECT protocol FROM providers WHERE providers.provider_id=model_profiles.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM providers WHERE providers.provider_id=model_profiles.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM providers WHERE providers.provider_id=model_profiles.provider_id),'none')");
-            raw.execSQL("UPDATE providers SET base_url=CASE WHEN RTRIM(base_url,'/') LIKE '%/v1' THEN RTRIM(base_url,'/') ELSE RTRIM(base_url,'/') || '/v1' END WHERE protocol='anthropic-messages'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai-chat-completions'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
-            raw.execSQL("UPDATE sessions SET protocol=COALESCE((SELECT protocol FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT protocol FROM providers WHERE providers.provider_id=sessions.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT auth_mode FROM providers WHERE providers.provider_id=sessions.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT reasoning_wire FROM providers WHERE providers.provider_id=sessions.provider_id),'none')");
-        }
-        if (version >= 14) {
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN config_mode TEXT NOT NULL DEFAULT 'legacy-manual'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_key TEXT NOT NULL DEFAULT 'unknown'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_version TEXT NOT NULL DEFAULT ''");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_source TEXT NOT NULL DEFAULT 'legacy-v0.0.3'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
-            raw.execSQL("ALTER TABLE model_profiles ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
-            raw.execSQL("ALTER TABLE sessions ADD COLUMN subagent_mode TEXT NOT NULL DEFAULT 'off'");
-        }
-        raw.execSQL("INSERT INTO snapshot_items VALUES('legacy-snap',0,'{\"kind\":\"message\",\"role\":\"assistant\",\"text\":\"legacy assistant\",\"createdAt\":\"2020-01-01T00:00:01Z\"}')");
-        raw.execSQL("PRAGMA user_version = " + version);
-        raw.close();
     }
 
     @Test public void newProviderDefaultsToChatCompletionsBearer() {

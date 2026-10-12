@@ -1,6 +1,6 @@
 # Moyu Chat architecture
 
-Current source: v0.0.6-beta; SQLite schema 17 (beta baseline).
+Current source: v0.0.6-beta; SQLite `moyu-beta.db` schema 1 (beta numbering restarts at 1).
 
 ## 1. Product boundary
 
@@ -41,7 +41,7 @@ Owns intent validation, local session lifecycle, local branching, turn cancellat
 
 `ChatDatabase` owns Providers, Model Profiles, Sessions, timeline rows and immutable branch snapshots. A branch snapshot is owned by the sessions that reference it and is collected when the last one is deleted. The durable visible transcript is the product source of truth; provider-native conversation/reasoning state is optional derived metadata.
 
-Schema 17 is the beta baseline. Any older or newer file is dropped and recreated; there is no pre-baseline migration chain. Tables:
+The beta line keeps its own file, `moyu-beta.db`, with schema numbering restarted at 1. The pre-beta `moyu-chat.db` is deleted, a newer file is dropped and recreated, and there is no pre-beta migration chain. Tables:
 
 ```text
 providers        shared endpoint + credential_epoch (bumped when a new key is stored)

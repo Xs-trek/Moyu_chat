@@ -70,7 +70,7 @@ public class ChatCoordinatorE2eTest {
     }
 
     @Before public void setUp() throws Exception {
-        RuntimeEnvironment.getApplication().deleteDatabase("moyu-chat.db");
+        RuntimeEnvironment.getApplication().deleteDatabase(ChatDatabase.FILE_NAME);
         server = new MockWebServer();
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
@@ -279,12 +279,15 @@ public class ChatCoordinatorE2eTest {
     }
 
     private boolean scanDatabaseFor(String needle) throws Exception {
+        java.io.File file = RuntimeEnvironment.getApplication().getDatabasePath(ChatDatabase.FILE_NAME);
+        assertTrue("the scan must read the live database file", file.isFile());
         android.database.sqlite.SQLiteDatabase raw = android.database.sqlite.SQLiteDatabase.openDatabase(
-                RuntimeEnvironment.getApplication().getDatabasePath("moyu-chat.db").getPath(), null,
+                file.getPath(), null,
                 android.database.sqlite.SQLiteDatabase.OPEN_READONLY);
         try (Cursor tables = raw.rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null)) {
             List<String> names = new ArrayList<>();
             while (tables.moveToNext()) names.add(tables.getString(0));
+            assertTrue("the scan must see the chat tables", names.contains("providers") && names.contains("timeline"));
             for (String name : names) {
                 if (name.startsWith("android_") || name.startsWith("sqlite_")) continue;
                 try (Cursor rows = raw.rawQuery("SELECT * FROM \"" + name + "\"", null)) {

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const VERSION_NAME = '0.0.6-beta';
 const VERSION_CODE = 6;
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 1;
 const uiRoot = join(projectRoot, 'src');
 const javaRoot = join(projectRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'moyu', 'chat');
 let failed = false;
@@ -40,10 +40,10 @@ const db = read('android/app/src/main/java/com/moyu/chat/ChatDatabase.java');
 if (/insertWithOnConflict\("sessions"[\s\S]{0,160}CONFLICT_REPLACE/.test(db)) fail('sessions must never use INSERT OR REPLACE because timeline has ON DELETE CASCADE');
 if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery hook missing');
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
-if (!db.includes(`private static final int VERSION = ${SCHEMA_VERSION}`)) fail(`SQLite schema must be v${SCHEMA_VERSION}`);
+if (!db.includes(`static final int VERSION = ${SCHEMA_VERSION};`)) fail(`SQLite schema must be v${SCHEMA_VERSION}`);
 if (/CREATE TABLE handoffs/.test(db)) fail('the removed Remote handoff table must never be recreated');
-// Beta baseline: no pre-baseline migration chain; older/newer files are dropped and recreated.
-if (!db.includes(`static final int BASELINE_VERSION = ${SCHEMA_VERSION}`) || !db.includes('if (oldVersion < BASELINE_VERSION) { dropAll(db); onCreate(db); }') || !db.includes('public void onDowngrade(')) fail('beta baseline must reset pre-baseline and newer database files');
+// Beta line: schema numbering restarts at 1 in its own file; the pre-beta file is deleted, newer files reset.
+if (!db.includes('static final String FILE_NAME = "moyu-beta.db";') || !db.includes('context.deleteDatabase(LEGACY_FILE_NAME);') || !db.includes('public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }')) fail('beta database must live in its own file, delete the pre-beta file and reset newer files');
 if (/ALTER TABLE/.test(db)) fail('baseline schema must be created whole; post-baseline migrations need a reviewed onUpgrade step and a matching assertion here');
 // Providers persist only the shared endpoint; wire/capabilities live on Model Profile and are frozen into Session.
 if (/CREATE TABLE providers\([^)]*(protocol|auth_mode|reasoning_wire|\bmodel\b|context_tokens)/.test(db)) fail('providers must not persist deployment fields (protocol ≠ capability: they belong to Model Profile)');

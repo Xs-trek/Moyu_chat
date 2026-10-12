@@ -34,7 +34,7 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | Harness | `HarnessProfile`、`HarnessPolicyResolver`、`TaskRouter`、`TaskProfile`、`ReliabilityModules`、`SmartVerifierService`、`SmartVerifierCalibration`、`FocusedSubagentService` |
 | 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask）、`WebOrchestrator`（规划）、`MoyuWebService`（检索/抓取） |
 | 观察 | `TurnUsage`（按主调用 / 辅助调用 / 子任务分类记录用量） |
-| 存储 | `ChatDatabase`（schema 17 = beta 基线）、`ChatMediaStore`、`ChatSecretStore` |
+| 存储 | `ChatDatabase`（`moyu-beta.db`，schema 1）、`ChatMediaStore`、`ChatSecretStore` |
 | 前端 | `src/bridge.js`（intent 发送、视图接收）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/mascot.js`（像素小鱼与彩蛋）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
 | 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |
 | 契约 | `contract/moyu-chat-contract.d.ts`：intent 与视图模型类型，改动原生视图或 intent 时同步更新 |
@@ -79,5 +79,5 @@ npm run dev
 
 - Moyu Remote 跨 APK 桥接（RemoteDataBridge、Snapshot 导入、Handoff 回传）。
 - ChatGPT / Claude 官方导出文件导入。以后最多考虑导入本应用自身、同协议版本的会话导出。
-- v1→v16 的迁移链。schema 17 是 beta 基线：更旧或更新的数据库文件直接删除重建，不迁移数据；启动时清掉没有对应 Provider 的密钥和没有引用的图片。以后的 schema 变更从 17 往后写 `onUpgrade` 步骤，并在 `static-check.mjs` 补断言。
+- 原版的 v1→v16 迁移链。beta 线 schema 从 1 重新计数，库文件改为 `moyu-beta.db`；原版库文件 `moyu-chat.db` 直接删除，不迁移；版本号比当前构建新的文件删除重建。启动时清掉没有对应 Provider 的密钥和没有引用的图片。阶段 2 结束、装上真机之前，新表直接并入 v1；之后的 schema 变更从 v1 往后写 `onUpgrade` 步骤，并在 `static-check.mjs` 补断言。
 - `providers` 表上的 protocol / model / 上下文上限等旧列，以及“只填 Provider 就自动生成模型”的一步式创建；Model Profile 的 `defaultReasoning` 和 `legacy-manual` 配置模式；`context.intelligence.set` intent。

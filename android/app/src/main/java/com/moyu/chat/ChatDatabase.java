@@ -19,13 +19,13 @@ import java.util.UUID;
  * labels and app preferences. API keys never live here (see {@link ChatSecretStore}).
  */
 public final class ChatDatabase extends SQLiteOpenHelper {
-    private static final String NAME = "moyu-chat.db";
     /**
-     * v17 is the beta baseline. The beta line keeps no pre-baseline data: any older (or newer) file is
-     * dropped and recreated. Migrations after the baseline go forward from here in {@link #onUpgrade}.
+     * The beta line restarts schema numbering at 1 in its own file. The pre-beta file (schema 1..16 of
+     * the original line) is deleted, never migrated, so the two numbering schemes can never collide.
      */
-    static final int BASELINE_VERSION = 17;
-    private static final int VERSION = 17;
+    static final String FILE_NAME = "moyu-beta.db";
+    static final String LEGACY_FILE_NAME = "moyu-chat.db";
+    static final int VERSION = 1;
 
     public static final class Session {
         public String id, title, providerId, modelProfileId, model, reasoningEffort, reasoningLevels, inputModalities, outputModalities, state, createdAt, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
@@ -97,7 +97,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     private static final String SESSION_COLUMNS = "local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,tool_capabilities,web_mode,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,context_mode,task_profile,context_checkpoint,checkpoint_covered_items,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,harness_preset,client_tool_calling,subagent_mode,reasoning_levels,created_at";
     private static final String PROFILE_COLUMNS = "profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,input_modalities,output_modalities,tool_capabilities,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,config_mode,catalog_key,catalog_version,catalog_source,harness_preset,client_tool_calling";
 
-    ChatDatabase(Context context) { super(context, NAME, null, VERSION); }
+    ChatDatabase(Context context) {
+        super(context, FILE_NAME, null, VERSION);
+        context.deleteDatabase(LEGACY_FILE_NAME);
+    }
 
     @Override public void onConfigure(SQLiteDatabase db) {
         db.setForeignKeyConstraintsEnabled(true);
@@ -160,9 +163,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
     }
 
-    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < BASELINE_VERSION) { dropAll(db); onCreate(db); }
-    }
+    /** Forward migrations from v1: one reviewed step per version, each with a static-check assertion. */
+    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { }
 
     /** A beta build may meet a file from a newer experimental build; the beta line resets rather than guessing. */
     @Override public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }

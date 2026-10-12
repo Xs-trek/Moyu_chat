@@ -2,11 +2,11 @@
 
 ## v0.0.6-beta — 2026-10-12
 
-Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 17（beta 基线）。
+Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 1（beta 线重新计数，库文件 `moyu-beta.db`）。
 
-### 数据库基线（schema 17）
+### 数据库基线（beta schema 1）
 
-不保留旧数据：schema 17 之前（或更新）的数据库文件直接删除重建，v1→v16 的迁移链和对应测试一并移除。设计参照 OpenAI Agents SDK 的 `SQLiteSession` / `AdvancedSQLiteSession`：会话表加有序的 JSON 条目日志，用量、分支、校验这类结构化信息放在侧表。
+不保留旧数据：beta 线使用新的库文件 `moyu-beta.db`，schema 从 1 重新计数；原版的 `moyu-chat.db` 启动时直接删除，版本号更新的文件删除重建；原版 v1→v16 的迁移链和对应测试一并移除。设计参照 OpenAI Agents SDK 的 `SQLiteSession` / `AdvancedSQLiteSession`：会话表加有序的 JSON 条目日志，用量、分支、校验这类结构化信息放在侧表。
 
 - `providers` 只存共享 endpoint（名称、Base URL），去掉 protocol / auth / reasoning wire / model / 上下文上限等旧列；只填 Provider 就自动生成模型的一步式创建和 `legacyProfile` 一并删除。
 - `model_profiles` 去掉无效的 `default_reasoning`；配置模式只剩 auto / manual。

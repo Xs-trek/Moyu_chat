@@ -23,7 +23,7 @@ public class LocalKnowledgeStoreTest {
     private MoyuChatApplication app;
 
     @Before public void setUp() {
-        RuntimeEnvironment.getApplication().deleteDatabase("moyu-chat.db");
+        RuntimeEnvironment.getApplication().deleteDatabase(ChatDatabase.FILE_NAME);
         app = (MoyuChatApplication) RuntimeEnvironment.getApplication();
     }
 

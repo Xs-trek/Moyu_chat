@@ -26,7 +26,7 @@ public class ProviderContinuationReplayTest {
 
     @Before public void setUp() {
         Context context = RuntimeEnvironment.getApplication();
-        context.deleteDatabase("moyu-chat.db");
+        context.deleteDatabase(ChatDatabase.FILE_NAME);
         db = new ChatDatabase(context);
         db.getWritableDatabase();
 
