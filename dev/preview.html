@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <!-- Same CSP as index.html: the preview must not hide a remote-resource dependency. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <title>Moyu Chat · Preview</title>
+  <link rel="stylesheet" href="/src/styles.css">
+  <link rel="stylesheet" href="/dev/dev.css">
+</head>
+<body>
+  <div id="app" aria-live="polite"></div>
+  <div id="toast-root"></div>
+  <!-- Module scripts run in document order: the mock MoyuHost exists before main.js posts app.ready. -->
+  <script type="module" src="/dev/mock-host.js"></script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

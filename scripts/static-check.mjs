@@ -284,6 +284,13 @@ if (!render.includes('contextPreparing') || !render.includes('整理上下文'))
 if (!coordinator.includes('reasoningOut') || !coordinator.includes('outputTokensPerSecond') || !coordinator.includes('cachedInputTokens')) fail('reasoning/usage observability pipeline missing');
 if (!styles.includes('text-align:left') || !render.includes(' token/s')) fail('usage statistics must be left-aligned and use token units');
 
+// The browser preview (dev/) replaces MoyuHost with a mock; it must never reach the APK or the shipped page.
+const uiGradle = read('android/app/build.gradle');
+const syncTask = uiGradle.slice(uiGradle.indexOf("tasks.register('syncMoyuChatUi'"), uiGradle.indexOf('preBuild.dependsOn syncMoyuChatUi'));
+if (!syncTask.includes("include 'index.html'") || !syncTask.includes("include 'src/**'") || /include\s+'(?!index\.html'|src\/\*\*')/.test(syncTask)) fail('syncMoyuChatUi must package only index.html and src/**');
+if (/dev\//.test(read('index.html'))) fail('shipped index.html must not reference the dev/ preview');
+walk(uiRoot, '.js', (file, text) => { if (/from\s+['"]\.\.\/dev\//.test(text) || /__mock/.test(text)) fail(`${file}: shipped UI must not import the dev/ mock host`); });
+
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 if (!manifest.includes('android:allowBackup="false"')) fail('Android backup must remain disabled for local chat data/secrets');
 if (!manifest.includes('android:usesCleartextTraffic="false"')) fail('cleartext provider traffic must remain disabled in v0.0.2');

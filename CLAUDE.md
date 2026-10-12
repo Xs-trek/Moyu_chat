@@ -60,6 +60,14 @@ JAVA_HOME="$PWD/.tools/jdk-17.0.20+8" ./.tools/gradle-8.5/bin/gradle -p android 
 - 版本号集中在 `static-check.mjs` 顶部的 `VERSION_NAME` / `VERSION_CODE` / `SCHEMA_VERSION`，并需与 `package.json`、`android/app/build.gradle`、`src/main.js` 的 `uiVersion`、`MoyuWebService` 的 User-Agent 保持一致。
 - `RealEndpointSmokeTest` 需要真实凭据，默认跳过；跳过不代表外部端点已验证。
 
+## 浏览器预览
+
+```bash
+npm run dev
+```
+
+打开 `http://localhost:5178/?f=<fixture>&theme=<system|light|dark>`。`dev/mock-host.js` 模拟 `MoyuHost` 和 `ChatCoordinator` 的 view.full / view.patch 信封（流式补丁按原生的 20 fps 节奏发送），`src/` 原样运行，CSP 与 `index.html` 相同。fixture 定义在 `dev/fixtures.js`，页面左侧的 DEV 面板可以切换 fixture、主题，以及触发流式、联网、出错和中断。`dev/` 不会被打包进 APK（`syncMoyuChatUi` 只复制 `index.html` 和 `src/**`，静态检查会核对这一点）。预览不能代替真机：软键盘、WebView 版本差异、系统字体都要在设备上确认。
+
 ## 工作方式
 
 1. 先读代码再动手；每个阶段开始前先给出计划，等用户确认后再执行。
