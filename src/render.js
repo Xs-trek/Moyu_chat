@@ -4,6 +4,7 @@ import { button, fmtTime, h, icon, iconButton } from './dom.js';
 import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
+import { morph, motionAllowed, removeNode, withFx } from './morph.js';
 import { forgetRemote, loadRemote, loadTrace, peekTrace } from './remote.js';
 import * as vm from './view-model.js';
 
@@ -111,12 +112,12 @@ function providers(view) {
     appHeader('Provider 与模型', null, button('添加', 'configure-provider', {}, 'btn small')),
     h('div', { class: 'page-body' },
       h('p', { class: 'page-note', text: 'Provider 只保存共享的 Base URL 与 API Key；协议、认证、推理 wire 和模型能力属于具体的 Model Profile。' }),
-      view.providers.length ? h('div', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card provider-card' },
+      view.providers.length ? h('div', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card provider-card', dataset: { key: provider.providerId } },
         h('div', { class: 'row' }, h('strong', { class: 'grow truncate', text: provider.displayName }),
           h('span', { class: `chip ${provider.hasCredential ? 'good' : 'warn'}`, text: provider.hasCredential ? '凭据已配置' : '缺少凭据' })),
         h('code', { class: 'model-id', text: provider.baseUrl || '未配置 Base URL' }),
         h('div', { class: 'row' }, h('span', { class: 'grow' }), button('编辑', 'configure-provider', { providerId: provider.providerId }, 'btn small ghost'), button('添加模型', 'configure-model', { providerId: provider.providerId }, 'btn small')),
-        (provider.models || []).map((model) => h('div', { class: 'model-card' },
+        (provider.models || []).map((model) => h('div', { class: 'model-card', dataset: { key: model.modelProfileId } },
           h('div', { class: 'row' }, h('strong', { class: 'grow truncate', text: model.displayName || model.modelId }),
             h('span', { class: `chip ${model.configMode === 'auto' ? 'good' : 'quiet'}`, text: model.configMode === 'auto' ? '自动配置' : '高级配置' })),
           h('code', { class: 'model-id', text: model.modelId }),
@@ -168,21 +169,24 @@ function settings(view) {
 
 const STATS_PERIODS = [[7, '7 天'], [30, '30 天'], [90, '90 天']];
 let statsDays = 7;
+let lastStats = null;
 export function setStatsDays(days) { statsDays = STATS_PERIODS.some(([d]) => d === Number(days)) ? Number(days) : 7; }
 /** Statistics are re-read every time the page is opened. */
 export function forgetStats() { for (const [days] of STATS_PERIODS) forgetRemote(`stats:${days}`); }
 
 function stats() {
   const entry = loadRemote(`stats:${statsDays}`, 'stats.get', { days: statsDays });
+  if (entry?.state === 'ready') lastStats = entry.data;
+  const loading = !entry || entry.state === 'loading';
   let content;
-  if (!entry || entry.state === 'loading') content = h('p', { class: 'setting-desc', text: '读取中…' });
-  else if (entry.state === 'error') content = h('p', { class: 'setting-desc', text: `未能读取：${entry.error}` });
+  if (loading && !lastStats) content = h('p', { class: 'setting-desc', text: '读取中…' });
+  else if (entry?.state === 'error') content = h('p', { class: 'setting-desc', text: `未能读取：${entry.error}` });
   else {
-    const rows = vm.statsView(entry.data);
-    content = rows.length ? rows.map((row) => h('section', { class: 'card stats-card' },
+    const rows = vm.statsView(loading ? lastStats : entry.data);
+    content = h('div', { class: `stack stats-rows${loading ? ' is-stale' : ''}`, 'aria-busy': loading ? 'true' : 'false' }, rows.length ? rows.map((row) => h('section', { class: 'card stats-card', dataset: { key: `${row.title}|${row.mode}` } },
       h('div', { class: 'stats-head' }, h('strong', { class: 'grow truncate', text: row.title }), h('span', { class: 'chip quiet', text: row.mode })),
       h('dl', { class: 'stats-grid' }, row.cells.map(([k, v]) => h('div', { class: 'stats-cell' }, h('dt', { text: k }), h('dd', { text: v }))))))
-      : h('section', { class: 'card' }, h('p', { class: 'setting-desc', text: '这段时间还没有完成的回合。' }));
+      : h('section', { class: 'card' }, h('p', { class: 'setting-desc', text: '这段时间还没有完成的回合。' })));
   }
   return h('main', { class: 'page stats-page' }, appHeader('统计', '按模型和上下文模式汇总的使用情况'),
     h('div', { class: 'page-body stack' },
@@ -222,7 +226,7 @@ function conversation(view) {
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
       Number(session.displayOmittedInheritedItems || 0) > 0
         ? h('div', { class: 'history-omitted', text: `更早 ${Number(session.displayOmittedInheritedItems)} 条继承历史仍用于上下文和检索，这里不展开。` }) : null,
-      h('div', { class: 'timeline' })),
+      h('div', { class: 'timeline', dataset: { morph: 'own' } })),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
       iconButton('down', '回到底部', 'jump-latest', {}, 'icon-btn jump-latest is-hidden'),
       draftMediaStrip(session.draftMedia, session.localSessionId),
@@ -341,7 +345,7 @@ function detailRows(item, sessionId, canAct) {
     out.push(h('div', { class: 'compare-row' }, button(`对比这个问题的 ${item.answers} 次回答`, 'open-answers', { sessionId, turnId: item.turnId }, 'btn small ghost')));
   }
   if (item.turnId && !item.inherited) out.push(traceSection(sessionId, item.turnId));
-  return out;
+  return h('div', { class: 'turn-more fx-unfold', dataset: { exit: 'fold' } }, out);
 }
 
 /** Stage-by-stage view of the turn, fetched when the details are first expanded. */
@@ -356,8 +360,8 @@ function traceSection(sessionId, turnId) {
     section.append(h('p', { class: 'trace-empty' }, `未能读取：${entry.error || '没有记录'} `, button('重试', 'trace-retry', { turnId }, 'btn small ghost')));
     return section;
   }
-  section.append(h('ol', { class: 'trace-list' }, view.rows.map((row) => {
-    const fill = h('span', { class: 'trace-fill' });
+  section.append(h('ol', { class: 'trace-list fx-fade' }, view.rows.map((row) => {
+    const fill = h('span', { class: 'trace-fill fx-grow' });
     fill.style.width = `${Math.max(row.share > 0 ? 2 : 0, Math.round(row.share * 100))}%`;
     return h('li', { class: `trace-row ${row.status || ''}` },
       h('span', { class: 'trace-stage', text: row.label }),
@@ -479,7 +483,7 @@ function patchAssistant(node, item, ctx) {
   if (streaming) {
     const stage = vm.stageInfo(item.streamStage);
     const live = footer?.classList.contains('live') ? footer : null;
-    if (!live) { const next = liveFooter(item); if (footer) footer.replaceWith(next); else node.append(next); return; }
+    if (!live) { const next = withFx(liveFooter(item), 'fade'); if (footer) footer.replaceWith(next); else node.append(next); return; }
     setPose(live.querySelector('.fish'), stage.pose);
     const chars = String(item.text || '').length;
     const label = chars ? `${stage.label} · ${chars} 字` : stage.label;
@@ -487,9 +491,11 @@ function patchAssistant(node, item, ctx) {
     if (labelNode.textContent !== label) labelNode.textContent = label;
     return;
   }
-  const desired = summaryFooter(item, ctx, isFinal(item, ctx));
+  let desired = summaryFooter(item, ctx, isFinal(item, ctx));
   if (!footer) node.append(desired);
-  else if (footer.dataset.footerSignature !== desired.dataset.footerSignature) footer.replaceWith(desired);
+  else if (footer.classList.contains('live')) footer.replaceWith(withFx(desired, 'fade'));
+  else if (footer.dataset.footerSignature !== desired.dataset.footerSignature) desired = morph(footer, desired);
+  else desired = footer;
   if (wasStreaming && ctx.delight) {
     // A finished reply gets a one-time splash next to its summary.
     const splash = fish('done', 'sm');
@@ -511,14 +517,14 @@ function patchItem(node, item, ctx) {
   if (item.kind === 'message' && item.role === 'assistant' && node.classList.contains('assistant')) { patchAssistant(node, item, ctx); return node; }
   if (item.kind === 'message' && item.role === 'user' && node.classList.contains('user')) {
     const desired = userNode(item, ctx);
-    if (node.textContent !== desired.textContent || Boolean(node.querySelector('[data-action="message-menu"]')) !== Boolean(desired.querySelector('[data-action="message-menu"]'))) { node.replaceWith(desired); return desired; }
+    if (node.textContent !== desired.textContent || Boolean(node.querySelector('[data-action="message-menu"]')) !== Boolean(desired.querySelector('[data-action="message-menu"]'))) return morph(node, desired);
     replaceBySignature(node, '.media-grid', mediaGallery(item.attachments), 'mediaSignature', node.querySelector('.msg-meta'));
     return node;
   }
   return node;
 }
 
-function reconcileTimeline(timeline, items, ctx) {
+function reconcileTimeline(timeline, items, ctx, animate = false) {
   const desiredItems = vm.timelineProjection(items);
   const existing = new Map([...timeline.children].map((node) => [node.dataset.itemKey, node]));
   const used = new Set();
@@ -527,7 +533,7 @@ function reconcileTimeline(timeline, items, ctx) {
     let node = existing.get(key);
     const replacingReference = node && node === reference;
     if (node && patch) node = patch(node);
-    else if (!node) node = build();
+    else if (!node) { node = build(); if (animate) withFx(node, 'rise'); }
     if (!node) return;
     // A patch may replace the node in place; it then stands where the old reference stood.
     if (replacingReference || (reference && reference.parentNode !== timeline)) reference = node.parentNode === timeline ? node : null;
@@ -592,7 +598,7 @@ export function patchConversation() {
   const timeline = scroll.querySelector('.timeline');
   const anchor = captureTimelineAnchor();
   const timelineDeferred = Boolean(timeline && selectionInside(timeline));
-  if (timeline && !timelineDeferred) reconcileTimeline(timeline, session.messages, ctx);
+  if (timeline && !timelineDeferred) reconcileTimeline(timeline, session.messages, ctx, true);
   reconcileTurnNavigator(layout, session);
   noteMilestones(view, session);
 
@@ -612,7 +618,7 @@ export function patchConversation() {
     else if (!currentDraftMedia) composer.prepend(desiredDraftMedia);
     const primary = composer.querySelector('.composer-primary');
     const isStop = Boolean(primary?.querySelector('[data-action="interrupt"]'));
-    if (primary && isStop !== Boolean(session.canInterrupt)) primary.replaceChildren(primaryButton(session));
+    if (primary && isStop !== Boolean(session.canInterrupt)) primary.replaceChildren(withFx(primaryButton(session), 'pop'));
     else primary?.querySelector('.send-btn')?.toggleAttribute('disabled', !session.canSend);
     const attachment = composer.querySelector('.attachment-btn');
     if (attachment) attachment.disabled = !session.canAttachImage;
@@ -628,10 +634,9 @@ export function patchConversation() {
       input.placeholder = vm.composerPlaceholder(session);
     }
   }
-  requestAnimationFrame(() => {
-    if (anchor) restoreTimelineAnchor(anchor, session.localSessionId);
-    syncTurnNavigator(scroll);
-  });
+  // Restore before the browser paints: a deferred restore shows one frame at the wrong offset.
+  if (anchor) restoreTimelineAnchor(anchor, session.localSessionId);
+  requestAnimationFrame(() => syncTurnNavigator(scroll));
   return !timelineDeferred;
 }
 
@@ -655,9 +660,25 @@ export function renderNotice() {
   if (notice === shownNotice) return;
   shownNotice = notice;
   clearTimeout(noticeTimer);
-  if (!notice) { toast.replaceChildren(); return; }
-  toast.replaceChildren(h('div', { class: `toast ${notice.level || 'info'}`, role: notice.level === 'error' ? 'alert' : 'status', text: notice.text }));
+  if (!notice) { for (const node of [...toast.children]) removeNode(node); return; }
+  toast.replaceChildren(h('div', { class: `toast ${notice.level || 'info'}`, role: notice.level === 'error' ? 'alert' : 'status', dataset: { exit: 'toast' }, text: notice.text }));
   noticeTimer = setTimeout(() => { if (getState().notice === notice) setNotice(null); }, notice.level === 'error' ? 6000 : 3200);
+}
+
+// Depth decides the slide direction: deeper pages enter from the right, Back returns from the left.
+const ROUTE_DEPTH = { home: 0, conversation: 1, providers: 2, stats: 2, settings: 2 };
+let shownPage = '';
+
+function pageIdentity(view) {
+  if (view.route === 'conversation') return view.activeSession ? `conversation:${view.activeSession.localSessionId}` : 'home';
+  return ROUTE_DEPTH[view.route] === undefined ? 'home' : view.route;
+}
+
+function pageMotion(previous, next) {
+  if (!previous) return 'enter-swap';
+  const from = ROUTE_DEPTH[previous.split(':')[0]] ?? 0;
+  const to = ROUTE_DEPTH[next.split(':')[0]] ?? 0;
+  return to > from ? 'enter-forward' : to < from ? 'enter-back' : 'enter-swap';
 }
 
 export function render() {
@@ -670,20 +691,32 @@ export function render() {
   const sessionId = view.activeSession?.localSessionId || '';
   applyRoot(view);
   const pages = { home, conversation, providers, settings, stats };
-  root.replaceChildren((pages[view.route] || home)(view));
+  const page = (pages[view.route] || home)(view);
+  const identity = pageIdentity(view);
+  const current = root.firstElementChild;
+  const samePage = Boolean(current && identity === shownPage && !current.classList.contains('loading'));
+  if (samePage) morph(current, page);
+  else {
+    if (motionAllowed()) withFx(page, pageMotion(shownPage, identity));
+    root.replaceChildren(page);
+    // Document-scrolled pages start at the top; the conversation keeps its own scroller.
+    if (view.route !== 'conversation') window.scrollTo(0, 0);
+  }
+  shownPage = identity;
   if (view.route === 'conversation' && view.activeSession) {
     const timeline = root.querySelector('.timeline');
-    if (timeline) reconcileTimeline(timeline, view.activeSession.messages, timelineContext(view, view.activeSession));
+    if (timeline) reconcileTimeline(timeline, view.activeSession.messages, timelineContext(view, view.activeSession), samePage);
     noteMilestones(view, view.activeSession);
     root.querySelectorAll('textarea[name="message"]').forEach(resizeTextarea);
   }
   renderDrawer(view);
   refreshSheet(view);
-  if (view.route === 'conversation' && sessionId) requestAnimationFrame(() => {
+  if (view.route === 'conversation' && sessionId) {
     // Opening a conversation from a non-conversation route has no prior anchor: default to the
     // newest turn. A same-session anchor still preserves an intentional historical reading position.
+    // Restored synchronously so the first painted frame is already at the right offset.
     restoreTimelineAnchor(anchor, sessionId);
-    syncTurnNavigator(document.querySelector('.timeline-scroll'));
-  });
+    requestAnimationFrame(() => syncTurnNavigator(document.querySelector('.timeline-scroll')));
+  }
   renderNotice();
 }

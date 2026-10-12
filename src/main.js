@@ -7,6 +7,7 @@ import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js'
 import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
 import { forgetRemote, onRemoteChange, traceKey } from './remote.js';
 import * as vm from './view-model.js';
+import './drawer-gesture.js';
 
 const renderGate = createRenderGate(render);
 // A requested turn trace arrived: refresh the expanded footer in place.
@@ -82,6 +83,21 @@ function messageText(seq) {
   return String(item?.text || '');
 }
 function closeDrawerIfOverlay() { if (!window.matchMedia?.('(min-width: 960px)')?.matches) setDrawer(false); }
+
+// Settings controls answer the tap at once; the native view that follows confirms (or corrects) them.
+function optimisticSwitch(target) {
+  const on = !target.classList.contains('on');
+  target.classList.toggle('on', on);
+  target.setAttribute('aria-checked', on ? 'true' : 'false');
+  for (const key of ['enabled', 'show']) if (key in target.dataset) target.dataset[key] = on ? 'false' : 'true';
+}
+function optimisticSegment(target) {
+  for (const item of target.parentElement?.children || []) {
+    const on = item === target;
+    item.classList.toggle('on', on);
+    item.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+}
 
 function copyText(text, target, okText) {
   if (!text) return;
@@ -209,7 +225,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'rerun-model') setRerunChoice({ modelProfileId: target.dataset.modelProfileId });
   else if (action === 'rerun-mode') setRerunChoice({ contextMode: target.dataset.contextMode });
   else if (action === 'rerun-confirm') rerun();
-  else if (action === 'stats-days') { setStatsDays(target.dataset.days); renderGate.request(); }
+  else if (action === 'stats-days') { optimisticSegment(target); setStatsDays(target.dataset.days); renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
   else if (action === 'toggle-turn-nav') {
     const nav = target.closest('.turn-nav');
@@ -253,13 +269,18 @@ document.addEventListener('click', (event) => {
     postIntent('chat.session.web.set', { localSessionId: sessionId, webMode });
   }
   else if (action === 'nav') { closeDrawerIfOverlay(); if (target.dataset.route === 'stats') forgetStats(); postIntent('nav.open', { route: target.dataset.route }); }
-  else if (action === 'theme') postIntent('appearance.set', { theme: target.dataset.theme });
-  else if (action === 'tone') postIntent('appearance.set', { tone: target.dataset.tone });
-  else if (action === 'toggle-delight') postIntent('ui.delight.set', { enabled: target.dataset.enabled === 'true' });
-  else if (action === 'toggle-reasoning') postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' });
-  else if (action === 'toggle-memory') postIntent('memory.global.set', { enabled: target.dataset.enabled === 'true' });
-  else if (action === 'toggle-wire-capture') postIntent('inspector.capture.set', { enabled: target.dataset.enabled === 'true' });
-  else if (action === 'open-session') { closeDrawerIfOverlay(); postIntent('chat.session.open', { localSessionId: sessionId }); }
+  else if (action === 'theme') { optimisticSegment(target); postIntent('appearance.set', { theme: target.dataset.theme }); }
+  else if (action === 'tone') { optimisticSegment(target); postIntent('appearance.set', { tone: target.dataset.tone }); }
+  else if (action === 'toggle-delight') { postIntent('ui.delight.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
+  else if (action === 'toggle-reasoning') { postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' }); if (target.classList.contains('switch')) optimisticSwitch(target); }
+  else if (action === 'toggle-memory') { postIntent('memory.global.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
+  else if (action === 'toggle-wire-capture') { postIntent('inspector.capture.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
+  else if (action === 'open-session') {
+    document.querySelectorAll('.session-item.active').forEach((item) => item.classList.remove('active'));
+    target.closest('.session-item')?.classList.add('active');
+    closeDrawerIfOverlay();
+    postIntent('chat.session.open', { localSessionId: sessionId });
+  }
   else if (action === 'rename-session') {
     const title = target.dataset.sessionTitle || currentView()?.activeSession?.title || '';
     if (!sessionId) return;
@@ -316,7 +337,8 @@ document.addEventListener('click', (event) => {
     const node = document.querySelector('.timeline-scroll');
     if (node) {
       setTimelineFollowLatest(node.dataset.sessionId || '', true);
-      node.scrollTop = node.scrollHeight;
+      const reduceMotion = Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
+      node.scrollTo({ top: node.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' });
       noteTimelineScroll(node);
       target.classList.add('is-hidden');
     }

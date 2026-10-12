@@ -5,6 +5,7 @@ import { button, h, icon, iconButton } from './dom.js';
 import { renderMarkdownInto } from './markdown.js';
 import { fish } from './mascot.js';
 import { getState } from './state.js';
+import { morphInto, motionAllowed } from './morph.js';
 import * as vm from './view-model.js';
 
 let drawerOpen = false;
@@ -22,7 +23,7 @@ export function sessionItem(session, activeId) {
   if (session.origin) meta.push(h('span', { class: 'meta-branch', title: `分支自 ${session.origin.sourceTitle || ''}` }, icon('branch', 'ico ico-xs'), '分支'));
   meta.push(h('span', { class: 'truncate', text: session.modelName || session.model || '' }));
   meta.push(h('span', { class: `mode-tag ${session.contextMode || 'standard'}`, title: `上下文模式：${vm.contextLabel(session.contextMode)}`, text: vm.contextLabel(session.contextMode) }));
-  return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}` },
+  return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}`, dataset: { key: session.localSessionId, exit: 'fade' } },
     h('button', { type: 'button', class: 'session-open', dataset: { action: 'open-session', sessionId: session.localSessionId } },
       h('b', { class: 'session-title', text: session.title || '新会话' }),
       h('small', { class: 'session-meta' }, meta)),
@@ -32,7 +33,7 @@ export function sessionItem(session, activeId) {
 export function sessionList(view) {
   const activeId = view.activeLocalSessionId || '';
   return vm.sessionGroups(view.sessions || []).map(([label, items]) =>
-    h('section', { class: 'session-group' }, h('h3', { class: 'group-label', text: label }), items.map((s) => sessionItem(s, activeId))));
+    h('section', { class: 'session-group', dataset: { key: `group:${label}` } }, h('h3', { class: 'group-label', text: label }), items.map((s) => sessionItem(s, activeId))));
 }
 
 function todayStrip(view) {
@@ -49,7 +50,7 @@ export function renderDrawer(view) {
   const signature = JSON.stringify([view.sessions, view.activeLocalSessionId, view.usageToday, view.route, view.appearance?.delight]);
   if (signature === drawerSignature && root.firstChild) return;
   drawerSignature = signature;
-  root.replaceChildren(
+  morphInto(root,
     h('div', { class: 'drawer-scrim', dataset: { action: 'drawer-close' } }),
     h('nav', { class: 'drawer', 'aria-label': '会话' },
       h('header', { class: 'drawer-head' }, fish('still', 'sm'), h('strong', { class: 'grow', text: 'Moyu Chat β' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
@@ -62,6 +63,8 @@ export function renderDrawer(view) {
         h('button', { type: 'button', class: `drawer-link${view.route === 'settings' ? ' active' : ''}`, dataset: { action: 'nav', route: 'settings' } }, icon('gear'), '设置'))));
   root.classList.toggle('open', drawerOpen);
 }
+
+export function isDrawerOpen() { return drawerOpen; }
 
 export function setDrawer(open) {
   drawerOpen = Boolean(open);
@@ -178,10 +181,17 @@ function payloadSheet(state) {
     h('div', { class: 'wire-foot' }, h('small', { class: 'grow', text: '不含请求头和 API Key；图片等长串只保留长度。' }), button('复制', 'payload-copy', {}, 'btn small'))];
 }
 
+let sheetCloseTimer = 0;
 export function closeSheet() {
   sheet = null;
   const root = document.getElementById('sheet-root');
-  if (root) { root.classList.remove('open'); root.replaceChildren(); }
+  if (!root || !root.classList.contains('open')) return;
+  root.classList.remove('open');
+  delete root.dataset.kind;
+  if (!motionAllowed() || !root.firstChild) { root.replaceChildren(); return; }
+  root.classList.add('closing');
+  clearTimeout(sheetCloseTimer);
+  sheetCloseTimer = setTimeout(() => { if (!sheet) { root.classList.remove('closing'); root.replaceChildren(); } }, 200);
 }
 
 /** Re-render a stateful sheet (turn settings) after the native view changed. */
@@ -207,10 +217,12 @@ function paintSheet(view) {
     if (!session || session.localSessionId !== sheet.sessionId) { closeSheet(); return; }
     body = turnSettings(view, session);
   }
-  const scrollTop = root.querySelector('.sheet')?.scrollTop || 0;
-  root.replaceChildren(h('div', { class: 'sheet-scrim', dataset: { action: 'sheet-close' } }),
-    h('section', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': sheet.kind === 'turn' ? '本轮设置' : (sheet.title || '操作') }, h('div', { class: 'sheet-grip' }), body));
-  root.querySelector('.sheet').scrollTop = scrollTop;
+  const parts = [h('div', { class: 'sheet-scrim', dataset: { action: 'sheet-close' } }),
+    h('section', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': sheet.kind === 'turn' ? '本轮设置' : (sheet.title || '操作') }, h('div', { class: 'sheet-grip' }), body)];
+  clearTimeout(sheetCloseTimer);
+  if (root.classList.contains('open') && root.dataset.kind === sheet.kind) morphInto(root, parts);
+  else { root.classList.remove('closing'); root.replaceChildren(...parts); }
+  root.dataset.kind = sheet.kind;
   root.classList.add('open');
 }
 
@@ -248,16 +260,23 @@ function turnSettings(view, session) {
 
 // ---------- Dialogs (app-owned; never window.confirm) ----------
 
-function closeDialog() { document.querySelector('.modal-backdrop[data-moyu-modal]')?.remove(); }
+function closeDialog(immediate = false) {
+  const node = document.querySelector('.modal-backdrop[data-moyu-modal]');
+  if (!node) return;
+  node.removeAttribute('data-moyu-modal');
+  if (immediate || !motionAllowed()) { node.remove(); return; }
+  node.classList.add('closing');
+  setTimeout(() => node.remove(), 160);
+}
 
 export function openConfirmDialog({ title, message, confirmText = '确认', danger = false, onConfirm }) {
-  closeDialog();
+  closeDialog(true);
   const cancel = button('取消', 'modal-cancel', {}, 'btn');
   const confirm = button(confirmText, 'modal-confirm', {}, `btn ${danger ? 'danger' : 'primary'}`);
   const overlay = h('div', { class: 'modal-backdrop', dataset: { moyuModal: '1' } },
     h('section', { class: 'modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': title || '确认操作' },
       h('h2', { text: title || '确认操作' }), h('p', { text: message || '' }), h('div', { class: 'modal-actions' }, cancel, confirm)));
-  cancel.addEventListener('click', closeDialog);
+  cancel.addEventListener('click', () => closeDialog());
   confirm.addEventListener('click', () => { closeDialog(); onConfirm?.(); });
   overlay.addEventListener('click', (event) => { if (event.target === overlay) closeDialog(); });
   document.body.append(overlay);
@@ -265,7 +284,7 @@ export function openConfirmDialog({ title, message, confirmText = '确认', dang
 }
 
 export function openTextDialog({ title, value = '', confirmText = '保存', onConfirm }) {
-  closeDialog();
+  closeDialog(true);
   const input = h('input', { class: 'modal-input', type: 'text', value, maxlength: '200', autocomplete: 'off', 'aria-label': title || '输入内容' });
   const cancel = button('取消', 'modal-cancel', {}, 'btn');
   const confirm = button(confirmText, 'modal-confirm', {}, 'btn primary');
@@ -277,7 +296,7 @@ export function openTextDialog({ title, value = '', confirmText = '保存', onCo
     if (!next) { input.focus(); return; }
     closeDialog(); onConfirm?.(next);
   };
-  cancel.addEventListener('click', closeDialog);
+  cancel.addEventListener('click', () => closeDialog());
   confirm.addEventListener('click', submit);
   input.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } });
   overlay.addEventListener('click', (event) => { if (event.target === overlay) closeDialog(); });

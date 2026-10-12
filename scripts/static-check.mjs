@@ -256,7 +256,9 @@ const mainUi = read('src/main.js');
 const markdown = read('src/markdown.js');
 const scrollAnchor = read('src/scroll-anchor.js');
 const indexHtml = read('index.html');
-const ui = [render, overlays, viewModel, mascot, mainUi].join('\n');
+const morphJs = read('src/morph.js');
+const drawerGesture = read('src/drawer-gesture.js');
+const ui = [render, overlays, viewModel, mascot, mainUi, morphJs, drawerGesture].join('\n');
 
 // Host boundary: bounded, revisioned envelopes; streaming patches merge locally.
 if (!bridge.includes('MAX_MESSAGE_BYTES = 1024 * 1024') || !bridge.includes('revision <= getState().revision')) fail('WebView Host bridge size/revision guards missing');
@@ -265,7 +267,7 @@ if (!viewModel.includes('protocol ≠ capability') || !viewModel.includes('expor
 
 // Security surface of the page itself.
 if (!indexHtml.includes("default-src 'none'; script-src 'self'; style-src 'self'") || !indexHtml.includes("connect-src 'none'")) fail('index.html must keep the strict local-only CSP');
-for (const [file, text] of [['render.js', render], ['overlays.js', overlays], ['mascot.js', mascot], ['main.js', mainUi], ['dom.js', read('src/dom.js')]]) {
+for (const [file, text] of [['render.js', render], ['overlays.js', overlays], ['mascot.js', mascot], ['main.js', mainUi], ['dom.js', read('src/dom.js')], ['morph.js', morphJs], ['drawer-gesture.js', drawerGesture]]) {
   if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(|outerHTML\s*=/.test(text)) fail(`src/${file}: UI must build DOM nodes, never HTML strings`);
 }
 if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(/.test(markdown) || markdown.includes("createElement('img')") || markdown.includes('createElement("img")')) fail('model Markdown must remain inert DOM text: no HTML injection or remote Markdown image creation');
@@ -286,6 +288,13 @@ if (!/\.composer textarea \{[^}]*font-size: 1rem/.test(styles)) fail('mobile com
 if (!scrollAnchor.includes('followLatest') || !scrollAnchor.includes('nextTop < state.lastScrollTop') || !mainUi.includes('requestAnimationFrame(() =>') || !mainUi.includes('noteTimelineScroll')) fail('streaming scroll must release follow-latest immediately when the user scrolls upward and throttle derived chrome');
 if (!render.includes('Opening a conversation from a non-conversation route has no prior anchor') || !render.includes('restoreTimelineAnchor(anchor, sessionId);')) fail('opening or switching conversations must default to the latest turn while same-session anchors preserve intentional reading position');
 if (!render.includes("loading: 'lazy', width: item.width || undefined, height: item.height || undefined")) fail('timeline images must reserve their intrinsic size so late decodes cannot move the reading position');
+
+// Smooth updates: same-page views morph in place, page changes and transient surfaces animate.
+if (!render.includes('if (samePage) morph(current, page);') || !render.includes("dataset: { morph: 'own' }") || !overlays.includes('morphInto(root,') || !overlays.includes("root.classList.add('closing')")) fail('native view updates must morph the current page, drawer and sheet in place; only page changes rebuild (with enter motion)');
+if (morphJs.includes("setAttribute('style'") || !morphJs.includes('style.cssText') || !morphJs.includes("const OWN = new Set(['class', 'style', 'open'")) fail('morph must keep style changes on CSSOM (strict CSP) and leave user-toggled <details> open state alone');
+if (/requestAnimationFrame\(\(\) => \{\s*if \(anchor\) restoreTimelineAnchor/.test(render)) fail('timeline scroll must be restored before paint, not one frame later');
+if (!styles.includes('display: flex; flex-direction: column; touch-action: pan-y;') || !styles.includes('.drawer > .drawer-list { flex: 1 1 auto; min-height: 0; }') || styles.includes('grid-template-rows: auto auto auto minmax(0, 1fr) auto')) fail('drawer rows must not shift when the optional today strip is absent (footer links stretched apart)');
+if (!drawerGesture.includes("event.pointerType !== 'touch'") || !drawerGesture.includes('NO_SWIPE') || !drawerGesture.includes('swallowNextClick') || !mainUi.includes("import './drawer-gesture.js';")) fail('drawer drag must be touch-only, leave sideways-scrolling regions alone and not click what the finger started on');
 
 // Touch targets and theme tokens.
 if (!styles.includes('--control-height: 44px') || !/\.icon-btn \{[^}]*width: var\(--control-height\)/.test(styles) || !/\.btn \{[^}]*min-height: var\(--control-height\)/.test(styles)) fail('interactive controls must keep a 44px touch target');

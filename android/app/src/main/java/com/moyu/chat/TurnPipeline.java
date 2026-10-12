@@ -574,7 +574,6 @@ final class TurnPipeline {
         if (terminalError == null && !hasVisibleOutput) {
             terminalError = new String[]{"empty_assistant_output", "Provider completed without visible text or image output"};
         }
-        recordTrace(r.control, terminalError);
         String finalState = terminalError == null || "cancelled".equals(terminalError[0]) ? "completed" : "failed";
         try {
             JSONObject finished = null;
@@ -598,6 +597,8 @@ final class TurnPipeline {
             } catch (Exception ignored) { }
             env.showMessage("turn finalization failed: " + safe(finalizeError));
         } finally {
+            // The turn record is settled last: once it reads as finished, its reply text is already final.
+            recordTrace(r.control, terminalError);
             env.releaseTurn(id);
         }
     }
