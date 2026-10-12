@@ -467,6 +467,11 @@ h1, h2, h3, p { margin: 0; }
 .md-code-block { max-width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--inset); }
 .md-code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; padding: 0 4px 0 12px; border-bottom: 1px solid var(--line); }
 .md-code-language { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: var(--text-xs)/1.2 var(--font-mono); }
+/* Local code highlighting (src/highlight.js): colour only, so monospace widths never change. */
+.hl-kw { color: var(--accent); }
+.hl-str { color: var(--good); }
+.hl-num { color: var(--warn); }
+.hl-com { color: var(--muted); font-style: italic; }
 .md-code-copy { appearance: none; min-height: 36px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: var(--text-xs); }
 .md-code-copy:active { background: var(--line); color: var(--ink); }
 .markdown-body .md-code { margin: 0; max-width: 100%; overflow: auto; padding: 10px 12px 12px; white-space: pre; tab-size: 2; font: .8125rem/1.6 var(--font-mono); }

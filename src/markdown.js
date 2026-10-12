@@ -1,3 +1,5 @@
+import { highlightInto } from './highlight.js';
+
 function textNode(value) { return document.createTextNode(String(value ?? '')); }
 
 const ESCAPABLE = /[\\`*{}\[\]()#+\-.!_>~|]/;
@@ -200,7 +202,7 @@ function codeBlock(language, codeText) {
   const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'md-code-copy'; copy.dataset.action = 'copy-code'; copy.textContent = '复制';
   head.append(label, copy);
   const pre = document.createElement('pre'); pre.className = 'md-code'; const code = document.createElement('code');
-  code.textContent = codeText; if (language) code.dataset.language = language; pre.append(code); block.append(head, pre); return block;
+  highlightInto(code, codeText, language); if (language) code.dataset.language = language; pre.append(code); block.append(head, pre); return block;
 }
 
 function renderTaskItem(raw) {

@@ -216,6 +216,11 @@ if (!coordinator.includes('r.preWebPrompt = r.prompt;')
     || !coordinator.includes('sources') || !coordinator.includes('webBackend')) fail('required ephemeral Web evidence/source projection/fail-closed budget fallback missing');
 
 const mainActivity = read('android/app/src/main/java/com/moyu/chat/MainActivity.java');
+// Device experience: system font size is followed within bounds; code highlighting is local, text-only and bounded.
+if (!mainActivity.includes('s.setTextZoom(textZoomFor(getResources().getConfiguration().fontScale))') || !mainActivity.includes('Math.max(85, Math.min(160, zoom))')) fail('WebView text must follow the system font size within 85-160%');
+const highlighter = read('src/highlight.js');
+const markdownSource = read('src/markdown.js');
+if (/innerHTML|insertAdjacentHTML|eval\(|new Function|new RegExp/.test(highlighter) || !highlighter.includes('MAX_CHARS') || !markdownSource.includes('highlightInto(code, codeText, language)')) fail('code highlighting must stay local, text-node only, regex-free and bounded');
 const chatRuntime = read('android/app/src/main/java/com/moyu/chat/ChatRuntime.java');
 const turnService = read('android/app/src/main/java/com/moyu/chat/ChatTurnService.java');
 if (!mainActivity.includes('setVerticalScrollBarEnabled(false)') || !mainActivity.includes('setHorizontalScrollBarEnabled(false)')) fail('WebView chrome scrollbars must remain disabled');

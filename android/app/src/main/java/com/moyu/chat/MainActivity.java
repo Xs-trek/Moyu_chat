@@ -66,10 +66,16 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         next.loadUrl(ORIGIN + "/assets/ui/index.html");
     }
 
+    /** Follow the system font size, bounded so 44px controls and one-line chips keep their layout. A font-size change recreates the Activity. */
+    static int textZoomFor(float fontScale) {
+        int zoom = Math.round((fontScale > 0f ? fontScale : 1f) * 100f);
+        return Math.max(85, Math.min(160, zoom));
+    }
+
     @SuppressLint("SetJavaScriptEnabled") private void configureWebView() {
         WebSettings s = webView.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(false); s.setDatabaseEnabled(false);
         s.setAllowFileAccess(false); s.setAllowContentAccess(false); s.setAllowFileAccessFromFileURLs(false); s.setAllowUniversalAccessFromFileURLs(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW); s.setSupportMultipleWindows(false); s.setSafeBrowsingEnabled(true); s.setTextZoom(100);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW); s.setSupportMultipleWindows(false); s.setSafeBrowsingEnabled(true); s.setTextZoom(textZoomFor(getResources().getConfiguration().fontScale));
         webView.setVerticalScrollBarEnabled(false); webView.setHorizontalScrollBarEnabled(false); webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         webView.addJavascriptInterface(new MoyuHostBridge(), "MoyuHost"); webView.setWebViewClient(new LocalClient());
     }
