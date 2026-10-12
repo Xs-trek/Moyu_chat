@@ -1,6 +1,6 @@
 import { bindHost, postIntent } from './bridge.js';
 import { flash, randomQuote } from './mascot.js';
-import { closeSheet, handleBack, openActions, openConfirmDialog, openTextDialog, openTurnSettings, setDrawer } from './overlays.js';
+import { closeSheet, handleBack, openActions, openConfirmDialog, openPayload, openTextDialog, openTurnSettings, payloadText, selectPayloadPart, setDrawer } from './overlays.js';
 import { createRenderGate } from './render-gate.js';
 import { patchConversation, render, renderNotice, resizeTextarea, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
@@ -178,6 +178,9 @@ document.addEventListener('click', (event) => {
   else if (action === 'session-menu') sessionMenu(target);
   else if (action === 'message-menu') messageMenu(target);
   else if (action === 'toggle-turn-details') { toggleTurnDetails(target.dataset.itemKey); if (!patchConversation()) renderGate.request(); }
+  else if (action === 'open-payload') openPayload(target.dataset.sessionId, target.dataset.turnId, target.dataset.callIndex, target.dataset.title);
+  else if (action === 'payload-part') selectPayloadPart(target.dataset.part);
+  else if (action === 'payload-copy') copyText(payloadText(), target, '已复制报文');
   else if (action === 'trace-retry') { forgetTrace(target.dataset.turnId); if (!patchConversation()) renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
   else if (action === 'toggle-turn-nav') {
@@ -227,6 +230,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'toggle-delight') postIntent('ui.delight.set', { enabled: target.dataset.enabled === 'true' });
   else if (action === 'toggle-reasoning') postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' });
   else if (action === 'toggle-memory') postIntent('memory.global.set', { enabled: target.dataset.enabled === 'true' });
+  else if (action === 'toggle-wire-capture') postIntent('inspector.capture.set', { enabled: target.dataset.enabled === 'true' });
   else if (action === 'open-session') { closeDrawerIfOverlay(); postIntent('chat.session.open', { localSessionId: sessionId }); }
   else if (action === 'rename-session') {
     const title = target.dataset.sessionTitle || currentView()?.activeSession?.title || '';

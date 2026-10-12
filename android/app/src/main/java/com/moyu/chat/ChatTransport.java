@@ -29,6 +29,11 @@ interface ChatTransport {
         }
         void onCompleted();
         void onError(String code, String summary, boolean retryable);
+        /**
+         * Redacted wire record for the protocol inspector ({@link WireCapture}): direction is "request"
+         * or "response". Diagnostic only; a response record may arrive after the terminal callback.
+         */
+        default void onWire(String direction, String text) { }
     }
     interface Turn { void cancel(); }
 

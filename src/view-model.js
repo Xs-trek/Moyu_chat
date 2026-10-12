@@ -221,6 +221,42 @@ export function traceView(trace) {
   return { rows, status: trace.status, statusLabel: STATUS_LABELS[trace.status] || trace.status, terminalCode: trace.terminalCode || '', helperShare: total > 0 && helperTokens > 0 ? helperTokens / total : null };
 }
 
+/** Recorded model calls of a traced turn, labelled by the stage that made them ("校验 2" when a stage called twice). */
+export function traceCalls(trace) {
+  const calls = Array.isArray(trace?.calls) ? trace.calls : [];
+  const perStage = {};
+  for (const call of calls) perStage[call.stage] = (perStage[call.stage] || 0) + 1;
+  const seen = {};
+  return calls.map((call) => {
+    seen[call.stage] = (seen[call.stage] || 0) + 1;
+    const label = `${STAGE_LABELS[call.stage] || call.stage}${perStage[call.stage] > 1 ? ` ${seen[call.stage]}` : ''}`;
+    return { callIndex: call.callIndex, label };
+  });
+}
+
+/** One recorded call as readable parts: pretty request JSON with its URL, raw response text with its HTTP status. */
+export function payloadParts(data) {
+  const parts = Array.isArray(data?.parts) ? data.parts : [];
+  const requests = parts.filter((p) => p.direction === 'request').length;
+  let sent = 0, received = 0;
+  return parts.map((part) => {
+    const request = part.direction === 'request';
+    const n = request ? ++sent : ++received;
+    let parsed = null;
+    try { parsed = JSON.parse(part.body); } catch { parsed = null; }
+    let text, meta;
+    if (request) {
+      meta = parsed?.url ? `POST ${parsed.url}` : '';
+      text = parsed?.body ? JSON.stringify(parsed.body, null, 2) : parsed?.bodyText ? String(parsed.bodyText) : String(part.body || '');
+    } else {
+      meta = parsed && Number.isFinite(parsed.status) && parsed.status > 0 ? `HTTP ${parsed.status}` : '';
+      text = parsed && typeof parsed.text === 'string' ? parsed.text : String(part.body || '');
+    }
+    if (parsed?.truncated) meta = `${meta ? `${meta} · ` : ''}已截断`;
+    return { label: `${request ? '请求' : '响应'}${requests > 1 ? ` ${n}` : ''}`, meta, text };
+  });
+}
+
 /** Normalised numbers for one turn's usage row (all optional; null means not reported). */
 export function turnUsage(usage) {
   if (!usage) return null;

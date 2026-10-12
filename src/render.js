@@ -145,6 +145,7 @@ function settings(view) {
   const look = vm.appearance(view);
   const reasoningVisible = Boolean(view.ui?.showReasoning);
   const memoryEnabled = Boolean(view.ui?.crossChatMemoryEnabled);
+  const wireCapture = view.ui?.wireCapture !== false;
   return h('main', { class: 'page settings-page' }, appHeader('设置', null),
     h('div', { class: 'page-body stack' },
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '外观' }),
@@ -153,6 +154,7 @@ function settings(view) {
         settingRow('动效与彩蛋', '小鱼的动作、问候、校验小印以外的小彩蛋。关闭后界面完全静止。系统开启“减少动画”时动作也会停止。', switchControl('动效与彩蛋', look.delight, 'toggle-delight', { enabled: look.delight ? 'false' : 'true' }))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '对话' }),
         settingRow('显示模型推理', '只展示 endpoint 明确返回的 reasoning/thinking 文本。可见推理不会作为普通历史回灌；Provider-private continuation 只有在 Model Profile 明确声明 native 且标准/智能模式允许时才复用。', switchControl('显示模型推理', reasoningVisible, 'toggle-reasoning', { show: reasoningVisible ? 'false' : 'true' })),
+        settingRow('记录协议报文', '保存最近 30 个回合里每次模型调用的请求和响应原文，在回复详情的调用链里查看。不含请求头和 API Key，图片等长串只保留长度。', switchControl('记录协议报文', wireCapture, 'toggle-wire-capture', { enabled: wireCapture ? 'false' : 'true' })),
         settingRow('跨 Chat 用户记忆', '总开关只决定用户级 Memory/RAG 是否允许使用。关闭时所有模式都不跨 Chat；开启时标准/智能可检索相关本地历史，极简没有 Memory 调用。', switchControl('跨 Chat 用户记忆', memoryEnabled, 'toggle-memory', { enabled: memoryEnabled ? 'false' : 'true' }))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '新会话默认' }),
         settingRow('上下文模式', '极简：薄提示词 + 原始完整轮次。标准：原始上下文优先，允许用户记忆，50% 主动压缩到约 30%。智能：标准全部能力 + Task Router、reviewed prompt modules、evidence policy 与同模型二次 verifier。', contextModeControl(view.ui?.defaultContextMode || 'standard', { defaultContextMode: '1' })),
@@ -334,6 +336,9 @@ function traceSection(sessionId, turnId) {
       row.note || row.usage ? h('span', { class: 'trace-note', text: [row.status !== 'ok' && row.status !== 'skipped' ? row.statusLabel : '', row.note, row.usage].filter(Boolean).join(' · ') }) : null);
   })));
   if (view.terminalCode) section.append(h('p', { class: 'trace-empty', text: `结束：${view.statusLabel} · ${view.terminalCode}` }));
+  const calls = vm.traceCalls(entry.data);
+  if (calls.length) section.append(h('div', { class: 'trace-calls' }, h('span', { text: '报文' }),
+    calls.map((call) => button(call.label, 'open-payload', { sessionId, turnId, callIndex: call.callIndex, title: `${call.label} · 协议报文` }, 'btn small ghost'))));
   return section;
 }
 

@@ -9,20 +9,28 @@ import java.util.ArrayList;
 final class TurnUsage {
     enum Kind { MAIN, AUXILIARY, SUBAGENT }
 
+    /** Receives redacted wire records ({@link WireCapture}) with the stage and call index that produced them. */
+    interface WireRecorder { void record(String stage, int callIndex, String direction, String text); }
+
+    private volatile WireRecorder wireRecorder;
+    void setWireRecorder(WireRecorder recorder) { wireRecorder = recorder; }
+
     private static final class RequestUsage {
         final Kind kind;
         /** Pipeline stage that issued the call (TurnTrace stage id), so helper cost is attributable. */
         final String stage;
+        /** Order of the call within the turn, shared with the wire records. */
+        final int index;
         Integer input, output;
         boolean ended;
-        RequestUsage(Kind kind, String stage) { this.kind = kind; this.stage = stage; }
+        RequestUsage(Kind kind, String stage, int index) { this.kind = kind; this.stage = stage; this.index = index; }
     }
 
     private final ArrayList<RequestUsage> requests = new ArrayList<>();
     synchronized boolean hasRequests() { return !requests.isEmpty(); }
 
     private synchronized RequestUsage begin(Kind kind, String stage) {
-        RequestUsage request = new RequestUsage(kind, stage);
+        RequestUsage request = new RequestUsage(kind, stage, requests.size());
         requests.add(request);
         return request;
     }
@@ -67,6 +75,11 @@ final class TurnUsage {
                     }
                     @Override public void onClientToolBatch(JSONArray calls) { end(request); sink.onClientToolBatch(calls); }
                     @Override public void onCompleted() { end(request); sink.onCompleted(); }
+                    @Override public void onWire(String direction, String text) {
+                        WireRecorder recorder = wireRecorder;
+                        if (recorder != null) try { recorder.record(request.stage, request.index, direction, text); } catch (Exception ignored) { }
+                        sink.onWire(direction, text);
+                    }
                     @Override public void onError(String code, String summary, boolean retryable) {
                         end(request); sink.onError(code, summary, retryable);
                     }

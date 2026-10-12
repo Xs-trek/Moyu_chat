@@ -59,6 +59,7 @@ sessions         identity, lineage (parent / origin snapshot), frozen deployment
 timeline         one JSON item per row (what the user sees); kind (message / error) mirrors body.kind
 turns            one accepted user turn: frozen turn config, usage summary, status / terminal code
 turn_spans       the turn's pipeline stages: status, skip reason, duration, helper usage, decision
+turn_payloads    protocol inspector: redacted request / response text per model call, recent turns only
 snapshots        immutable branch origin + snapshot_items
 knowledge_fts    FTS4 lexical index, scope chat:<session> / snapshot:<snapshot>
 verifier_labels  explicit verifier feedback per calibration key (bounded)
@@ -66,6 +67,8 @@ settings         app preferences only
 ```
 
 The layout follows the common local-agent pattern (OpenAI Agents SDK `SQLiteSession`: a session table plus an ordered JSON item log; its `AdvancedSQLiteSession` adds per-turn usage and branch structure as side tables). Turn records and their stage spans are such side tables: usage is stored on `turns` and projected into the view as a `kind: usage` row after the turn's reply, so the frontend contract did not change; the trace is read on demand with `turn.trace.get` (the intent result carries `data`).
+
+The protocol inspector records, per model call, the request body and the raw response stream. Transports emit them through `Sink.onWire`; `TurnUsage` tags each record with its stage and call index. `WireCapture` never sees request headers (the only place the credential travels), scrubs the API key from all text as a second line of defence, replaces inline base64 and long opaque strings by their length, and caps each record at 256K characters. Payloads are kept for the 30 most recent turns, read on demand with `turn.payload.get`, and can be switched off in Settings.
 
 ## 3. Provider / Model / Session separation
 

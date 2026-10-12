@@ -99,6 +99,15 @@ if (!turnPipeline.includes('r.trace().skip(TurnTrace.ROUTE') || !turnPipeline.in
 if (/appendTimeline\([^)]*usage/.test(coordinator) || coordinator.includes('usageKey')) fail('usage must be stored on the turn record, never as a timeline row');
 if (!turnPipeline.includes('db.completeTurn(') || !coordinatorOnly.includes('static JSONArray withTurnUsage(')) fail('finished turns must persist their trace, and the view must project usage from turn records');
 if (!coordinatorOnly.includes('case "turn.trace.get"') || coordinatorOnly.includes('"spans"')) fail('turn traces are read on demand through turn.trace.get, never pushed with the view');
+// Protocol inspector: redacted bodies only (no headers, key scrubbed), recent turns only, read on demand.
+const wireCapture = read('android/app/src/main/java/com/moyu/chat/WireCapture.java');
+const wireOpenAi = read('android/app/src/main/java/com/moyu/chat/OpenAiCompatibleTransport.java');
+const wireMessages = read('android/app/src/main/java/com/moyu/chat/AnthropicMessagesTransport.java');
+const wireTerminal = read('android/app/src/main/java/com/moyu/chat/TerminalSink.java');
+if (/header/i.test(wireCapture.replace(/\/\*[\s\S]*?\*\//g, '')) || !wireCapture.includes('[redacted-key]') || !wireCapture.includes('base64 chars omitted') || !wireCapture.includes('MAX_CHARS')) fail('wire capture must record bodies only, scrub the API key, drop inline base64 and stay bounded');
+if (!wireOpenAi.includes('WireCapture.request(base + path, body, apiKey)') || !wireMessages.includes('WireCapture.request(endpoint, body, apiKey)')) fail('both transports must record the redacted request body, never the built request (which carries the auth header)');
+if (!wireTerminal.includes('@Override public void onWire(String direction, String text) { delegate.onWire(direction, text); }')) fail('wire records must pass the terminal guard (responses are recorded after the terminal callback)');
+if (!db.includes('CREATE TABLE turn_payloads(') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
 if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
 if (!coordinator.includes('contexts.buildCommitted(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');

@@ -42,6 +42,8 @@ final class TurnPipeline {
         void putActiveTurn(String sessionId, ChatTransport.Turn turn);
         ChatTransport.Turn removeActiveTurn(String sessionId);
         boolean ownsTurn(String sessionId, TurnControl control);
+        /** Whether redacted request / response text is recorded for the protocol inspector. */
+        boolean wireCaptureEnabled();
         /** Clears every busy flag for the session, releases the runtime lease and emits a full view. */
         void releaseTurn(String sessionId);
     }
@@ -125,6 +127,7 @@ final class TurnPipeline {
                 .put("effectiveContextMode", r.contextPolicy.effectiveLabel);
         String turnId = UUID.randomUUID().toString();
         turnControl.turnId = turnId;
+        if (env.wireCaptureEnabled()) usage.setWireRecorder((stage, callIndex, direction, wireText) -> db.addTurnPayload(turnId, callIndex, stage, direction, wireText));
         r.live.put("turnId", turnId);
         db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, turnConfigJson(r));
         turnControl.usageState = new JSONObject().put("createdAt", Instant.now().toString());

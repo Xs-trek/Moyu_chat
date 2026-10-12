@@ -1,5 +1,6 @@
 // Transient surfaces that live outside #app so full renders never tear them down: the session drawer,
 // bottom sheets (action lists and per-turn settings) and app-owned dialogs. Android Back closes the top one.
+import { requestIntent } from './bridge.js';
 import { button, h, icon, iconButton } from './dom.js';
 import { fish } from './mascot.js';
 import { getState } from './state.js';
@@ -72,6 +73,45 @@ export function setDrawer(open) {
 export function openActions(title, items) { sheet = { kind: 'actions', title, items }; paintSheet(null); }
 export function openTurnSettings(sessionId) { sheet = { kind: 'turn', sessionId }; paintSheet(getState().view); }
 
+/** Protocol inspector: the redacted request / response text of one recorded model call. */
+export function openPayload(sessionId, turnId, callIndex, title) {
+  const opened = { kind: 'payload', title: title || '协议报文', state: 'loading', part: 0 };
+  sheet = opened;
+  paintSheet(null);
+  requestIntent('turn.payload.get', { localSessionId: sessionId, turnId, callIndex: Number(callIndex) })
+    .then((data) => { if (sheet === opened) { sheet = { ...opened, state: 'ready', data }; paintSheet(null); } })
+    .catch((error) => { if (sheet === opened) { sheet = { ...opened, state: 'error', error: String(error?.message || error || '') }; paintSheet(null); } });
+}
+
+export function selectPayloadPart(index) {
+  if (sheet?.kind !== 'payload') return;
+  sheet = { ...sheet, part: Math.max(0, Number(index) || 0) };
+  paintSheet(null);
+}
+
+/** Text of the payload part on screen, for copying. */
+export function payloadText() {
+  if (sheet?.kind !== 'payload' || sheet.state !== 'ready') return '';
+  const part = vm.payloadParts(sheet.data)[sheet.part];
+  return part ? [part.meta, part.text].filter(Boolean).join('\n\n') : '';
+}
+
+function payloadSheet(state) {
+  const head = h('h2', { class: 'sheet-title', text: state.title });
+  if (state.state === 'loading') return [head, h('p', { class: 'sheet-note', text: '读取中…' })];
+  if (state.state === 'error') return [head, h('p', { class: 'sheet-note', text: `未能读取：${state.error || '没有记录'}` })];
+  const parts = vm.payloadParts(state.data);
+  if (!parts.length) return [head, h('p', { class: 'sheet-note', text: '这次调用没有记录报文。' })];
+  const index = Math.min(state.part, parts.length - 1);
+  const current = parts[index];
+  return [head,
+    h('div', { class: 'segmented', role: 'tablist', 'aria-label': '报文' }, parts.map((part, i) => h('button', {
+      type: 'button', role: 'tab', 'aria-selected': i === index ? 'true' : 'false', class: i === index ? 'on' : '', dataset: { action: 'payload-part', part: i }, text: part.label }))),
+    current.meta ? h('p', { class: 'sheet-note wire-meta', text: current.meta }) : null,
+    h('pre', { class: 'wire' }, h('code', { text: current.text || '（空）' })),
+    h('div', { class: 'wire-foot' }, h('small', { class: 'grow', text: '不含请求头和 API Key；图片等长串只保留长度。' }), button('复制', 'payload-copy', {}, 'btn small'))];
+}
+
 export function closeSheet() {
   sheet = null;
   const root = document.getElementById('sheet-root');
@@ -90,6 +130,8 @@ function paintSheet(view) {
       h('div', { class: 'sheet-actions' }, sheet.items.filter(Boolean).map((item) => h('button', {
         type: 'button', class: `sheet-item${item.danger ? ' danger' : ''}`, disabled: item.disabled, dataset: { action: item.action, closeSheet: '1', ...(item.data || {}) },
       }, item.icon ? icon(item.icon) : null, h('span', { class: 'grow' }, item.label, item.hint ? h('small', { text: item.hint }) : null))))];
+  } else if (sheet.kind === 'payload') {
+    body = payloadSheet(sheet);
   } else {
     const session = view?.activeSession;
     if (!session || session.localSessionId !== sheet.sessionId) { closeSheet(); return; }

@@ -160,6 +160,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 + "ordinal INTEGER NOT NULL,stage TEXT NOT NULL,status TEXT NOT NULL,started_at_ms INTEGER NOT NULL,duration_ms INTEGER NOT NULL,"
                 + "reason TEXT NOT NULL DEFAULT '',calls INTEGER NOT NULL DEFAULT 0,input_tokens INTEGER,output_tokens INTEGER,"
                 + "detail TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(turn_id,ordinal))");
+        // Turn payload: redacted request / response text of one model call (protocol inspector). No headers,
+        // no key; bounded per record and kept only for the most recent turns.
+        db.execSQL("CREATE TABLE turn_payloads(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"
+                + "call_index INTEGER NOT NULL,part INTEGER NOT NULL,stage TEXT NOT NULL,direction TEXT NOT NULL,"
+                + "created_at TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(turn_id,call_index,part))");
         // Snapshot: immutable branch origin. The source session may be deleted later; the snapshot stays.
         db.execSQL("CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY,source_session_id TEXT NOT NULL,source_title TEXT NOT NULL,"
                 + "created_at TEXT NOT NULL,item_count INTEGER NOT NULL,source_item_count INTEGER NOT NULL,"
@@ -184,7 +189,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     /** Child tables first so foreign keys never block the drop (PRAGMA foreign_keys cannot change inside the upgrade transaction). */
     private static void dropAll(SQLiteDatabase db) {
-        for (String table : new String[]{"knowledge_fts", "snapshot_items", "turn_spans", "turns", "timeline", "handoffs", "sessions", "snapshots",
+        for (String table : new String[]{"knowledge_fts", "snapshot_items", "turn_payloads", "turn_spans", "turns", "timeline", "handoffs", "sessions", "snapshots",
                 "model_profiles", "providers", "verifier_labels", "settings"}) {
             db.execSQL("DROP TABLE IF EXISTS " + table);
         }
@@ -647,6 +652,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             turn.put("ended_at", Instant.now().toString());
             if (usage != null) turn.put("usage", usage.toString());
             if (db.update("turns", turn, "turn_id=?", new String[]{turnId}) != 1) { db.setTransactionSuccessful(); return; }
+            db.execSQL("DELETE FROM turn_payloads WHERE turn_id NOT IN (SELECT turn_id FROM turns ORDER BY started_at DESC LIMIT " + PAYLOAD_TURNS_KEPT + ")");
             db.delete("turn_spans", "turn_id=?", new String[]{turnId});
             if (spans != null) for (int i = 0; i < spans.length(); i++) {
                 JSONObject span = spans.optJSONObject(i); if (span == null) continue;
@@ -667,6 +673,53 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+    }
+
+    /** Turns whose wire payloads are kept for the protocol inspector. */
+    static final int PAYLOAD_TURNS_KEPT = 30;
+
+    /** Appends one redacted wire record; parts number the records of one call in arrival order. */
+    public synchronized void addTurnPayload(String turnId, int callIndex, String stage, String direction, String body) {
+        if (turnId == null || body == null) return;
+        SQLiteDatabase db = getWritableDatabase();
+        int part;
+        try (Cursor c = db.rawQuery("SELECT COUNT(*) FROM turn_payloads WHERE turn_id=? AND call_index=?", new String[]{turnId, String.valueOf(callIndex)})) {
+            part = c.moveToFirst() ? c.getInt(0) : 0;
+        }
+        ContentValues v = new ContentValues();
+        v.put("turn_id", turnId); v.put("call_index", callIndex); v.put("part", part); v.put("stage", stage == null ? "" : stage);
+        v.put("direction", direction == null ? "" : direction); v.put("created_at", Instant.now().toString()); v.put("body", body);
+        // A late response for a turn that was rewound or deleted has no owner any more: drop it.
+        try { db.insertOrThrow("turn_payloads", null, v); } catch (android.database.SQLException ignored) { }
+    }
+
+    /** Payload calls of a turn (metadata only): [{callIndex, stage, parts, chars}]. */
+    private static JSONArray payloadCalls(SQLiteDatabase db, String turnId) throws org.json.JSONException {
+        JSONArray out = new JSONArray();
+        try (Cursor c = db.rawQuery("SELECT call_index,MIN(stage),COUNT(*),SUM(LENGTH(body)) FROM turn_payloads WHERE turn_id=? GROUP BY call_index ORDER BY call_index", new String[]{turnId})) {
+            while (c.moveToNext()) out.put(new JSONObject().put("callIndex", c.getInt(0)).put("stage", c.getString(1)).put("parts", c.getInt(2)).put("chars", c.getLong(3)));
+        }
+        return out;
+    }
+
+    /** The redacted wire records of one call, in arrival order; null when the turn does not belong to the session. */
+    public synchronized JSONObject turnPayload(String sessionId, String turnId, int callIndex) {
+        if (sessionId == null || turnId == null) return null;
+        SQLiteDatabase db = getReadableDatabase();
+        try (Cursor owner = db.rawQuery("SELECT 1 FROM turns WHERE session_id=? AND turn_id=?", new String[]{sessionId, turnId})) {
+            if (!owner.moveToFirst()) return null;
+        }
+        try {
+            JSONArray parts = new JSONArray();
+            String stage = "";
+            try (Cursor c = db.rawQuery("SELECT part,stage,direction,created_at,body FROM turn_payloads WHERE turn_id=? AND call_index=? ORDER BY part", new String[]{turnId, String.valueOf(callIndex)})) {
+                while (c.moveToNext()) {
+                    stage = c.getString(1);
+                    parts.put(new JSONObject().put("part", c.getInt(0)).put("direction", c.getString(2)).put("createdAt", c.getString(3)).put("body", c.getString(4)));
+                }
+            }
+            return new JSONObject().put("turnId", turnId).put("callIndex", callIndex).put("stage", stage).put("parts", parts);
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }
 
     /** Turn records of a session in user-turn order: {turnId, userSeq, status, usage}. */
@@ -711,7 +764,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                     spans.put(span);
                 }
             }
-            return turn.put("spans", spans);
+            return turn.put("spans", spans).put("calls", payloadCalls(db, turnId));
         } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }
 

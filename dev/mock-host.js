@@ -93,7 +93,27 @@ function mockTrace(s, turnId) {
       : skip('verify', smart ? 'not_needed' : 'mode_off'),
   ];
   if (smart && reply.verification?.repairAttempted) spans.push(ok('repair', 3100, { repaired: Boolean(reply.verification.repaired) }, { calls: 1, inputTokens: 6100, outputTokens: 980 }));
-  return { turnId, status: reply.incomplete ? 'cancelled' : 'ok', terminalCode: reply.incomplete ? (reply.terminalCode || 'cancelled') : '', config: { contextMode: mode, model: s.model }, usage: {}, spans };
+  const calls = [];
+  for (const span of spans) for (let i = 0; i < (span.usage?.calls || 0); i++) calls.push({ callIndex: calls.length, stage: span.stage, parts: 2, chars: 4200 });
+  return { turnId, status: reply.incomplete ? 'cancelled' : 'ok', terminalCode: reply.incomplete ? (reply.terminalCode || 'cancelled') : '', config: { contextMode: mode, model: s.model }, usage: {}, spans, calls };
+}
+
+/** Redacted wire records shaped like ChatDatabase.turnPayload(): pretty enough to judge the inspector layout. */
+function mockPayload(s, turnId, callIndex) {
+  const trace = mockTrace(s, turnId);
+  const call = trace.calls.find((c) => c.callIndex === Number(callIndex));
+  if (!call) throw new Error('call not found');
+  const reply = s.messages.find((x) => x.turnId === turnId);
+  const request = { url: 'https://api.example.com/v1/chat/completions', body: { model: s.model, stream: true, stream_options: { include_usage: true },
+    messages: [{ role: 'system', content: 'You are Moyu Chat… (stage: ' + call.stage + ')' }, { role: 'user', content: [{ type: 'text', text: '那暗色模式呢？截图里这两张哪个更好？' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,<48213 base64 chars omitted>' } }] }], max_tokens: 4096 } };
+  const deltas = String(reply?.text || 'ok').match(/.{1,12}/gs) || [];
+  const lines = deltas.map((d) => `data: ${JSON.stringify({ choices: [{ delta: { content: d } }] })}\n`);
+  lines.push(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 18432, completion_tokens: 1210 } })}\n`, 'data: [DONE]\n');
+  const response = { status: 200, truncated: false, text: lines.join('\n') };
+  return { turnId, callIndex: call.callIndex, stage: call.stage, parts: [
+    { part: 0, direction: 'request', createdAt: now(), body: JSON.stringify(request) },
+    { part: 1, direction: 'response', createdAt: now(), body: JSON.stringify(response) }] };
 }
 
 function notice(text) { window.dispatchEvent(new CustomEvent('moyu:notice', { detail: { level: 'info', text: `[mock] ${text}` } })); }
@@ -178,6 +198,7 @@ function handle(type, p) {
     case 'ui.delight.set': world.delight = Boolean(p.enabled); break;
     case 'chat.reasoning.visibility.set': world.ui.showReasoning = Boolean(p.show); break;
     case 'memory.global.set': world.ui.crossChatMemoryEnabled = Boolean(p.enabled); break;
+    case 'inspector.capture.set': world.ui.wireCapture = Boolean(p.enabled); break;
     case 'context.mode.default.set': world.ui.defaultContextMode = p.mode; break;
     case 'web.mode.default.set': world.ui.defaultWebMode = p.mode; break;
     case 'subagent.standard.default.set': world.ui.standardSubagentMode = p.mode; break;
@@ -220,6 +241,11 @@ function handle(type, p) {
 window.MoyuHost = {
   postMessage(raw) {
     const message = JSON.parse(raw);
+    if (message.type === 'turn.payload.get') {
+      try { result(message.requestId, true, '', mockPayload(findSession(message.payload?.localSessionId), message.payload?.turnId, message.payload?.callIndex)); }
+      catch (error) { result(message.requestId, false, error.message); }
+      return;
+    }
     if (message.type === 'turn.trace.get') {
       try { result(message.requestId, true, '', mockTrace(findSession(message.payload?.localSessionId), message.payload?.turnId)); }
       catch (error) { result(message.requestId, false, error.message); }

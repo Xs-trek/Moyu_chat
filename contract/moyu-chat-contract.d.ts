@@ -48,7 +48,11 @@ export type MoyuChatIntent =
   | UiIntent<'verification.feedback', { localSessionId: string; localSeq: number; label: 'accurate' | 'false_alarm' | 'missed_error' }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
   /** Read-only; the intent.result carries `data: TurnTraceView`. Traces are never pushed with the view. */
-  | UiIntent<'turn.trace.get', { localSessionId: string; turnId: string }>;
+  | UiIntent<'turn.trace.get', { localSessionId: string; turnId: string }>
+  /** Read-only; the intent.result carries `data: TurnPayloadView`. */
+  | UiIntent<'turn.payload.get', { localSessionId: string; turnId: string; callIndex: number }>
+  /** Protocol inspector on/off: record redacted request / response text of each model call (recent turns only). */
+  | UiIntent<'inspector.capture.set', { enabled: boolean }>;
 
 export interface MediaView {
   mediaId: string;
@@ -234,6 +238,20 @@ export interface TurnTraceView {
   config: Record<string, unknown>;
   usage: Record<string, unknown>;
   spans: TurnSpanView[];
+  /** Model calls with recorded wire payloads (metadata only); empty when capture was off or the turn is old. */
+  calls: { callIndex: number; stage: string; parts: number; chars: number }[];
+}
+
+/**
+ * Redacted wire records of one model call, in arrival order (a pause_turn continuation adds parts).
+ * request body: JSON {url, body} or {url, truncated, bodyText}; response body: JSON {status, truncated, text}.
+ * Request headers and the API key are never recorded; inline base64 is replaced by its length.
+ */
+export interface TurnPayloadView {
+  turnId: string;
+  callIndex: number;
+  stage: string;
+  parts: { part: number; direction: 'request' | 'response'; createdAt: string; body: string }[];
 }
 
 export interface SessionDetailView extends SessionView {
@@ -280,7 +298,7 @@ export interface AppViewModel {
   sessions: SessionView[];
   activeLocalSessionId?: string;
   activeSession?: SessionDetailView;
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {

@@ -56,6 +56,7 @@ final class ChatCoordinator implements AutoCloseable {
     private JSONObject usageTodayCache;
     private boolean showReasoning;
     private boolean crossChatMemoryEnabled;
+    private boolean wireCapture;
     private String defaultContextMode;
     private String defaultWebMode;
     private String standardSubagentMode;
@@ -77,6 +78,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.delight = !"false".equals(db.setting("delight", "true"));
         this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
         this.crossChatMemoryEnabled = "true".equals(db.setting("crossChatMemoryEnabled", "false"));
+        this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
         this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
@@ -205,6 +207,7 @@ final class ChatCoordinator implements AutoCloseable {
                 }
                 case "ui.delight.set": delight = p.optBoolean("enabled", true); db.putSetting("delight", delight ? "true" : "false"); break;
                 case "chat.reasoning.visibility.set": showReasoning = p.optBoolean("show", false); db.putSetting("showReasoning", showReasoning ? "true" : "false"); break;
+                case "inspector.capture.set": wireCapture = p.optBoolean("enabled", true); db.putSetting("wireCapture", wireCapture ? "true" : "false"); break;
                 case "memory.global.set": crossChatMemoryEnabled = p.optBoolean("enabled", false); db.putSetting("crossChatMemoryEnabled", crossChatMemoryEnabled ? "true" : "false"); break;
                 case "context.mode.default.set": defaultContextMode = ContextMode.normalize(required(p, "mode")); db.putSetting("defaultContextMode", defaultContextMode); break;
                 case "web.mode.default.set": defaultWebMode = ChatTurnOptions.normalizeWebMode(required(p, "mode")); db.putSetting("defaultWebMode", defaultWebMode); break;
@@ -307,6 +310,13 @@ final class ChatCoordinator implements AutoCloseable {
                 }
                 case "verification.feedback": recordVerificationFeedback(required(p, "localSessionId"), requiredSeq(p), required(p, "label")); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
+                case "turn.payload.get": {
+                    if (!p.has("callIndex")) throw new IllegalArgumentException("missing callIndex");
+                    JSONObject payload = db.turnPayload(required(p, "localSessionId"), required(p, "turnId"), p.optInt("callIndex", -1));
+                    if (payload == null) throw new IllegalArgumentException("turn not found");
+                    result(requestId, true, null, payload);
+                    return; // read-only: no view change
+                }
                 case "turn.trace.get": {
                     JSONObject trace = db.turnTrace(required(p, "localSessionId"), required(p, "turnId"));
                     if (trace == null) throw new IllegalArgumentException("turn not found");
@@ -492,6 +502,7 @@ final class ChatCoordinator implements AutoCloseable {
         @Override public void putActiveTurn(String sessionId, ChatTransport.Turn turn) { activeTurns.put(sessionId, turn); }
         @Override public ChatTransport.Turn removeActiveTurn(String sessionId) { return activeTurns.remove(sessionId); }
         @Override public boolean ownsTurn(String sessionId, TurnControl control) { return turnControls.get(sessionId) == control; }
+        @Override public boolean wireCaptureEnabled() { return wireCapture; }
         @Override public void releaseTurn(String id) {
             activeTurns.remove(id);
             turnControls.remove(id);
@@ -658,7 +669,7 @@ final class ChatCoordinator implements AutoCloseable {
                 }
             }
             view.put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
-                    .put("crossChatMemoryEnabled", crossChatMemoryEnabled)
+                    .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture)
                     .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
                     .put("standardSubagentMode", standardSubagentMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));

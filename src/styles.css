@@ -381,6 +381,16 @@ h1, h2, h3, p { margin: 0; }
 .trace-row.failed .trace-fill { background: var(--danger); }
 .trace-row.cancelled .trace-fill { background: var(--warn); }
 .trace-empty { margin: 0; color: var(--muted); }
+.trace-calls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; color: var(--muted); }
+
+/* Protocol inspector sheet */
+.wire-meta { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.wire {
+  max-height: 55vh; margin: 8px 0 0; padding: 10px 12px; overflow: auto;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--inset); color: var(--ink);
+  font: 400 var(--text-xs)/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.wire-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; color: var(--muted); font-size: var(--text-xs); }
 .msg.assistant > .turn-foot.live:first-child { margin-top: -14px; border-top: 0; }
 .turn-live { display: flex; align-items: center; gap: 10px; min-height: var(--control-height); padding: 0 16px; font-size: var(--text-sm); color: var(--muted); }
 

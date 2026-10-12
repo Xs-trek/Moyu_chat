@@ -71,6 +71,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         @Override public void onToolActivity(String tool, String state) { delegate.onToolActivity(tool, state); }
         @Override public void onWebSource(String url, String title) { delegate.onWebSource(url, title); }
         @Override public void onClientToolBatch(JSONArray calls) { delegate.onClientToolBatch(calls); }
+        @Override public void onWire(String direction, String text) { delegate.onWire(direction, text); }
         @Override public void onUsage(Integer inputTokens, Integer outputTokens) {
             onUsageDetails(inputTokens, outputTokens, null, null, null, null);
         }
@@ -303,7 +304,12 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 ProviderAuth.apply(builder, provider.authMode, provider.protocol, apiKey);
                 call = http.newCall(builder.build());
                 turn.bind(call);
-                AnthropicRoundResult round = runRound(call, usageSink);
+                // pause_turn continuations are separate HTTP requests; each gets its own wire record pair.
+                sink.onWire("request", WireCapture.request(endpoint, body, apiKey));
+                WireCapture.Response wire = new WireCapture.Response();
+                AnthropicRoundResult round;
+                try { round = runRound(call, usageSink, wire); }
+                finally { sink.onWire("response", wire.finish(apiKey)); }
                 if (round == null) return; // transport/protocol error was already emitted.
                 usageSink.commitRound();
                 emitContinuationBlocks(round.assistantContent, sink);
@@ -356,7 +362,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         sink.onError("cancelled", "已中断", false);
     }
 
-    private AnthropicRoundResult runRound(Call call, ChatTransport.Sink sink) {
+    private AnthropicRoundResult runRound(Call call, ChatTransport.Sink sink, WireCapture.Response wire) {
         boolean sawData = false;
         boolean sawUnexpectedPayload = false;
         boolean responseStarted = false;
@@ -366,11 +372,17 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         AnthropicStopState stopState = new AnthropicStopState();
         try (Response response = call.execute()) {
             responseStarted = true;
-            if (!response.isSuccessful()) { sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500); return null; }
+            wire.status(response.code());
+            if (!response.isSuccessful()) {
+                try { wire.append(response.body() == null ? "" : response.body().string()); } catch (Exception ignored) { }
+                sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500);
+                return null;
+            }
             sink.onStage("connected");
             if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return null; }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = reader.readLine()) != null;) {
+                    wire.line(line);
                     long now = System.nanoTime();
                     if (!line.startsWith("data:")) {
                         String trimmed = line.trim();

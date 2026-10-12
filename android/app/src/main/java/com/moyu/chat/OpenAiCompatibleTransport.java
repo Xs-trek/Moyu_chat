@@ -63,12 +63,19 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             ProviderAuth.apply(builder, provider.authMode, provider.protocol, apiKey);
             Request request = builder.build();
             Call call = http.newCall(request);
-            executor.execute(() -> run(call, protocol, guarded));
+            guarded.onWire("request", WireCapture.request(base + path, body, apiKey));
+            executor.execute(() -> run(call, protocol, guarded, apiKey));
             return call::cancel;
         } catch (Exception error) { guarded.onError("bad_provider_config", safe(error), false); return () -> {}; }
     }
 
-    private void run(Call call, String protocol, ChatTransport.Sink sink) {
+    private void run(Call call, String protocol, ChatTransport.Sink sink, String apiKey) {
+        WireCapture.Response wire = new WireCapture.Response();
+        try { runStream(call, protocol, sink, wire); }
+        finally { sink.onWire("response", wire.finish(apiKey)); }
+    }
+
+    private void runStream(Call call, String protocol, ChatTransport.Sink sink, WireCapture.Response wire) {
         Set<String> emittedImages = new HashSet<>();
         Set<String> emittedContinuation = new HashSet<>();
         Set<String> emittedRefusals = new HashSet<>();
@@ -80,11 +87,13 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         long lastSemantic = System.nanoTime();
         try (Response response = call.execute()) {
             responseStarted = true;
-            if (!response.isSuccessful()) { sink.onError("http_" + response.code(), httpErrorSummary(response), response.code() == 429 || response.code() >= 500); return; }
+            wire.status(response.code());
+            if (!response.isSuccessful()) { String summary = httpErrorSummary(response); wire.append(summary); sink.onError("http_" + response.code(), summary, response.code() == 429 || response.code() >= 500); return; }
             sink.onStage("connected");
             if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = reader.readLine()) != null;) {
+                    wire.line(line);
                     long now = System.nanoTime();
                     if (!line.startsWith("data:")) {
                         String trimmed = line.trim();

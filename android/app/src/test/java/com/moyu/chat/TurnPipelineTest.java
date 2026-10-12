@@ -160,6 +160,40 @@ public class TurnPipelineTest {
         return null;
     }
 
+    @Test public void inspectorRecordsRedactedWirePerCallAndCanBeTurnedOff() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) { return chat("wire answer"); }
+        });
+        Trace trace = runTurn(ContextMode.MINIMAL, "hello wire");
+        String sessionId = latestView().optString("activeLocalSessionId");
+        String turnId = trace.turn.optString("turnId");
+        JSONArray calls = trace.turn.getJSONArray("calls");
+        assertEquals("one model call, one recorded call", 1, calls.length());
+        assertEquals(TurnTrace.GENERATE, calls.getJSONObject(0).optString("stage"));
+
+        post("turn.payload.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId).put("callIndex", calls.getJSONObject(0).getInt("callIndex")));
+        String request = "r" + requestId;
+        await("payload result", () -> resultFor(request) != null);
+        JSONArray parts = resultFor(request).getJSONObject("data").getJSONArray("parts");
+        assertEquals(2, parts.length());
+        assertEquals("request", parts.getJSONObject(0).optString("direction"));
+        JSONObject sent = new JSONObject(parts.getJSONObject(0).optString("body"));
+        assertTrue(sent.getString("url").endsWith("/chat/completions"));
+        assertEquals("m", sent.getJSONObject("body").optString("model"));
+        assertEquals("response", parts.getJSONObject(1).optString("direction"));
+        JSONObject received = new JSONObject(parts.getJSONObject(1).optString("body"));
+        assertEquals(200, received.getInt("status"));
+        assertTrue(received.getString("text").contains("wire answer"));
+        for (int i = 0; i < parts.length(); i++) assertFalse("the key never reaches the inspector", parts.getJSONObject(i).optString("body").contains(SECRET));
+
+        post("inspector.capture.set", new JSONObject().put("enabled", false));
+        await("capture off", () -> latestView() != null && !latestView().optJSONObject("ui").optBoolean("wireCapture", true));
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second"));
+        await("second turn finished", () -> app.database().turns(sessionId).length() == 2 && !"running".equals(app.database().turns(sessionId).optJSONObject(1).optString("status")));
+        String second = app.database().turns(sessionId).optJSONObject(1).optString("turnId");
+        assertEquals("capture off records nothing", 0, app.database().turnTrace(sessionId, second).getJSONArray("calls").length());
+    }
+
     @Test public void standardModeWatchesTheBudgetButNeverRoutesOrVerifies() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) { return chat("standard answer"); }

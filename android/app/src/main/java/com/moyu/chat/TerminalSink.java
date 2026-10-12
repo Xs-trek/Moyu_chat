@@ -26,4 +26,6 @@ final class TerminalSink implements ChatTransport.Sink {
     }
     @Override public void onCompleted() { if (terminal.compareAndSet(false, true)) delegate.onCompleted(); }
     @Override public void onError(String code, String summary, boolean retryable) { if (terminal.compareAndSet(false, true)) delegate.onError(code, summary, retryable); }
+    /** Wire records are diagnostics, not stream semantics: they pass even after the terminal callback. */
+    @Override public void onWire(String direction, String text) { delegate.onWire(direction, text); }
 }

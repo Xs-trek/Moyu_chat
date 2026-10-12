@@ -169,6 +169,25 @@ public class ChatDatabaseTest {
         assertNull(db.turnTrace(s.id, first));
     }
 
+    @Test public void wirePayloadsAreKeptOnlyForRecentTurns() throws Exception {
+        TestDeployments.save(db, provider("p-wire"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-wire", "model", null, null);
+        String first = null;
+        for (int i = 0; i < ChatDatabase.PAYLOAD_TURNS_KEPT + 2; i++) {
+            String turnId = startTurn(s, "q" + i);
+            if (first == null) first = turnId;
+            db.addTurnPayload(turnId, 0, "generate", "request", "{\"url\":\"u\"}");
+            db.addTurnPayload(turnId, 0, "generate", "response", "{\"status\":200}");
+            db.completeTurn(turnId, "ok", "", null, new JSONArray());
+            db.finalizeTurn(s.id, "live:" + turnId, null, null, null, "completed");
+        }
+        assertEquals("old turns keep their trace but lose payloads", 0, db.turnTrace(s.id, first).getJSONArray("calls").length());
+        String last = db.turns(s.id).optJSONObject(db.turns(s.id).length() - 1).optString("turnId");
+        assertEquals(2, db.turnPayload(s.id, last, 0).getJSONArray("parts").length());
+        assertNull("payloads are only readable through their own session", db.turnPayload("other", last, 0));
+        db.addTurnPayload("no-such-turn", 0, "generate", "response", "{}"); // late record without an owner is dropped, not thrown
+    }
+
     @Test public void viewProjectsTurnUsageRightAfterItsReply() throws Exception {
         JSONArray timeline = new JSONArray()
                 .put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 1))
