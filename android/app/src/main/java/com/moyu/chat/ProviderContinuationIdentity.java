@@ -4,10 +4,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Locale;
 
-/** Stable identities for deployment-scoped calibration and session-chain-scoped native replay. */
+/** Stable deployment identity for verifier calibration and provider-continuation matching. */
 final class ProviderContinuationIdentity {
     private static final String CREDENTIAL_EPOCH_PREFIX = "providerCredentialEpoch:";
-    private static final String HISTORY_EPOCH_PREFIX = "sessionContinuationEpoch:";
 
     private ProviderContinuationIdentity() { }
 
@@ -24,13 +23,6 @@ final class ProviderContinuationIdentity {
                 + profile + "\n" + session.model + "\n" + credentialEpoch);
     }
 
-    /** Native replay additionally requires an unbroken local conversation-history chain. */
-    static String continuationFingerprint(ChatDatabase db, ChatDatabase.Provider provider, ChatDatabase.Session session) {
-        if (session == null) return "";
-        String historyEpoch = db == null ? "0" : db.setting(HISTORY_EPOCH_PREFIX + session.id, "0");
-        return digest(fingerprint(db, provider, session) + "\n" + historyEpoch);
-    }
-
     static String credentialEpochSettingKey(String providerId) {
         return CREDENTIAL_EPOCH_PREFIX + (providerId == null ? "" : providerId);
     }
@@ -38,11 +30,6 @@ final class ProviderContinuationIdentity {
     static void bumpCredentialEpoch(ChatDatabase db, String providerId) {
         if (db == null || providerId == null || providerId.trim().isEmpty()) return;
         bump(db, credentialEpochSettingKey(providerId));
-    }
-
-    static void bumpHistoryEpoch(ChatDatabase db, String sessionId) {
-        if (db == null || sessionId == null || sessionId.trim().isEmpty()) return;
-        bump(db, HISTORY_EPOCH_PREFIX + sessionId);
     }
 
     private static void bump(ChatDatabase db, String key) {

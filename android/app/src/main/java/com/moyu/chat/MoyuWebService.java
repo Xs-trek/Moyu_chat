@@ -346,7 +346,7 @@ final class MoyuWebService implements AutoCloseable {
         if (callScope.isCancelled()) throw new java.io.InterruptedIOException("cancelled");
         JSONObject initialize = new JSONObject().put("jsonrpc", "2.0").put("id", 1).put("method", "initialize")
                 .put("params", new JSONObject().put("protocolVersion", "2025-06-18").put("capabilities", new JSONObject())
-                        .put("clientInfo", new JSONObject().put("name", "moyu-chat").put("version", "0.0.5")));
+                        .put("clientInfo", new JSONObject().put("name", "moyu-chat").put("version", "0.0.6-beta")));
         McpHttpResult initialized = postExaMcp(initialize, "", callScope, true);
         String sessionId = initialized.sessionId;
         JSONObject notification = new JSONObject().put("jsonrpc", "2.0").put("method", "notifications/initialized");
@@ -462,7 +462,7 @@ final class MoyuWebService implements AutoCloseable {
             if (callScope.isCancelled()) throw new java.io.InterruptedIOException("cancelled");
             Request request = new Request.Builder().url(current.toString())
                     .header("Accept", "text/html,text/plain,application/json,application/xml,application/xhtml+xml;q=0.9,*/*;q=0.1")
-                    .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 Chrome/151 Safari/537.36 MoyuChat/0.0.5")
+                    .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36 Chrome/151 Safari/537.36 MoyuChat/0.0.6-beta")
                     .get().build();
             okhttp3.Call call = fetchHttp.newCall(request);
             callScope.bind(call);

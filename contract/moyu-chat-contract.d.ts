@@ -1,11 +1,10 @@
 export type RequestId = string;
 export type Theme = 'system' | 'light' | 'dark';
-export type Route = 'home' | 'conversation' | 'providers' | 'imports' | 'handoffs' | 'settings';
+export type Route = 'home' | 'conversation' | 'providers' | 'settings';
 export type SessionState = 'idle' | 'running' | 'completed' | 'failed';
 export type ContextMode = 'minimal' | 'standard' | 'smart';
 export type WebMode = 'off' | 'auto' | 'on';
 export type SubagentMode = 'off' | 'auto';
-export type ImportSource = 'chatgpt' | 'claude';
 
 export interface UiIntent<T extends string = string, P = unknown> {
   version: 1;
@@ -42,15 +41,8 @@ export type MoyuChatIntent =
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
   | UiIntent<'provider.configure.open', { providerId?: string }>
   | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
-  | UiIntent<'import.file.pick', { source: ImportSource }>
-  | UiIntent<'import.session.open', { snapshotId: string; contextMode?: ContextMode; webMode?: WebMode }>
-  | UiIntent<'import.session.delete', { snapshotId: string }>
   | UiIntent<'verification.feedback', { localSessionId: string; localSeq: number; label: 'accurate' | 'false_alarm' | 'missed_error' }>
-  | UiIntent<'branch.sources.refresh', Record<string, never>>
-  | UiIntent<'branch.create.remote', { sourceId: string; throughSeq?: number; contextMode?: ContextMode; webMode?: WebMode }>
-  | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
-  | UiIntent<'handoff.create', { localSessionId: string }>
-  | UiIntent<'handoff.submit', { handoffId: string }>;
+  | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>;
 
 export interface MediaView {
   mediaId: string;
@@ -102,7 +94,8 @@ export interface ProviderView {
 
 export interface OriginView {
   snapshotId: string;
-  sourceType: 'remote' | 'chat' | 'import-chatgpt' | 'import-claude';
+  /** New branches are always 'chat'; other values only appear in databases upgraded from v0.0.5. */
+  sourceType: 'chat' | string;
   sourceTitle: string;
   sourceRuntime?: string;
   createdAt: string;
@@ -234,40 +227,6 @@ export interface ConversationStreamPatch {
   item: Extract<TimelineItem, { kind: 'message' }>;
 }
 
-export interface ImportedSourceView {
-  snapshotId: string;
-  sourceType: 'import-chatgpt' | 'import-claude';
-  sourceTitle: string;
-  sourceRuntime?: string;
-  createdAt: string;
-  itemCount: number;
-  sourceItemCount: number;
-  truncated: boolean;
-}
-
-export interface RemoteBridgeView {
-  available: boolean;
-  contractVersion?: number;
-  reason?: string;
-}
-
-export interface RemoteSourceView {
-  sourceId: string;
-  title: string;
-  runtime?: string;
-  updatedAt: string;
-  cachedThroughSeq: number;
-  complete: boolean;
-}
-
-export interface HandoffView {
-  handoffId: string;
-  branchSessionId: string;
-  state: 'draft' | 'submitted' | 'failed';
-  createdAt: string;
-  summary: string;
-}
-
 export interface AppViewModel {
   route: Route;
   now: string;
@@ -276,11 +235,7 @@ export interface AppViewModel {
   sessions: SessionView[];
   activeLocalSessionId?: string;
   activeSession?: SessionDetailView;
-  remoteBridge: RemoteBridgeView;
-  remoteSources: RemoteSourceView[];
-  importedSources: ImportedSourceView[];
-  handoffs: HandoffView[];
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; importInProgress: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {

@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
+const VERSION_NAME = '0.0.6-beta';
+const VERSION_CODE = 6;
+const SCHEMA_VERSION = 16;
 const uiRoot = join(projectRoot, 'src');
 const javaRoot = join(projectRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'moyu', 'chat');
 let failed = false;
@@ -30,7 +33,7 @@ walk(uiRoot, '.js', (file, text) => {
   for (const pattern of forbiddenUi) if (pattern.test(text)) fail(`${file}: forbidden WebView surface ${pattern}`);
 });
 
-const forbiddenRuntime = [/\bEasyTier\b/, /\bBackendClient\b/, /\bOverlayService\b/, /com\.moyu\.remote\.(?!chatbridge)/];
+const forbiddenRuntime = [/\bEasyTier\b/, /\bBackendClient\b/, /\bOverlayService\b/, /com\.moyu\.remote/, /RemoteDataBridge/, /ConversationImportService/];
 walk(javaRoot, '.java', (file, text) => {
   for (const pattern of forbiddenRuntime) if (pattern.test(text)) fail(`${file}: Chat runtime must not depend on Remote runtime: ${pattern}`);
 });
@@ -39,7 +42,8 @@ const db = read('android/app/src/main/java/com/moyu/chat/ChatDatabase.java');
 if (/insertWithOnConflict\("sessions"[\s\S]{0,160}CONFLICT_REPLACE/.test(db)) fail('sessions must never use INSERT OR REPLACE because timeline has ON DELETE CASCADE');
 if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery hook missing');
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
-if (!db.includes('private static final int VERSION = 15')) fail('v0.0.4 session-frozen reasoning capability persistence requires SQLite schema v15');
+if (!db.includes(`private static final int VERSION = ${SCHEMA_VERSION}`)) fail(`SQLite schema must be v${SCHEMA_VERSION}`);
+if (/CREATE TABLE handoffs/.test(db) || !db.includes('DROP TABLE IF EXISTS handoffs')) fail('v16 must drop the removed Remote handoff table and never recreate it');
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 for (const marker of ['protocol', 'auth_mode', 'reasoning_wire', 'thinking_mode', 'thinking_budget_tokens', 'continuation_mode']) if (!db.includes(marker)) fail(`deployment-scoped model/session capability persistence missing: ${marker}`);
@@ -66,10 +70,7 @@ if (!focusedSubagent.includes('isolated worker') || !focusedSubagent.includes('r
 if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
 if (!promptPolicy.includes('Moyu trusted runtime metadata') || !promptPolicy.includes('Current local date:') || !promptPolicy.includes('Device timezone:') || !promptPolicy.includes('today, yesterday, and tomorrow')) fail('every chat mode must receive trusted device-local date/timezone context for relative-date semantics');
 if (!promptPolicy.includes('compactInstructions(') || !read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('selectWithPolicy(')) fail('weak-context models require deterministic compact Harness fallback instead of an arbitrary occupancy threshold');
-if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('searchUserMemory(') || !knowledgeStore.includes('includeImports') || !knowledgeStore.includes('current session and its current origin snapshot are excluded')) fail('snapshot + capability-gated cross-chat retrieval boundary missing');
-const conversationImporter = read('android/app/src/main/java/com/moyu/chat/ConversationImportService.java');
-for (const marker of ['SOURCE_CHATGPT', 'SOURCE_CLAUDE', 'current_node', 'current_leaf_message_uuid', 'is_visually_hidden_from_conversation', 'thinking/tool_use/tool_result/image/artifact blocks are intentionally excluded']) if (!conversationImporter.includes(marker)) fail(`explicit sanitized conversation import missing: ${marker}`);
-if (!conversationImporter.includes('unsupported import source') || !conversationImporter.includes('存在多个分支')) fail('conversation import must reject provider auto-detection and ambiguous branches');
+if (!knowledgeStore.includes('searchSnapshot(') || !knowledgeStore.includes('searchUserMemory(') || !knowledgeStore.includes('the current session is excluded')) fail('snapshot + cross-chat retrieval boundary missing');
 
 const coordinator = read('android/app/src/main/java/com/moyu/chat/ChatCoordinator.java');
 if (!coordinator.includes('contexts.buildCommitted(session, turnConfig.contextTokens, turnConfig.inputTokens, turnConfig.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
@@ -85,7 +86,7 @@ if (!db.includes('public synchronized void beginTurn(') || !db.includes('public 
 if (!coordinator.includes('context.mode.default.set') || !coordinator.includes('defaultContextMode')) fail('v0.0.2 default context-mode authority missing');
 if (!coordinator.includes('web.mode.default.set') || !coordinator.includes('defaultWebMode') || !coordinator.includes('MoyuWebService')) fail('v0.0.2 Web-mode authority/orchestration missing');
 if (!coordinator.includes('memory.global.set') || !coordinator.includes('crossChatMemoryEnabled')) fail('global cross-chat Memory switch missing');
-if (!coordinator.includes('import.file.pick') || !coordinator.includes('import.session.open') || !coordinator.includes('importConversationFromUri(') || !coordinator.includes('listImportedSnapshots()')) fail('explicit file-import library orchestration missing');
+for (const removed of ['import.file.pick', 'import.session.', 'branch.create.remote', 'branch.sources.refresh', 'handoff.']) if (coordinator.includes(removed)) fail(`removed Remote/import intent still handled: ${removed}`);
 if (!coordinator.includes('chat.session.model.set') || !coordinator.includes('chat.session.reasoning.set') || !coordinator.includes('chat.session.web.set') || !coordinator.includes('setSessionModel(') || !coordinator.includes('setSessionReasoning(') || !coordinator.includes('setSessionWebMode(')) fail('in-session model/reasoning/Web future-turn controls missing');
 if (!coordinator.includes('if (p.has("webMode")) setSessionWebMode(')) fail('Send must persist the visible session Web mode before freezing TurnConfig');
 if (coordinator.indexOf('db.beginTurn(') < 0 || coordinator.indexOf('webService.prepare(') < 0 || coordinator.indexOf('db.beginTurn(') > coordinator.indexOf('webService.prepare(')) fail('accepted user turn must become visible before Web retrieval starts');
@@ -167,7 +168,7 @@ if (!webService.includes('https://mcp.exa.ai/mcp') || !webService.includes('web_
 if (!webService.includes('Moyu Fetch only allows HTTPS URLs') || !webService.includes('publicDns') || !webService.includes('validateHttpsUri')) fail('Moyu Fetch HTTPS/SSRF boundary missing');
 if (!webService.includes('validateToolFetchArgument(') || !webService.includes('web_fetch.url must be exactly one absolute HTTPS URL with no surrounding text') || !webService.includes('Never salvage a URL from')) fail('client web_fetch must reject free-form prompt text and return a correctable typed tool error instead of guessing a URL');
 if (!webService.includes('untrusted reference material') || !webService.includes('never as instructions or authority')) fail('Web fallback context must remain explicitly untrusted/non-authoritative');
-if (!webService.includes('MoyuChat/0.0.5')) fail('Moyu Fetch User-Agent version must match v0.0.5');
+if (!webService.includes(`MoyuChat/${VERSION_NAME}`)) fail(`Moyu Fetch User-Agent version must match v${VERSION_NAME}`);
 if (!coordinator.includes('final CanonicalPrompt preWebPrompt = prompt;')
     || !coordinator.includes('contexts.appendRequiredUserSuffix(preWebPrompt')
     || !coordinator.includes('promptContainsLatestUserSuffix(webPrompt, candidate.promptSuffix)')
@@ -182,7 +183,6 @@ if (!mainActivity.includes('setVerticalScrollBarEnabled(false)') || !mainActivit
 if (!mainActivity.includes('runtime = app.chatRuntime()') || !mainActivity.includes('runtime.attach(this)') || mainActivity.includes('coordinator.close()')) fail('provider turns must be process-scoped instead of owned by Activity/WebView lifetime');
 if (!mainActivity.includes('onRenderProcessGone(WebView view, RenderProcessGoneDetail detail)') || !mainActivity.includes('recoverWebView(view)') || !mainActivity.includes('createWebView()')) fail('WebView renderer loss must rebuild only presentation and rehydrate from native runtime state');
 if (!chatRuntime.includes('setResumed(MainActivity owner, boolean value)') || !chatRuntime.includes('coordinator.refreshView()') || !chatRuntime.includes('boolean setTurnRuntimeActive')) fail('process runtime must detach UI projection while retaining provider-turn authority');
-if (!chatRuntime.includes('openConversationImportPicker(String source)') || !chatRuntime.includes('current.openConversationImportPicker(source)')) fail('production ChatRuntime host must forward conversation-import picker requests to the visible Activity');
 if (!turnService.includes('static boolean start(Context context)') || !turnService.includes('startForeground(') || !turnService.includes('FOREGROUND_SERVICE_TYPE_DATA_SYNC') || !turnService.includes('START_NOT_STICKY') || !coordinator.includes('unable to acquire foreground generation runtime') || !coordinator.includes('db.setDraft(sessionId, message)')) fail('active model turns require an explicit, non-silent foreground-service lease and rejected lease acquisition must restore the exact submitted draft');
 if (!coordinator.includes('preparationWorker = Executors.newFixedThreadPool(2)') || !coordinator.includes('preparationWorker.execute(')) fail('blocking Router/Checkpoint/Web preparation must not occupy the UI intent queue');
 if (!coordinator.includes('emitStreamingPatch(String sessionId, JSONObject liveItem)') || !coordinator.includes('"conversation.stream"') || !coordinator.includes('STREAM_PROJECTION_INTERVAL_MS = 50L')) fail('streaming data plane must use a bounded visible-session patch instead of rebuilding full application snapshots per delta');
@@ -190,8 +190,7 @@ if (!coordinator.includes('if ("conversation".equals(route)) view.put("activeSes
 if (!coordinator.includes('if (!streamTerminal.get()) {') || !coordinator.includes('activeTurns.put(id, turn)')) fail('a terminal callback that wins the stream-start race must not be resurrected as an active turn');
 if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
 if (!mainActivity.includes('openExternalUrl(String url)') || !mainActivity.includes('Intent.ACTION_VIEW') || !mainActivity.includes('"https".equalsIgnoreCase(uri.getScheme())')) fail('external.open must leave the WebView through an HTTPS-only Android VIEW intent');
-if (!mainActivity.includes('openConversationImportPicker(String source)') || !mainActivity.includes('REQUEST_CONVERSATION_IMPORT') || !mainActivity.includes('Intent.ACTION_OPEN_DOCUMENT') || !mainActivity.includes('importConversationFromUri(')) fail('conversation export import must use an explicit Android document picker/native parser boundary');
-if (!mainActivity.includes('STATE_PENDING_IMPORT_SOURCE') || !mainActivity.includes('onSaveInstanceState(Bundle outState)') || !mainActivity.includes('无法打开系统文件选择器')) fail('document picker source state must survive Activity recreation and picker launch failures must be visible');
+if (!mainActivity.includes('STATE_PENDING_IMAGE_SESSION') || !mainActivity.includes('onSaveInstanceState(Bundle outState)') || !mainActivity.includes('无法打开系统文件选择器')) fail('image picker session state must survive Activity recreation and picker launch failures must be visible');
 if (!mainActivity.includes('Provider-native Web capabilities') || !mainActivity.includes('p.toolCapabilities = toolCapabilities')) fail('model editor must expose explicit provider-native Web capabilities');
 if (!mainActivity.includes('共享 Base URL') || !mainActivity.includes('protocol、authMode、reasoningWire 在各 Model Profile 单独配置')) fail('Provider editor must expose only shared connection/account configuration');
 if (!mainActivity.includes('协议 (protocol)') || !mainActivity.includes('鉴权方式 (authMode)') || !mainActivity.includes('推理参数映射 (reasoningWire)')
@@ -224,7 +223,7 @@ if (mainUi.includes('input.blur()')) fail('composer must not blur immediately af
 if (!mainUi.includes('draftGenerations') || !mainUi.includes('advanceDraftGeneration(sessionId)') || !coordinator.includes('db.setDraft(sessionId, "")')) fail('submitted composer text must not be resurrected by stale draft writes or preflight failures');
 if (!mainUi.includes('if (activeSession && !activeSession.canSend)') || !coordinator.includes('session busy; message kept as next draft') || coordinator.includes('if (sessionBusy(id)) return;')) fail('typing/submitting during an active turn must preserve the next-turn draft across WebView/native races');
 if (!render.includes('projectedDraft') || !render.includes('const timelineDeferred = Boolean(timeline && selectionInside(timeline))') || !render.includes('return !timelineDeferred;') || !mainUi.includes("document.addEventListener('selectionchange'")) fail('edit-draft projection and selection-deferred final conversation rendering must remain lossless');
-if (!render.includes("dataset: { action: 'handoff', sessionId: session.localSessionId }") || !coordinator.includes('if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before creating a handoff")')) fail('handoff creation must be reachable from normal conversation UI and blocked during incomplete turns');
+if (!render.includes("button('分支', 'branch-local', { sessionId: session.localSessionId }") || !coordinator.includes('if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching")')) fail('local branching must be reachable from conversation UI and blocked during incomplete turns');
 if (!coordinator.includes('if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching")')) fail('local branching must cover starting/preparing/Web/post-processing states, not only active provider calls');
 const markdown = read('src/markdown.js');
 const scrollAnchor = read('src/scroll-anchor.js');
@@ -257,7 +256,7 @@ if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.in
 if (!render.includes("const title = document.querySelector('.conversation-title strong')") || !render.includes('renameButton.dataset.sessionTitle = session.title')) fail('conversation title and rename metadata must remain synchronized during incremental patches');
 if (!mainUi.includes("postIntent('context.mode.default.set'") || !render.includes('上下文 · 极简') || !render.includes('上下文 · 标准') || !render.includes('上下文 · Moyu 智能')) fail('minimal/standard/smart context modes must be explicitly selectable when creating sessions');
 if (!coordinator.includes('if (p.has("contextMode")) { defaultContextMode = contextMode; db.putSetting("defaultContextMode", defaultContextMode); }')) fail('explicit new-chat context selection must become the durable next-new-chat preference');
-if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('联网 · 关闭') || !render.includes('联网 · 自动') || !render.includes('联网 · 开启')) fail('Web modes must be explicitly selectable for new chats/imports/settings');
+if (!mainUi.includes("postIntent('web.mode.default.set'") || !render.includes('联网 · 关闭') || !render.includes('联网 · 自动') || !render.includes('联网 · 开启')) fail('Web modes must be explicitly selectable for new chats/settings');
 if (!render.includes('reasoningCapability(model)') || !render.includes('深度支持 ·') || render.includes('data-reasoning-select')) fail('Provider/Model overview must show a read-only reasoning capability range; actual effort selection belongs to the conversation');
 if (!mainUi.includes("action === 'rename-session'") || !mainUi.includes("postIntent('chat.session.rename'") || !render.includes('openTextDialog') || !render.includes("'rename-session'")) fail('manual session rename must be exposed through app-owned UI');
 if (!render.includes('TURN_NAV_MIN_TURNS = 6')
@@ -323,8 +322,9 @@ try {
   if (rows[1].__usage?.inputTokens !== 7) fail('failed-turn usage must not overwrite the previous assistant footer');
 } catch (error) { fail('usage timeline projection failed: ' + error.message); }
 const gradle = read('android/app/build.gradle');
-if (packageJson.version !== '0.0.5' || !gradle.includes("versionName '0.0.5'") || !gradle.includes('versionCode 5')) fail('v0.0.5 product version metadata is not aligned');
-if (!mainUi.includes("uiVersion: '0.0.5'")) fail('WebView app.ready version must match v0.0.5');
+if (packageJson.version !== VERSION_NAME || !gradle.includes(`versionName '${VERSION_NAME}'`) || !gradle.includes(`versionCode ${VERSION_CODE}`)) fail(`v${VERSION_NAME} product version metadata is not aligned`);
+if (!gradle.includes("applicationId 'com.moyu.chat.beta'")) fail('beta line must keep a distinct applicationId so it installs beside com.moyu.chat');
+if (!mainUi.includes(`uiVersion: '${VERSION_NAME}'`)) fail(`WebView app.ready version must match v${VERSION_NAME}`);
 
 if (failed) process.exit(1);
-console.log('moyu-chat v0.0.5 static architecture checks passed');
+console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);

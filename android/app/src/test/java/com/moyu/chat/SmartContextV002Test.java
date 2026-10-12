@@ -62,7 +62,7 @@ public class SmartContextV002Test {
         p.id = "p"; p.displayName = "P"; p.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         p.baseUrl = server.url("/v1").toString(); p.model = "m"; p.contextTokens = 32_000; p.maxOutputTokens = 4_096;
         app.database().saveProvider(p); secrets.put("p", SECRET);
-        coordinator = new ChatCoordinator(app, host, secrets, new UnavailableRemoteDataBridge());
+        coordinator = new ChatCoordinator(app, host, secrets);
         post("app.ready", new JSONObject());
     }
 

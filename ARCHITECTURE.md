@@ -1,10 +1,10 @@
 # Moyu Chat architecture
 
-Current source: v0.0.5; SQLite schema remains 15.
+Current source: v0.0.6-beta; SQLite schema 16.
 
 ## 1. Product boundary
 
-Moyu Chat is a supplemental Android-local Chat application. It must remain usable with no PC, no Moyu Server and no EasyTier connection. Moyu Remote remains a separate PC-runtime remote-control product; the two applications do not share a SQLite database.
+Moyu Chat is a standalone Android-local Chat application and model test bench. It has no cross-app bridge and no external history import; all durable state lives in its own SQLite database.
 
 ```text
 Moyu Chat WebView UI
@@ -12,15 +12,15 @@ Moyu Chat WebView UI
 versioned intents / view models
         |
 ChatCoordinator
-  |        |           |             |
-Chat DB  Context    Tool runtime   RemoteDataBridge (optional)
-  |        |           |             |
-Session  Memory/     web_search      immutable Snapshot /
-History  Snapshot    web_fetch       explicit Handoff
-         Checkpoint  delegate_subtask
-              \        /
-              Provider transports
-     Chat Completions / Responses / Messages
+  |        |              |
+Chat DB  Context        Tool runtime
+  |        |              |
+Session  Memory/          web_search
+History  Branch snapshot  web_fetch
+         Checkpoint       delegate_subtask
+              \            /
+            Provider transports
+   Chat Completions / Responses / Messages
 ```
 
 The product is Chat + bounded feasible tools, not an Android agent executor.
@@ -29,15 +29,15 @@ The product is Chat + bounded feasible tools, not an Android agent executor.
 
 ### WebView UI
 
-Presentation only. It posts versioned intents through `window.MoyuHost.postMessage` and receives full/patch view projections. Credentials, database access, provider networking, tool execution and Remote bridge access remain native.
+Presentation only. It posts versioned intents through `window.MoyuHost.postMessage` and receives full/patch view projections through the `moyu:view` event. Credentials, database access, provider networking and tool execution remain native.
 
 ### ChatCoordinator
 
-Owns intent validation, local session lifecycle, turn cancellation/runtime ownership, context preparation, bounded client-tool rounds, Smart post-processing and optional Remote exchange. Provider-specific wire parsing belongs to transports.
+Owns intent validation, local session lifecycle, local branching, turn cancellation/runtime ownership, context preparation, bounded client-tool rounds and Smart post-processing. Provider-specific wire parsing belongs to transports.
 
 ### Durable Chat domain
 
-`ChatDatabase` owns Providers, Model Profiles, Sessions, timeline rows, immutable snapshots and handoff drafts. The durable visible transcript is the product source of truth; provider-native conversation/reasoning state is optional derived metadata.
+`ChatDatabase` owns Providers, Model Profiles, Sessions, timeline rows and immutable branch snapshots. A branch snapshot is owned by the sessions that reference it and is collected when the last one is deleted. The durable visible transcript is the product source of truth; provider-native conversation/reasoning state is optional derived metadata.
 
 ## 3. Provider / Model / Session separation
 
@@ -96,7 +96,7 @@ Prompt context is disposable. Durable history is not deleted by budgeting. Compl
 
 ## 6. Client tools
 
-The provider-neutral tool vocabulary in v0.0.4 is intentionally small:
+The provider-neutral tool vocabulary is intentionally small:
 
 - `web_search`
 - `web_fetch`
@@ -160,14 +160,12 @@ Official Anthropic shared root is `https://api.anthropic.com/v1`.
 - WebView is local-assets-only and does not receive API keys.
 - Provider API keys use native secure storage.
 - Cloud endpoints require HTTPS; approved loopback HTTP is treated separately by endpoint validation.
-- Remote imports are immutable bounded snapshots; handoff is explicit.
-- Failed model inputs/handoffs are not autonomously resent.
-- No shell, computer use, arbitrary filesystem mutation, Android device control, recursive subagents or autonomous agent planning loop is part of the v0.0.4 Chat runtime.
+- Branch snapshots are immutable and bounded.
+- Failed model inputs are not autonomously resent.
+- No shell, computer use, arbitrary filesystem mutation, Android device control, recursive subagents or autonomous agent planning loop is part of the Chat runtime.
 
-## 11. Turn usage and input resource bounds
+## 11. Turn usage and media bounds
 
 `TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is ordinary timeline JSON, so this release needs no schema migration.
-
-The official export importer keeps Android `JsonReader`, with a reader guard that limits raw token size, aggregate conversation JSON size and nesting before string allocation. Format/branch interpretation still belongs to the existing importer. Resource-limit failures stop reading; completed conversations remain imported with a partial-result report. Exact limits are listed in README.
 
 `ChatMediaStore` reads image bounds without decoding pixels, rejects excessive dimensions/area, and only then creates the private media file. Byte/draft-image limits remain in force.

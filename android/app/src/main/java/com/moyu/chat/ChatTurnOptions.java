@@ -63,10 +63,6 @@ final class ChatTurnOptions {
         } catch (Exception ignored) { throw new IllegalArgumentException("invalid client tool/provider round history"); }
     }
 
-    ChatTurnOptions withToolHistory(JSONArray history) {
-        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, providerRoundHistory, hostedWebAllowed);
-    }
-
     ChatTurnOptions withRoundHistory(JSONArray history, JSONArray roundHistory) {
         return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, roundHistory, hostedWebAllowed);
     }
@@ -76,14 +72,8 @@ final class ChatTurnOptions {
     }
 
     boolean webEnabled() { return hostedWebAllowed; }
-    boolean forceFallback() { return WEB_ON.equals(webMode); }
     boolean clientToolsEnabled(String protocol) {
         return ClientToolRuntime.compatible(protocol, clientToolCalling) && !clientToolNames.isEmpty();
-    }
-    boolean clientToolEnabled(String name) {
-        if (name == null || name.isEmpty()) return false;
-        for (String item : clientToolNames.split(",")) if (name.equals(item)) return true;
-        return false;
     }
     JSONArray clientToolDefinitions() { return ClientToolRuntime.canonicalDefinitions(clientToolNames); }
 

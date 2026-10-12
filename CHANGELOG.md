@@ -1,5 +1,24 @@
 # 更新记录
 
+## v0.0.6-beta — 2026-10-12
+
+Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 16。
+
+- 删除 Moyu Remote 跨 APK 桥接：`RemoteDataBridge` 及其实现、Snapshot 导入、Handoff 回传、Manifest 中的 `com.moyu.remote` 权限与 `<queries>`、前端“回传”页、Remote 徽章与相关 intent / 视图字段 / 契约类型。视图生成时不再每次跨进程查询桥接状态。
+- 删除 ChatGPT / Claude 官方导出导入：`ConversationImportService`、导入文件选择器、“分支/导入”页、导入快照的复用与删除逻辑，以及跨 Chat 记忆中对导入源的检索。
+- 本地分支保留：快照只由本地分支创建，最后一个引用它的会话被删除时一并回收。
+- schema 16 迁移：删除 `handoffs` 表；删除不被任何会话引用的快照及其检索索引。仍被会话引用的旧快照作为不可变历史保留。
+- 清理仓库：Codex 时期文档归档到 `docs/history/`；删除 `REMOTE_BRIDGE_CONTRACT.md`、`.__probe__.txt`、只覆盖 Remote 桥接的 `androidTest`；新增 `CLAUDE.md` 和 `npm run verify`（`scripts/verify.sh`）。
+- 本地的 `build/releases/v0.0.5/` 构建归档已删除，下方 v0.0.5 记录中引用的产物不再保留。
+- 顺带删除早已无调用的死代码：`ConfigurationValidator.validateProfile`（已由 `ModelProfileValidator.validateResolvedProfile` 取代）、`ProviderContinuationIdentity` 的会话历史 epoch、`ChatTurnOptions` 与 `ChatDatabase` 中的几个未用辅助方法。
+
+### 验证
+
+- `npm run verify`：静态检查通过；`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` 通过。
+- 29 个测试类、215 项测试：212 通过，0 失败，3 项真实端点 smoke 按凭据开关跳过。新增 schema 16 迁移测试、分支快照回收测试，以及“已删除 intent 被拒绝”的回归测试。
+- Debug Lint 0 错误，5 项均为原有警告。Debug APK 的 applicationId 为 `com.moyu.chat.beta`，versionName 为 `0.0.6-beta`。
+- 未在真机上安装验证；Release 构建本阶段未执行。
+
 ## v0.0.5 — 2026-09-06
 
 基于 v0.0.4（`eb8e52e786b95e04aadb2a64f1a9e24ee079729f`）的修复版本，Android versionCode 升至 5，SQLite schema 保持 15。

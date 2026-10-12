@@ -28,9 +28,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 /**
- * End-to-end coordinator flow on a real SQLite database with a local mock provider endpoint and
- * no Moyu Remote installed: standalone startup, provider config, streaming turns, interrupt,
- * error mapping, restart recovery, handoff drafts and API key isolation.
+ * End-to-end coordinator flow on a real SQLite database with a local mock provider endpoint:
+ * standalone startup, provider config, streaming turns, interrupt,
+ * error mapping, restart recovery, local branches and API key isolation.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
@@ -50,12 +50,10 @@ public class ChatCoordinatorE2eTest {
         final List<String> toasts = Collections.synchronizedList(new ArrayList<>());
         volatile ChatDatabase.Provider editorProvider;
         volatile boolean editorOpened;
-        volatile String importPickerSource;
         volatile boolean runtimeLeaseAllowed = true;
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
         @Override public void openProviderEditor(ChatDatabase.Provider existing) { editorProvider = existing; editorOpened = true; }
         @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
-        @Override public void openConversationImportPicker(String source) { importPickerSource = source; }
         @Override public boolean setTurnRuntimeActive(String sessionId, boolean active) { return !active || runtimeLeaseAllowed; }
         @Override public void showMessage(String text) { toasts.add(text); }
     }
@@ -83,7 +81,7 @@ public class ChatCoordinatorE2eTest {
         app = (MoyuChatApplication) RuntimeEnvironment.getApplication();
         host = new RecordingHost();
         secrets = new FakeSecretStore();
-        coordinator = new ChatCoordinator(app, host, secrets, new UnavailableRemoteDataBridge());
+        coordinator = new ChatCoordinator(app, host, secrets);
         post("app.ready", new JSONObject());
         // Legacy transport/state E2Es assert one provider request per user turn. v0.0.2 smart-context
         // preflight has dedicated tests and is disabled here so these remain protocol-isolation tests.
@@ -177,8 +175,8 @@ public class ChatCoordinatorE2eTest {
     @Test public void worksFullyStandaloneAndNeverLeaksApiKey() throws Exception {
         await("initial view", () -> latestView() != null);
         JSONObject view = latestView();
-        assertEquals("bridge absence must be a normal state, not a failure",
-                false, view.optJSONObject("remoteBridge").optBoolean("available"));
+        assertFalse("removed Remote/import projections must not reappear",
+                view.has("remoteBridge") || view.has("remoteSources") || view.has("importedSources") || view.has("handoffs"));
         assertNotNull(view.optJSONArray("sessions"));
         assertNotNull(view.optJSONArray("providers"));
 
@@ -918,7 +916,7 @@ public class ChatCoordinatorE2eTest {
         coordinator = null;
 
         host = new RecordingHost();
-        ChatCoordinator restarted = new ChatCoordinator(app, host, secrets, new UnavailableRemoteDataBridge());
+        ChatCoordinator restarted = new ChatCoordinator(app, host, secrets);
         try {
             restarted.postIntent(new JSONObject().put("version", 1).put("type", "app.ready").put("requestId", "boot").put("payload", new JSONObject()).toString());
             await("stale running session recovered to failed", () -> {
@@ -933,9 +931,9 @@ public class ChatCoordinatorE2eTest {
         } finally { restarted.close(); }
     }
 
-    // ---------- local branch + handoff draft stay local ----------
+    // ---------- local branch ----------
 
-    @Test public void localBranchAndHandoffDraftWorkWithoutRemote() throws Exception {
+    @Test public void localBranchFreezesSnapshotAndRejectsRemovedRemoteIntents() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "branch me"));
@@ -951,28 +949,12 @@ public class ChatCoordinatorE2eTest {
         assertTrue("branch references a frozen snapshot", branch.optJSONObject("origin").optString("snapshotId").length() > 0);
 
         post("handoff.create", new JSONObject().put("localSessionId", sessionId));
-        await("handoff draft created", () -> {
-            JSONObject view = latestView();
-            return view != null && view.optJSONArray("handoffs") != null && view.optJSONArray("handoffs").length() == 1;
-        });
-        assertEquals("draft", latestView().optJSONArray("handoffs").getJSONObject(0).optString("state"));
-
-        post("handoff.submit", new JSONObject().put("handoffId", latestView().optJSONArray("handoffs").getJSONObject(0).optString("handoffId")));
-        await("submit rejected without bridge", () -> !host.toasts.isEmpty() || host.envelopes.stream().anyMatch(e ->
-                "intent.result".equals(e.optString("type")) && !e.optBoolean("ok")));
-        assertEquals("failed submission stays a local draft",
-                "draft", latestView().optJSONArray("handoffs").getJSONObject(0).optString("state"));
+        await("removed handoff intent is rejected", () -> host.envelopes.stream().anyMatch(e ->
+                "intent.result".equals(e.optString("type")) && !e.optBoolean("ok")
+                        && e.optJSONObject("error") != null && e.optJSONObject("error").optString("summary").contains("unsupported intent")));
     }
 
     // ---------- raw input edge cases ----------
-
-    @Test public void importButtonsReachTheNativeDocumentPickerForBothExplicitSources() throws Exception {
-        post("import.file.pick", new JSONObject().put("source", "chatgpt"));
-        await("ChatGPT import picker requested", () -> "chatgpt".equals(host.importPickerSource));
-        host.importPickerSource = null;
-        post("import.file.pick", new JSONObject().put("source", "claude"));
-        await("Claude import picker requested", () -> "claude".equals(host.importPickerSource));
-    }
 
     @Test public void sessionRenameIsDurableAndVisibleAfterNavigation() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);

@@ -81,11 +81,11 @@ export function openTextDialog({ title, value = '', confirmText = '保存', onCo
 }
 
 function shell(view, body) {
-  const routes = [['home','Chat'],['imports','分支'],['providers','Provider'],['handoffs','回传'],['settings','设置']];
-  const routeTitles = { home: 'Chat', imports: '分支', providers: 'Provider', handoffs: '回传', settings: '设置' };
+  const routes = [['home','Chat'],['providers','Provider'],['settings','设置']];
+  const routeTitles = { home: 'Chat', providers: 'Provider', settings: '设置' };
   const conversationActive = view.route === 'conversation' && view.activeSession;
   return h('div', { class: `app-shell${conversationActive ? ' conversation-active' : ''}` },
-    h('header', { class: 'topbar' }, h('strong', { class: 'route-title', text: routeTitles[view.route] || 'Chat' }), h('span', { class: 'grow' }), badge(view.remoteBridge.available ? 'Remote' : 'Local', view.remoteBridge.available ? 'good' : 'quiet')),
+    h('header', { class: 'topbar' }, h('strong', { class: 'route-title', text: routeTitles[view.route] || 'Chat' }), h('span', { class: 'grow' })),
     body,
     h('nav', { class: 'nav' }, routes.map(([route, label]) => button(label, 'nav', { route }, `nav-item ${view.route === route ? 'active' : ''}`)))
   );
@@ -109,7 +109,7 @@ function sessionContextModeBadge(session) {
 function home(view) {
   return h('main', { class: 'page page-home' },
     h('section', { class: 'home-start' },
-      h('div', { class: 'grow' }, h('strong', { text: '本地 Chat' }), h('small', { class: 'muted', text: '本机保存会话；Remote 只在你显式分支或回传时参与。' })),
+      h('div', { class: 'grow' }, h('strong', { text: '本地 Chat' }), h('small', { class: 'muted', text: '会话与分支只保存在本机。' })),
       button('＋ 新建', 'new-chat', {}, 'btn primary')),
     h('section', { class: 'section-head compact' }, h('h2', { text: '最近会话' })),
     view.sessions.length ? h('section', { class: 'stack session-list' }, view.sessions.map((session) => h('article', { class: 'card session-card' },
@@ -260,7 +260,6 @@ function conversation(view) {
       h('span', { class: `badge good conversation-busy${busyLabel ? '' : ' is-hidden'}`, text: busyLabel || '' }),
       button('重命名', 'rename-session', { sessionId: session.localSessionId, sessionTitle: session.title }, 'btn ghost small icon-action'),
       h('button', { type: 'button', class: 'btn ghost small icon-action', dataset: { action: 'toggle-reasoning', show: view.ui?.showReasoning ? 'false' : 'true' }, 'aria-pressed': view.ui?.showReasoning ? 'true' : 'false', text: view.ui?.showReasoning ? '隐藏推理' : '显示推理' }),
-      h('button', { type: 'button', class: 'btn ghost small icon-action', disabled: !session.canConfigureTurn, title: '创建回传草稿', dataset: { action: 'handoff', sessionId: session.localSessionId }, text: '回传' }),
       button('分支', 'branch-local', { sessionId: session.localSessionId }, 'btn ghost small icon-action')),
     turnNavigator(session),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
@@ -582,34 +581,6 @@ function providers(view) {
     ))) : h('section', { class: 'empty', text: '暂无 Provider。先添加一个 API endpoint。' }));
 }
 
-function imports(view) {
-  const importing = Boolean(view.ui?.importInProgress);
-  const imported = view.importedSources || [];
-  return h('main', { class: 'page' },
-    pageHeader('导入 / 分支', '文件导入与 Remote 分支彼此独立。导入文件只在 Android 本地解析和清洗，不恢复原产品的工具、系统提示词或运行时权限。'),
-    h('section', { class: 'card' },
-      h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '从官方数据导出导入会话' }),
-        h('p', { class: 'muted', text: '先明确选择来源，再选择官方 ZIP 或 conversations JSON。ChatGPT/Claude 的 system、tool、thinking/reasoning、隐藏上下文与 PC/runtime 身份信息会被清洗，只保留适合普通 Chat 的可见用户/助手正文。' }))),
-      h('div', { class: 'row' },
-        h('button', { type: 'button', class: 'btn primary small', disabled: importing, dataset: { action: 'import-file-pick', source: 'chatgpt' }, text: importing ? '正在导入…' : '导入 ChatGPT' }),
-        h('button', { type: 'button', class: 'btn ghost small', disabled: importing, dataset: { action: 'import-file-pick', source: 'claude' }, text: importing ? '正在导入…' : '导入 Claude' }))),
-    h('section', { class: 'section-head compact' }, h('h2', { text: '已导入会话' })),
-    imported.length ? h('section', { class: 'stack' }, imported.map((source) => h('article', { class: 'card import-source-card' },
-      h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: source.sourceTitle }), badge(source.sourceType === 'import-claude' ? 'Claude' : 'ChatGPT'), source.truncated ? badge('已截断', 'warn') : null),
-      h('small', { class: 'muted', text: `${source.itemCount} 条可见消息 · ${fmt(source.createdAt)}` }),
-      h('div', { class: 'row' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('删除导入源', 'import-delete', { snapshotId: source.snapshotId, sourceTitle: source.sourceTitle }, 'btn ghost small danger'), button('作为 Chat 打开', 'import-open', { snapshotId: source.snapshotId }, 'btn primary small'))
-    ))) : h('section', { class: 'empty', text: '还没有导入的 ChatGPT / Claude 会话。' }),
-    h('section', { class: 'section-head compact' }, h('h2', { text: 'Remote 分支' }), h('span', { class: 'grow' }), button('刷新来源', 'refresh-sources', {}, 'btn ghost small')),
-    !view.remoteBridge.available ? h('section', { class: 'empty', text: 'RemoteDataBridge 当前不可用。文件导入与 Local Chat 不受影响。' }) :
-    h('section', { class: 'stack' }, view.remoteSources.map((source) => h('article', { class: 'card remote-source-card' }, h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: source.title }), source.runtime ? badge(source.runtime) : null, badge(source.complete ? '本地缓存完整' : `缓存至 ${source.cachedThroughSeq}`, source.complete ? 'good' : 'warn')), h('small', { text: fmt(source.updatedAt) }), h('div', { class: 'row' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'), h('span', { class: 'grow' }), button('创建本地分支', 'branch-remote', { sourceId: source.sourceId }, 'btn primary small')))))
-  );
-}
-
-function handoffs(view) {
-  return h('main', { class: 'page' }, pageHeader('回传草稿', '回传不是同步。只有你显式提交后，Remote 才能收到 handoff package。'),
-    view.handoffs.length ? h('section', { class: 'stack' }, view.handoffs.map((item) => h('article', { class: 'card' }, h('div', { class: 'row' }, h('strong', { class: 'grow truncate-safe', text: item.summary }), badge(item.state)), h('small', { text: fmt(item.createdAt) }), item.state === 'draft' ? button('提交给 Remote', 'submit-handoff', { handoffId: item.handoffId }, 'btn primary small') : null))) : h('section', { class: 'empty', text: '暂无回传草稿。' }));
-}
-
 function settings(view) {
   const nextTheme = view.appearance.theme === 'dark' ? 'system' : view.appearance.theme === 'system' ? 'light' : 'dark';
   const reasoningVisible = Boolean(view.ui?.showReasoning);
@@ -623,7 +594,7 @@ function settings(view) {
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '新会话默认联网模式' }), h('p', { class: 'muted', text: '关闭：本轮禁止外部 Web。自动：先由 Web Planner 判断当前问题是否需要联网，再按已声明能力选择 Provider hosted Web、Moyu Host 检索或 client Web tools；没有原生 hosted Web 的第三方模型会由 Host 检索提供最低 grounding。开启：本轮强制实际联网取证，不允许仅声明工具却不调用。' })), webModeControl(defaultWebMode, { defaultWebMode: '1' }))),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '标准模式子 Agent' }), h('p', { class: 'muted', text: '关闭：Standard 不委派子任务。自动：仅当当前 Model Profile 明确支持 client tool calling 时，允许模型按需委派最多 4 个隔离同模型子任务；Minimal 永远关闭，Smart 默认自动。' })), subagentModeControl(view.ui?.standardSubagentMode || 'off', { standardSubagentMode: '1' }))),
     h('section', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('strong', { text: '显示模型推理' }), h('p', { class: 'muted', text: '仅展示 endpoint 明确返回的 reasoning/thinking 文本。可见推理不会作为普通历史回灌；Provider-private continuation 只有在 Model Profile 明确声明 native 且标准/智能模式允许时才复用。第三方协议兼容本身不会自动开启。' })), button(reasoningVisible ? '已显示' : '已隐藏', 'toggle-reasoning', { show: reasoningVisible ? 'false' : 'true' }, 'btn ghost small'))),
-    h('section', { class: 'card' }, h('strong', { text: '数据边界' }), h('p', { class: 'muted', text: 'Chat 使用自己的数据库。RemoteDataBridge 只提供 Snapshot/Handoff，不共享 SQLite 文件。TaskProfile 与 Checkpoint 只是可重建的上下文控制状态。' })));
+    h('section', { class: 'card' }, h('strong', { text: '数据边界' }), h('p', { class: 'muted', text: 'Chat 使用自己的本地数据库；API Key 只保存在 Android 安全存储，不进入 WebView 或 SQLite。TaskProfile 与 Checkpoint 只是可重建的上下文控制状态。' })));
 }
 
 function selectionInside(node) {
@@ -749,7 +720,7 @@ export function render() {
   const anchor = captureTimelineAnchor();
   const sessionId = view.activeSession?.localSessionId || '';
   window.__moyuChatView = view;
-  const pages = { home, conversation, providers, imports, handoffs, settings };
+  const pages = { home, conversation, providers, settings };
   const body = (pages[view.route] || home)(view);
   document.documentElement.dataset.theme = resolvedTheme(view);
   document.documentElement.dataset.route = view.route || 'home';

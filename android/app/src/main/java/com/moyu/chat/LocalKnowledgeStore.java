@@ -52,16 +52,8 @@ final class LocalKnowledgeStore {
         }
     }
 
-    /** Compatibility helper used by older tests/callers. */
-    List<Hit> searchChats(String excludeSessionId, String query, int limit) {
-        return searchUserMemory(excludeSessionId, null, query, limit, false);
-    }
-
-    /**
-     * User-memory search spans local Chat timelines plus reusable ChatGPT/Claude import sources.
-     * The current session and its current origin snapshot are excluded to avoid echoing already-visible history.
-     */
-    List<Hit> searchUserMemory(String excludeSessionId, String excludeSnapshotId, String query, int limit, boolean includeImports) {
+    /** User-memory search spans other local Chat timelines; the current session is excluded to avoid echoing visible history. */
+    List<Hit> searchUserMemory(String excludeSessionId, String query, int limit) {
         ArrayList<Hit> out = new ArrayList<>();
         if (limit <= 0) return out;
         String match = KnowledgeLexicon.matchQuery(query);
@@ -83,26 +75,6 @@ final class LocalKnowledgeStore {
                     if (source == null) continue;
                     int score = lexicalScore(c.getString(4), queryTerms);
                     if (score > 0) out.add(new Hit(scope, sourceId, source.title, c.getInt(1), c.getString(2), c.getString(3), score));
-                }
-            }
-
-            if (includeImports) {
-                for (ChatDatabase.Snapshot snapshot : db.listImportedSnapshots()) {
-                    if (snapshot == null || snapshot.id == null || snapshot.id.equals(excludeSnapshotId)) continue;
-                    ensureSnapshotIndexed(snapshot.id);
-                }
-                try (Cursor c = db.getReadableDatabase().rawQuery(
-                        "SELECT scope_id,ordinal,role,text,terms FROM knowledge_fts WHERE scope_id LIKE 'snapshot:%' AND terms MATCH ? LIMIT " + MAX_CANDIDATES,
-                        new String[]{match})) {
-                    while (c.moveToNext()) {
-                        String scope = c.getString(0);
-                        String sourceId = scope.startsWith("snapshot:") ? scope.substring(9) : scope;
-                        if (sourceId.equals(excludeSnapshotId)) continue;
-                        ChatDatabase.Snapshot snapshot = db.getSnapshot(sourceId);
-                        if (snapshot == null || !("import-chatgpt".equals(snapshot.sourceType) || "import-claude".equals(snapshot.sourceType))) continue;
-                        int score = lexicalScore(c.getString(4), queryTerms);
-                        if (score > 0) out.add(new Hit(scope, sourceId, snapshot.sourceTitle, c.getInt(1), c.getString(2), c.getString(3), score));
-                    }
                 }
             }
             return rank(out, limit);

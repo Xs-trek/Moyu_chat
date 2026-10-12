@@ -15,7 +15,7 @@ import java.time.Instant;
 
 /**
  * Snapshot lifecycle: immutable, normalized, bounded; local branches inherit snapshot context and
- * imported Remote history never leaks non-visible kinds or source prompts.
+ * never carry non-visible kinds or source prompts.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
@@ -94,44 +94,6 @@ public class SnapshotBranchContextTest {
         JSONArray items = db.snapshotItems(snapshot.id);
         assertEquals("newest tail is kept: m" + total, "m" + total, items.getJSONObject(items.length() - 1).optString("text"));
         assertEquals("oldest kept item is m501", "m501", items.getJSONObject(0).optString("text"));
-    }
-
-    // ---------- remote import ----------
-
-    @Test public void importRemoteNormalizesAndLocalizes() throws Exception {
-        JSONObject exported = new JSONObject()
-                .put("snapshotId", "remote-1")
-                .put("sourceId", "opaque-id")
-                .put("sourceTitle", "PC coding session")
-                .put("sourceRuntime", "codex")
-                .put("createdAt", "2026-08-01T00:00:00Z")
-                .put("items", new JSONArray()
-                        .put(new JSONObject().put("kind", "system").put("text", "source system prompt"))
-                        .put(new JSONObject().put("kind", "message").put("role", "user").put("text", "pc user"))
-                        .put(new JSONObject().put("kind", "message").put("role", "assistant").put("text", "pc assistant"))
-                        .put(new JSONObject().put("kind", "tool_result").put("text", "tool output")));
-        ChatDatabase.Snapshot snapshot = snapshots.importRemote(exported);
-
-        assertEquals("remote", snapshot.sourceType);
-        assertEquals("codex", snapshot.sourceRuntime);
-        JSONArray items = db.snapshotItems(snapshot.id);
-        assertEquals("system prompts and tool results must not be imported", 2, items.length());
-        assertEquals("pc user", items.getJSONObject(0).optString("text"));
-        assertEquals("pc assistant", items.getJSONObject(1).optString("text"));
-
-        // Branch from it and verify the branch no longer references anything remote-shaped.
-        ChatDatabase.Session branch = db.createSession("p1", "model", "branch", snapshot.id, null);
-        CanonicalPrompt prompt = contexts.build(branch, 32_000, 4_096, "continue here");
-        assertTrue(prompt.instructions.contains("immutable historical snapshot"));
-        assertEquals("inherited visible items only", 2, prompt.inheritedItemCount);
-        assertEquals("pc user", prompt.messages.getJSONObject(0).optString("text"));
-        assertEquals("continue here", prompt.messages.getJSONObject(prompt.messages.length() - 1).optString("text"));
-        assertFalse(prompt.instructions.contains("source system prompt"));
-    }
-
-    @Test public void importRemoteRejectsMalformedPayloads() throws Exception {
-        try { snapshots.importRemote(new JSONObject().put("sourceId", "x")); fail("missing sourceTitle"); } catch (IllegalArgumentException expected) { }
-        try { snapshots.importRemote(null); fail("null payload"); } catch (IllegalArgumentException expected) { }
     }
 
     // ---------- local branch + context projection ----------

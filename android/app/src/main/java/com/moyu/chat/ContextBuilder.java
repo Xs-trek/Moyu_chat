@@ -272,8 +272,7 @@ final class ContextBuilder {
     private String memorySuffix(ChatDatabase.Session session, String query, boolean smart) {
         int maxItems = smart ? SMART_RETRIEVED_ITEMS : STANDARD_RETRIEVED_ITEMS;
         int maxChars = smart ? SMART_RETRIEVED_CHARS : STANDARD_RETRIEVED_CHARS;
-        List<LocalKnowledgeStore.Hit> hits = knowledge.searchUserMemory(session.id, session.originSnapshotId, query,
-                maxItems * 2, true);
+        List<LocalKnowledgeStore.Hit> hits = knowledge.searchUserMemory(session.id, query, maxItems * 2);
         return renderHits(hits, new JSONArray(), "Moyu retrieved cross-chat user memory excerpts", "memory", maxItems, maxChars);
     }
 

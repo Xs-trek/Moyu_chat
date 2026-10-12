@@ -283,41 +283,14 @@ document.addEventListener('click', (event) => {
   else if (action === 'configure-model') postIntent('model.configure.open', { providerId: target.dataset.providerId, ...(target.dataset.modelProfileId ? { modelProfileId: target.dataset.modelProfileId } : {}) });
   else if (action === 'pick-attachment') postIntent('chat.attachment.pick', { localSessionId: target.dataset.sessionId });
   else if (action === 'remove-attachment') postIntent('chat.attachment.remove', { localSessionId: target.dataset.sessionId, mediaId: target.dataset.mediaId });
-  else if (action === 'import-file-pick') postIntent('import.file.pick', { source: target.dataset.source });
-  else if (action === 'import-open') {
-    const sourceCard = target.closest('.import-source-card');
-    const contextMode = sourceCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'standard';
-    const webMode = sourceCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
-    postIntent('import.session.open', { snapshotId: target.dataset.snapshotId, contextMode, webMode });
-  }
-  else if (action === 'import-delete') {
-    const snapshotId = target.dataset.snapshotId;
-    const title = target.dataset.sourceTitle || '此导入会话';
-    if (!snapshotId) return;
-    openConfirmDialog({
-      title: '删除导入源',
-      message: `删除“${title}”的本地清洗副本？如果仍有 Chat 使用它作为来源，Moyu 会拒绝删除。`,
-      confirmText: '删除', danger: true,
-      onConfirm: () => postIntent('import.session.delete', { snapshotId }),
-    });
-  }
   else if (action === 'verification-feedback') {
     const localSeq = Number(target.dataset.localSeq);
     if (target.dataset.sessionId && Number.isInteger(localSeq) && localSeq > 0 && target.dataset.label) {
       postIntent('verification.feedback', { localSessionId: target.dataset.sessionId, localSeq, label: target.dataset.label });
     }
   }
-  else if (action === 'refresh-sources') postIntent('branch.sources.refresh', {});
-  else if (action === 'branch-remote') {
-    const sourceCard = target.closest('.remote-source-card');
-    const contextMode = sourceCard?.querySelector('select[data-context-mode-select]')?.value || window.__moyuChatView?.ui?.defaultContextMode || 'standard';
-    const webMode = sourceCard?.querySelector('select[data-web-mode-select]')?.value || window.__moyuChatView?.ui?.defaultWebMode || 'auto';
-    postIntent('branch.create.remote', { sourceId: target.dataset.sourceId, contextMode, webMode });
-  }
   else if (action === 'branch-local') postIntent('branch.create.local', { localSessionId: target.dataset.sessionId });
   else if (action === 'interrupt') postIntent('chat.session.interrupt', { localSessionId: target.dataset.sessionId });
-  else if (action === 'handoff') postIntent('handoff.create', { localSessionId: target.dataset.sessionId });
-  else if (action === 'submit-handoff') postIntent('handoff.submit', { handoffId: target.dataset.handoffId });
   else if (action === 'open-source' && target.dataset.url) postIntent('external.open', { url: target.dataset.url });
   else if (action === 'jump-latest') {
     const node = document.querySelector('.timeline-scroll');
@@ -430,4 +403,4 @@ document.addEventListener('focusin', (event) => {
   if (event.target?.name === 'message') resizeComposerTextarea(event.target);
 });
 
-postIntent('app.ready', { uiVersion: '0.0.5' });
+postIntent('app.ready', { uiVersion: '0.0.6-beta' });

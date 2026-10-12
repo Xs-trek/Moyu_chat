@@ -1,16 +1,26 @@
 # Moyu Chat
 
-Moyu Chat is an Android-local Chat client with optional bounded tools. It shares the offline WebView + native glue style of Moyu Remote, but its core path does not depend on Moyu Server, EasyTier, Claude Code, Codex or OpenCode being online.
+Moyu Chat is an Android-local multi-model Chat client with optional bounded tools: a native Java shell (protocol adapters, SQLite sessions, context management, Web tools, same-model subtasks, smart verification) plus a dependency-free WebView frontend that only renders view models.
 
-Current version: **v0.0.5** (Android versionCode 5, SQLite schema 15). This maintenance release fixes turn-wide usage accounting, import memory bounds, image dimensions, and smoke/contract mismatches. See `CHANGELOG.md`.
+It is a personal model test bench for comparing what different models and protocols return and what native orchestration designs can achieve. The native complexity is intentional.
+
+Current version: **v0.0.6-beta** (Android versionCode 6, SQLite schema 16, applicationId `com.moyu.chat.beta`). The beta line installs beside the original `com.moyu.chat` build. See `CHANGELOG.md`.
+
+## Build and verify
+
+```bash
+npm run verify
+```
+
+This runs the frontend static checks (`npm run build`) and then `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` with the bundled JDK 17 and Gradle 8.5 under `.tools/`. The Android SDK comes from `ANDROID_HOME`. Frontend sources live in `src/` and `index.html`; `android/app/src/main/assets/ui/` is a generated copy synced at build time.
 
 ## Product boundary
 
 - Chat sessions and durable visible history are owned by Moyu Chat and stored in its own database.
 - Provider credentials remain in Android native secure storage and never enter the WebView or SQLite.
-- Remote/imported history enters Chat only through immutable local snapshots; local branches do not mutate the source history.
+- Local branches start from an immutable snapshot of the source session's visible history; branching never mutates the source session.
 - Provider-private reasoning/thinking/continuation state is derived protocol state, never the durable source of truth.
-- v0.0.4 supports bounded client `web_search`, `web_fetch`, and isolated same-model `delegate_subtask` when the concrete deployment explicitly supports the corresponding client-tool wire.
+- The runtime supports bounded client `web_search`, `web_fetch`, and isolated same-model `delegate_subtask` when the concrete deployment explicitly supports the corresponding client-tool wire.
 - Moyu Chat is not an Android agent runtime: no shell, computer use, arbitrary filesystem mutation, device control, recursive subagents or autonomous background task loop is exposed.
 
 ## Provider, Model and Session
@@ -25,7 +35,7 @@ Supported protocol families are `openai-chat-completions`, `openai-responses` an
 
 ## Model Catalog and configuration
 
-v0.0.4 provides a small reviewed Model Catalog for known deployment overlays. Auto mode is allowed only when the endpoint + model matches a reviewed overlay. An unknown or same-named third-party route must use **Advanced** configuration rather than guessing a protocol or capability.
+Moyu Chat provides a small reviewed Model Catalog for known deployment overlays. Auto mode is allowed only when the endpoint + model matches a reviewed overlay. An unknown or same-named third-party route must use **Advanced** configuration rather than guessing a protocol or capability.
 
 Context window, maximum input and maximum output remain explicit deployment/user inputs even in Auto mode. The catalog does not infer these limits from a model name. Existing v0.0.3 profiles migrate as `legacy-manual` and remain authoritative until the user explicitly changes them.
 
@@ -76,7 +86,7 @@ Provider Base URL is the shared API root; transports append the protocol endpoin
 
 For the official Anthropic endpoint the shared root is therefore `https://api.anthropic.com/v1`.
 
-## Usage and local media/import limits
+## Usage and local media limits
 
 Turn usage includes reported main, auxiliary (Router, Checkpoint, Web planner, verifier/repair), and subagent requests. Provider-reported usage is retained even when a helper fails, times out, or is cancelled. Missing usage stays unknown; partial totals are labeled accordingly. Hosted tool fees and money prices are not inferred from token counts.
 
@@ -84,6 +94,4 @@ Call counts refer to logical transport invocations; Anthropic internal `pause_tu
 
 Image input/output is limited to 12 MiB encoded bytes, 16,777,216 pixels and 8,192 pixels on either side; up to four draft images remain supported. Oversized images are rejected before private media files are written.
 
-Official ChatGPT/Claude imports use streaming JSON. Parsed JSON is limited to 256 MiB across selected ZIP entries, each raw JSON token to 1 Mi characters, each conversation to 8 Mi raw JSON characters, and nesting to 128 levels. Escapes count as written in JSON. Existing 20,000-conversation/node and 200,000-character message limits remain. A safety-limit failure stops the import and reports already completed conversations.
-
-`PROMPT_CONTEXT.md` and `PROJECT_REVIEW_ZH.md` are historical design/review baselines. Use this README, `ARCHITECTURE.md`, and current source for the active version.
+`docs/history/` keeps the v0.0.1–v0.0.5 design and review baselines. Use this README, `ARCHITECTURE.md`, `CLAUDE.md` and current source for the active version.

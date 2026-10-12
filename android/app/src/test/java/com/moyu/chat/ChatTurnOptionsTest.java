@@ -29,7 +29,6 @@ public class ChatTurnOptionsTest {
 
         ChatTurnOptions responses = ChatTurnOptions.forSession(session, OpenAiCompatibleTransport.RESPONSES);
         assertTrue(responses.webEnabled());
-        assertTrue(responses.forceFallback());
         assertTrue(responses.supports(ChatTurnOptions.WEB_SEARCH));
         assertFalse(responses.supports(ChatTurnOptions.WEB_FETCH));
 

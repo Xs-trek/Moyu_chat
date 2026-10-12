@@ -14,10 +14,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-/** Chat-owned database. It never opens or attaches the Remote APK database. */
+/** Chat-owned database: providers, model profiles, sessions, timeline, branch snapshots and settings. */
 public final class ChatDatabase extends SQLiteOpenHelper {
     private static final String NAME = "moyu-chat.db";
-    private static final int VERSION = 15;
+    private static final int VERSION = 16;
 
     public static final class Session {
         public String id, title, providerId, modelProfileId, model, reasoningEffort, reasoningLevels, inputModalities, outputModalities, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
@@ -80,10 +80,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public boolean truncated;
     }
 
-    public static final class Handoff {
-        public String id, branchSessionId, state, summary, payload, createdAt;
-    }
-
     ChatDatabase(Context context) { super(context, NAME, null, VERSION); }
 
     @Override public void onConfigure(SQLiteDatabase db) {
@@ -100,7 +96,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,source_id TEXT NOT NULL,source_title TEXT NOT NULL,source_runtime TEXT,created_at TEXT NOT NULL,item_count INTEGER NOT NULL,source_item_count INTEGER NOT NULL DEFAULT 0,truncated INTEGER NOT NULL DEFAULT 0,content_hash TEXT)");
         db.execSQL("CREATE TABLE snapshot_items(snapshot_id TEXT NOT NULL,ordinal INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(snapshot_id,ordinal),FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id) ON DELETE CASCADE)");
         db.execSQL("CREATE VIRTUAL TABLE knowledge_fts USING fts4(scope_id,item_ref,ordinal,role,text,terms,tokenize=simple)");
-        db.execSQL("CREATE TABLE handoffs(handoff_id TEXT PRIMARY KEY,branch_session_id TEXT NOT NULL,state TEXT NOT NULL,summary TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(branch_session_id) REFERENCES sessions(local_id) ON DELETE CASCADE)");
         db.execSQL("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
     }
 
@@ -204,6 +199,15 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             // not retroactively remove or grant effort levels to already-created sessions.
             db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_levels TEXT NOT NULL DEFAULT ''");
             db.execSQL("UPDATE sessions SET reasoning_levels=COALESCE((SELECT reasoning_levels FROM model_profiles WHERE profile_id=sessions.model_profile_id),'')");
+        }
+        if (oldVersion < 16) {
+            // v0.0.6 removed the Moyu Remote handoff bridge and ChatGPT/Claude export import. Snapshots
+            // still referenced by a session remain immutable branch history; unreferenced ones have no owner.
+            db.execSQL("DROP TABLE IF EXISTS handoffs");
+            String orphan = "SELECT snapshot_id FROM snapshots WHERE snapshot_id NOT IN (SELECT origin_snapshot_id FROM sessions WHERE origin_snapshot_id IS NOT NULL)";
+            db.execSQL("DELETE FROM knowledge_fts WHERE scope_id IN (SELECT 'snapshot:' || snapshot_id FROM (" + orphan + "))");
+            db.execSQL("DELETE FROM snapshot_items WHERE snapshot_id IN (" + orphan + ")");
+            db.execSQL("DELETE FROM snapshots WHERE snapshot_id IN (" + orphan + ")");
         }
     }
 
@@ -355,21 +359,16 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (id == null || id.trim().isEmpty()) throw new IllegalArgumentException("session id required");
         SQLiteDatabase db = getWritableDatabase();
         String originSnapshotId = null;
-        String originSourceType = null;
         try (Cursor c = db.rawQuery("SELECT origin_snapshot_id FROM sessions WHERE local_id=?", new String[]{id})) {
             if (!c.moveToFirst()) throw new IllegalArgumentException("session not found");
             if (!c.isNull(0)) originSnapshotId = c.getString(0);
-        }
-        if (originSnapshotId != null) {
-            Snapshot origin = getSnapshot(originSnapshotId);
-            originSourceType = origin == null ? null : origin.sourceType;
         }
         db.beginTransaction();
         try {
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(id)});
             db.delete("settings", "key=?", new String[]{LocalKnowledgeStore.indexMarkerKey(id)});
             if (db.delete("sessions", "local_id=?", new String[]{id}) != 1) throw new IllegalStateException("session delete failed");
-            if (originSnapshotId != null && !isReusableImportSource(originSourceType)) {
+            if (originSnapshotId != null) {
                 boolean referenced;
                 try (Cursor c = db.rawQuery("SELECT 1 FROM sessions WHERE origin_snapshot_id=? LIMIT 1", new String[]{originSnapshotId})) {
                     referenced = c.moveToFirst();
@@ -379,22 +378,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                     db.delete("snapshots", "snapshot_id=?", new String[]{originSnapshotId});
                 }
             }
-            db.setTransactionSuccessful();
-        } finally { db.endTransaction(); }
-    }
-
-    /** Reusable imported history has its own lifecycle; refuse deletion while any Chat still references it. */
-    public synchronized void deleteImportedSnapshot(String snapshotId) {
-        Snapshot snapshot = getSnapshot(snapshotId);
-        if (snapshot == null || !isReusableImportSource(snapshot.sourceType)) throw new IllegalArgumentException("imported conversation not found");
-        SQLiteDatabase db = getWritableDatabase();
-        try (Cursor c = db.rawQuery("SELECT 1 FROM sessions WHERE origin_snapshot_id=? LIMIT 1", new String[]{snapshotId})) {
-            if (c.moveToFirst()) throw new IllegalStateException("delete Chats created from this import before deleting the imported source");
-        }
-        db.beginTransaction();
-        try {
-            db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.snapshotScope(snapshotId)});
-            if (db.delete("snapshots", "snapshot_id=?", new String[]{snapshotId}) != 1) throw new IllegalStateException("import source delete failed");
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
@@ -428,7 +411,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         collectJsonColumn(getReadableDatabase(), "SELECT draft_media FROM sessions", out);
         collectJsonColumn(getReadableDatabase(), "SELECT body FROM timeline", out);
         collectJsonColumn(getReadableDatabase(), "SELECT body FROM snapshot_items", out);
-        collectJsonColumn(getReadableDatabase(), "SELECT payload FROM handoffs", out);
         return out;
     }
 
@@ -487,28 +469,18 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         ContentValues v = new ContentValues(); v.put("draft_media", out.toString()); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
     }
 
-    public synchronized void clearDraftMedia(String id) { ContentValues v = new ContentValues(); v.put("draft_media", "[]"); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
-
     public synchronized void replaceDraftMedia(String id, JSONArray items) {
         ContentValues v = new ContentValues(); v.put("draft_media", items == null ? "[]" : items.toString());
         getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
     }
 
-    public synchronized int maxLocalSeq(String sessionId) {
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT COALESCE(MAX(local_seq),0) FROM timeline WHERE session_id=?", new String[]{sessionId})) {
-            return c.moveToFirst() ? c.getInt(0) : 0;
-        }
-    }
-
-    public synchronized void truncateTimelineFrom(String sessionId, int localSeq) { truncateTimeline(sessionId, localSeq, true); }
-    public synchronized void truncateTimelineAfter(String sessionId, int localSeq) { truncateTimeline(sessionId, localSeq, false); }
-
-    private void truncateTimeline(String sessionId, int localSeq, boolean inclusive) {
+    /** Deletes the timeline item at localSeq and everything after it (edit/rollback). */
+    public synchronized void truncateTimelineFrom(String sessionId, int localSeq) {
         if (sessionId == null || sessionId.trim().isEmpty() || localSeq < 1) throw new IllegalArgumentException("invalid rollback target");
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            db.delete("timeline", "session_id=? AND local_seq" + (inclusive ? ">=?" : ">?") , new String[]{sessionId, String.valueOf(localSeq)});
+            db.delete("timeline", "session_id=? AND local_seq>=?", new String[]{sessionId, String.valueOf(localSeq)});
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(sessionId)});
             db.delete("settings", "key=?", new String[]{LocalKnowledgeStore.indexMarkerKey(sessionId)});
             ContentValues state = new ContentValues();
@@ -799,49 +771,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         }
     }
 
-    public synchronized Snapshot findSnapshotBySourceContent(String sourceType, String sourceId, String contentHash) {
-        if (sourceType == null || sourceId == null || contentHash == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_type,source_id,source_title,source_runtime,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE source_type=? AND source_id=? AND content_hash=? LIMIT 1",
-                new String[]{sourceType, sourceId, contentHash})) {
-            return c.moveToFirst() ? readSnapshot(c) : null;
-        }
-    }
-
-    public synchronized List<Snapshot> listImportedSnapshots() {
-        ArrayList<Snapshot> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_type,source_id,source_title,source_runtime,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE source_type IN ('import-chatgpt','import-claude') ORDER BY created_at DESC, source_title", null)) {
-            while (c.moveToNext()) out.add(readSnapshot(c));
-        }
-        return out;
-    }
-
     public synchronized JSONArray snapshotItems(String id) {
         JSONArray out = new JSONArray();
         if (id == null) return out;
         try (Cursor c = getReadableDatabase().rawQuery("SELECT body FROM snapshot_items WHERE snapshot_id=? ORDER BY ordinal", new String[]{id})) {
             while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
-        }
-        return out;
-    }
-
-    public synchronized void saveHandoff(Handoff h) {
-        ContentValues v = handoffValues(h);
-        SQLiteDatabase db = getWritableDatabase();
-        int updated = db.update("handoffs", v, "handoff_id=?", new String[]{h.id});
-        if (updated == 0) db.insertWithOnConflict("handoffs", null, v, SQLiteDatabase.CONFLICT_ABORT);
-    }
-
-    public synchronized Handoff getHandoff(String id) {
-        if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT handoff_id,branch_session_id,state,summary,payload,created_at FROM handoffs WHERE handoff_id=?", new String[]{id})) {
-            if (!c.moveToFirst()) return null; Handoff h = new Handoff(); h.id = c.getString(0); h.branchSessionId = c.getString(1); h.state = c.getString(2); h.summary = c.getString(3); h.payload = c.getString(4); h.createdAt = c.getString(5); return h;
-        }
-    }
-
-    public synchronized List<Handoff> listHandoffs() {
-        ArrayList<Handoff> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT handoff_id,branch_session_id,state,summary,payload,created_at FROM handoffs ORDER BY created_at DESC", null)) {
-            while (c.moveToNext()) { Handoff h = new Handoff(); h.id = c.getString(0); h.branchSessionId = c.getString(1); h.state = c.getString(2); h.summary = c.getString(3); h.payload = c.getString(4); h.createdAt = c.getString(5); out.add(h); }
         }
         return out;
     }
@@ -1002,11 +936,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return false;
     }
 
-    private static ContentValues handoffValues(Handoff h) {
-        ContentValues v = new ContentValues(); v.put("handoff_id", h.id); v.put("branch_session_id", h.branchSessionId); v.put("state", h.state);
-        v.put("summary", h.summary); v.put("payload", h.payload); v.put("created_at", h.createdAt); return v;
-    }
-
     private static void updatePreviewFromBody(SQLiteDatabase db, String sessionId, JSONObject body) {
         if (!"message".equals(body.optString("kind")) || body.optBoolean("streaming", false)) return;
         String role = body.optString("role", ""); if (!("user".equals(role) || "assistant".equals(role))) return;
@@ -1016,7 +945,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.update("sessions", s, "local_id=?", new String[]{sessionId});
     }
 
-    private static boolean isReusableImportSource(String sourceType) { return "import-chatgpt".equals(sourceType) || "import-claude".equals(sourceType); }
     private static Snapshot readSnapshot(Cursor c) { Snapshot s = new Snapshot(); s.id = c.getString(0); s.sourceType = c.getString(1); s.sourceId = c.getString(2); s.sourceTitle = c.getString(3); s.sourceRuntime = c.isNull(4) ? null : c.getString(4); s.createdAt = c.getString(5); s.itemCount = c.getInt(6); s.sourceItemCount = c.getInt(7); s.truncated = c.getInt(8) != 0; s.contentHash = c.isNull(9) ? null : c.getString(9); return s; }
     private static Session readSession(Cursor c) { Session s = new Session(); s.id = c.getString(0); s.title = c.getString(1); s.providerId = c.getString(2); s.modelProfileId = c.isNull(3) ? null : c.getString(3); s.model = c.getString(4); s.contextTokens = c.getInt(5); s.inputTokens = c.getInt(6); s.maxOutputTokens = c.getInt(7); s.reasoningEffort = c.getString(8); s.inputModalities = c.getString(9); s.outputModalities = c.getString(10); s.toolCapabilities = c.isNull(11) ? "" : ChatTurnOptions.normalizeCapabilities(c.getString(11)); s.webMode = c.isNull(12) ? ChatTurnOptions.WEB_AUTO : ChatTurnOptions.normalizeWebMode(c.getString(12)); s.state = c.getString(13); s.updatedAt = c.getString(14); s.draft = c.getString(15); s.draftMedia = c.getString(16); s.originSnapshotId = c.isNull(17) ? null : c.getString(17); s.parentSessionId = c.isNull(18) ? null : c.getString(18); s.preview = c.isNull(19) ? null : c.getString(19); s.contextMode = c.isNull(20) ? ContextMode.STANDARD : ContextMode.normalize(c.getString(20)); s.taskProfile = c.isNull(21) ? "" : c.getString(21); s.contextCheckpoint = c.isNull(22) ? "" : c.getString(22); s.checkpointCoveredItems = c.getInt(23); s.protocol = c.isNull(24) ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : normalizeProtocol(c.getString(24)); s.authMode = c.isNull(25) ? ProviderAuth.defaultForProtocol(s.protocol) : ProviderAuth.normalize(c.getString(25), s.protocol); s.reasoningWire = c.isNull(26) ? ReasoningPolicy.WIRE_NONE : ReasoningPolicy.normalizeWire(c.getString(26), s.protocol); s.thinkingMode = c.isNull(27) ? ReasoningPolicy.THINKING_PROVIDER_DEFAULT : ReasoningPolicy.normalizeThinkingMode(c.getString(27)); s.thinkingBudgetTokens = Math.max(0, c.getInt(28)); s.continuationMode = c.isNull(29) ? ProviderContinuationPolicy.NONE : ProviderContinuationPolicy.normalize(c.getString(29)); s.harnessPreset = c.isNull(30) ? HarnessProfile.BALANCED : HarnessProfile.normalize(c.getString(30)); s.clientToolCalling = c.isNull(31) ? ClientToolRuntime.NONE : ClientToolRuntime.normalizeCalling(c.getString(31)); s.subagentMode = c.isNull(32) ? HarnessPolicyResolver.SUBAGENT_OFF : HarnessPolicyResolver.normalizeSubagentMode(c.getString(32)); s.reasoningLevels = c.isNull(33) ? "" : ReasoningPolicy.normalizeLevels(c.getString(33)); return s; }
     private static Provider readProvider(Cursor c) { Provider p = new Provider(); p.id = c.getString(0); p.displayName = c.getString(1); p.protocol = c.getString(2); p.baseUrl = c.getString(3); p.authMode = c.getString(4); p.reasoningWire = c.getString(5); p.model = c.getString(6); p.contextTokens = c.getInt(7); p.inputTokens = c.getInt(8); p.maxOutputTokens = c.getInt(9); return p; }

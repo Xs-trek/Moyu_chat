@@ -267,6 +267,29 @@ public class ChatDatabaseTest {
         upgraded.close();
     }
 
+    @Test public void upgradeToV16DropsRemoteHandoffsAndOrphanSnapshots() throws Exception {
+        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(14);
+        android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
+        raw.execSQL("INSERT INTO handoffs VALUES('h1','legacy-s','draft','summary','{}','2020-01-01T00:00:00Z')");
+        raw.execSQL("INSERT INTO snapshots(snapshot_id,source_type,source_id,source_title,created_at,item_count) VALUES('orphan-import','import-chatgpt','x','Imported','2020-01-01T00:00:00Z',1)");
+        raw.execSQL("INSERT INTO snapshot_items VALUES('orphan-import',0,'{\"kind\":\"message\",\"role\":\"user\",\"text\":\"imported\"}')");
+        raw.execSQL("INSERT INTO knowledge_fts(scope_id,item_ref,ordinal,role,text,terms) VALUES('snapshot:orphan-import','r',0,'user','imported','imported')");
+        raw.close();
+        ChatDatabase upgraded = new ChatDatabase(context);
+        android.database.sqlite.SQLiteDatabase w = upgraded.getWritableDatabase();
+        try (android.database.Cursor c = w.rawQuery("SELECT 1 FROM sqlite_master WHERE name='handoffs'", null)) {
+            assertFalse("handoffs table must be dropped", c.moveToFirst());
+        }
+        assertNull("unreferenced import snapshot is removed", upgraded.getSnapshot("orphan-import"));
+        assertEquals(0, upgraded.snapshotItems("orphan-import").length());
+        try (android.database.Cursor c = w.rawQuery("SELECT COUNT(*) FROM knowledge_fts WHERE scope_id='snapshot:orphan-import'", null)) {
+            assertTrue(c.moveToFirst()); assertEquals(0, c.getInt(0));
+        }
+        assertNotNull("session-referenced snapshot survives", upgraded.getSnapshot("legacy-snap"));
+        assertEquals(1, upgraded.snapshotItems("legacy-snap").length());
+        upgraded.close();
+    }
+
     @Test public void localBranchesInheritFrozenContextMode() {
         ChatDatabase.Provider provider = provider("p-mode"); db.saveProvider(provider);
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); assertNotNull(profile);

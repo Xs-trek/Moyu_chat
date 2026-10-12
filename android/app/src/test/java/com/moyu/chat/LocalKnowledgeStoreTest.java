@@ -53,7 +53,7 @@ public class LocalKnowledgeStoreTest {
         ChatDatabase.Session current = db.createSession(profile, "current", null, null, ReasoningPolicy.DEFAULT);
         db.appendTimeline(source.id, "u", message("user", "privacy-secret-allocator-token"));
         LocalKnowledgeStore store = new LocalKnowledgeStore(db);
-        assertFalse(store.searchUserMemory(current.id, null, "privacy secret allocator", 4, true).isEmpty());
+        assertFalse(store.searchUserMemory(current.id, "privacy secret allocator", 4).isEmpty());
         assertTrue(countScope(LocalKnowledgeStore.chatScope(source.id)) > 0);
         assertFalse(db.setting(LocalKnowledgeStore.indexMarkerKey(source.id), "").isEmpty());
 
@@ -62,17 +62,19 @@ public class LocalKnowledgeStoreTest {
         assertEquals("", db.setting(LocalKnowledgeStore.indexMarkerKey(source.id), ""));
     }
 
-    @Test public void deletingReusableImportRemovesSnapshotFtsRows() throws Exception {
+    @Test public void deletingLastBranchRemovesSnapshotAndItsFtsRows() throws Exception {
         ChatDatabase db = app.database();
-        ChatDatabase.Snapshot imported = snapshot("import-rag", "import-chatgpt");
-        JSONArray items = new JSONArray().put(message("user", "imported privacy token"));
-        imported.sourceItemCount = items.length();
-        db.saveSnapshot(imported, items);
+        ChatDatabase.Snapshot origin = snapshot("branch-rag", SnapshotService.SOURCE_CHAT);
+        JSONArray items = new JSONArray().put(message("user", "branched privacy token"));
+        origin.sourceItemCount = items.length();
+        db.saveSnapshot(origin, items);
+        ChatDatabase.Session branch = db.createSession(profile(db), "branch", origin.id, null, ReasoningPolicy.DEFAULT);
         LocalKnowledgeStore store = new LocalKnowledgeStore(db);
-        assertFalse(store.searchSnapshot(imported.id, "privacy token", 4).isEmpty());
-        assertTrue(countScope(LocalKnowledgeStore.snapshotScope(imported.id)) > 0);
-        db.deleteImportedSnapshot(imported.id);
-        assertEquals(0, countScope(LocalKnowledgeStore.snapshotScope(imported.id)));
+        assertFalse(store.searchSnapshot(origin.id, "privacy token", 4).isEmpty());
+        assertTrue(countScope(LocalKnowledgeStore.snapshotScope(origin.id)) > 0);
+        db.deleteSession(branch.id);
+        assertNull("unreferenced branch snapshot is collected", db.getSnapshot(origin.id));
+        assertEquals(0, countScope(LocalKnowledgeStore.snapshotScope(origin.id)));
     }
 
     private ChatDatabase.ModelProfile profile(ChatDatabase db) {

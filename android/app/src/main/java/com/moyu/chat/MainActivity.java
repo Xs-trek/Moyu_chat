@@ -37,22 +37,16 @@ import java.util.UUID;
 public final class MainActivity extends Activity implements ChatCoordinator.Host {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final int REQUEST_IMAGE = 4201;
-    private static final int REQUEST_CONVERSATION_IMPORT = 4202;
     private static final String STATE_PENDING_IMAGE_SESSION = "pendingImageSessionId";
-    private static final String STATE_PENDING_IMPORT_SOURCE = "pendingConversationImportSource";
     private WebView webView;
     private ChatRuntime runtime;
     private ChatCoordinator coordinator;
     private AlertDialog activeConfigDialog;
     private String pendingImageSessionId;
-    private String pendingConversationImportSource;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        if (state != null) {
-            pendingImageSessionId = state.getString(STATE_PENDING_IMAGE_SESSION);
-            pendingConversationImportSource = state.getString(STATE_PENDING_IMPORT_SOURCE);
-        }
+        if (state != null) pendingImageSessionId = state.getString(STATE_PENDING_IMAGE_SESSION);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         MoyuChatApplication app = (MoyuChatApplication) getApplication();
         runtime = app.chatRuntime();
@@ -157,28 +151,12 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         });
     }
 
-    @Override public void openConversationImportPicker(String source) {
-        runOnUiThread(() -> {
-            pendingConversationImportSource = source;
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "application/zip", "application/x-zip-compressed", "text/json"});
-            try { startActivityForResult(intent, REQUEST_CONVERSATION_IMPORT); }
-            catch (Exception error) { pendingConversationImportSource = null; Toast.makeText(this, "无法打开系统文件选择器：" + (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()), Toast.LENGTH_LONG).show(); }
-        });
-    }
-
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_IMAGE) {
             String sessionId = pendingImageSessionId; pendingImageSessionId = null;
             if (resultCode != RESULT_OK || data == null || data.getData() == null || sessionId == null) return;
             ChatCoordinator c = coordinator; if (c != null) c.attachImageFromUri(sessionId, data.getData(), getContentResolver());
-            return;
-        }
-        if (requestCode == REQUEST_CONVERSATION_IMPORT) {
-            String source = pendingConversationImportSource; pendingConversationImportSource = null;
-            if (resultCode != RESULT_OK || data == null || data.getData() == null || source == null) return;
-            ChatCoordinator c = coordinator; if (c != null) c.importConversationFromUri(source, data.getData(), getContentResolver());
         }
     }
 
@@ -350,7 +328,6 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
 
     @Override protected void onSaveInstanceState(Bundle outState) {
         if (pendingImageSessionId != null) outState.putString(STATE_PENDING_IMAGE_SESSION, pendingImageSessionId);
-        if (pendingConversationImportSource != null) outState.putString(STATE_PENDING_IMPORT_SOURCE, pendingConversationImportSource);
         super.onSaveInstanceState(outState);
     }
 

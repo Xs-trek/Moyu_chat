@@ -1,14 +1,11 @@
 package com.moyu.chat;
 
 import android.content.ContentResolver;
-import android.database.Cursor;
 import android.net.Uri;
-import android.provider.OpenableColumns;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.InputStream;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -29,7 +26,7 @@ final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_ITEMS = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
     private static final long STREAM_PROJECTION_INTERVAL_MS = 50L;
-    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openConversationImportPicker(String source) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); }
+    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); }
 
     /** Immutable user-selected/deployment turn configuration frozen on the serialized intent worker. */
     private static final class TurnConfig {
@@ -131,10 +128,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final ContextCheckpointService checkpointService = new ContextCheckpointService();
     private final SmartVerifierService smartVerifier = new SmartVerifierService();
     private final FocusedSubagentService focusedSubagent = new FocusedSubagentService();
-    private final ConversationImportService conversationImporter = new ConversationImportService();
     private final WebOrchestrator webOrchestrator = new WebOrchestrator();
     private final MoyuWebService webService = new MoyuWebService();
-    private final RemoteDataBridge remoteBridge;
     private final Map<String, ChatTransport.Turn> activeTurns = new ConcurrentHashMap<>();
     private final Map<String, TurnControl> turnControls = new ConcurrentHashMap<>();
     private final java.util.Set<String> startingSessions = ConcurrentHashMap.newKeySet();
@@ -142,7 +137,6 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, String> webPreparingStages = new ConcurrentHashMap<>();
     private final Map<String, String> postProcessingStages = new ConcurrentHashMap<>();
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
-    private final AtomicBoolean importInProgress = new AtomicBoolean(false);
 
     private volatile boolean closed;
     private volatile boolean uiReady;
@@ -155,15 +149,13 @@ final class ChatCoordinator implements AutoCloseable {
     private String defaultContextMode;
     private String defaultWebMode;
     private String standardSubagentMode;
-    private JSONArray remoteSources = new JSONArray();
 
-    ChatCoordinator(MoyuChatApplication app, Host host) { this(app, host, app.secrets(), new AndroidRemoteDataBridge(app)); }
+    ChatCoordinator(MoyuChatApplication app, Host host) { this(app, host, app.secrets()); }
 
-    /** Production wires the ContentResolver bridge; JVM tests inject fakes for the optional Remote side. */
-    ChatCoordinator(MoyuChatApplication app, Host host, ChatSecretStore secrets, RemoteDataBridge bridge) {
+    /** JVM tests inject an in-memory secret store. */
+    ChatCoordinator(MoyuChatApplication app, Host host, ChatSecretStore secrets) {
         this.db = app.database(); this.secrets = secrets; this.mediaStore = app.mediaStore(); this.host = host;
         this.contexts = new ContextBuilder(db, mediaStore); this.snapshots = new SnapshotService(db);
-        this.remoteBridge = bridge;
         // Recovery runs on the same single worker as every intent, so it is ordered before any send.
         worker.execute(() -> { db.recoverInterruptedSessions(); emitView(); });
         this.route = validRoute(db.setting("route", "home"));
@@ -387,15 +379,8 @@ final class ChatCoordinator implements AutoCloseable {
                     host.openModelEditor(provider, profileId.trim().isEmpty() ? null : db.getModelProfile(profileId));
                     break;
                 }
-                case "import.file.pick": host.openConversationImportPicker(importSource(required(p, "source"))); break;
-                case "import.session.open": createImportedBranch(required(p, "snapshotId"), ContextMode.normalize(p.optString("contextMode", defaultContextMode)), ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode))); break;
-                case "import.session.delete": db.deleteImportedSnapshot(required(p, "snapshotId")); break;
                 case "verification.feedback": recordVerificationFeedback(required(p, "localSessionId"), requiredSeq(p), required(p, "label")); break;
-                case "branch.sources.refresh": refreshSources(); break;
-                case "branch.create.remote": createRemoteBranch(required(p, "sourceId"), p.has("throughSeq") ? p.optInt("throughSeq") : null, ContextMode.normalize(p.optString("contextMode", defaultContextMode)), ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode))); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
-                case "handoff.create": createHandoff(required(p, "localSessionId")); break;
-                case "handoff.submit": submitHandoff(required(p, "handoffId")); break;
                 default: throw new IllegalArgumentException("unsupported intent: " + type);
             }
             result(requestId, true, null); emitView();
@@ -416,29 +401,6 @@ final class ChatCoordinator implements AutoCloseable {
                 if (!ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this model profile does not support image input");
                 JSONObject descriptor = mediaStore.importImage(resolver, uri); db.addDraftMedia(sessionId, descriptor); emitView();
             } catch (Exception error) { host.showMessage(safe(error)); emitView(); }
-        });
-    }
-
-    void importConversationFromUri(String source, Uri uri, ContentResolver resolver) {
-        final String importSource = importSource(source);
-        if (uri == null || resolver == null) { host.showMessage("导入文件不可用"); return; }
-        if (!importInProgress.compareAndSet(false, true)) { host.showMessage("已有会话导入正在进行"); return; }
-        emitView();
-        preparationWorker.execute(() -> {
-            try (InputStream input = resolver.openInputStream(uri)) {
-                if (input == null) throw new IllegalArgumentException("无法读取导入文件");
-                String displayName = importDisplayName(resolver, uri);
-                ConversationImportService.Report report = conversationImporter.importFile(importSource, displayName, input,
-                        conversation -> snapshots.importExternal(importSource, conversation));
-                host.showMessage(report.summary(importSource));
-            } catch (ConversationImportService.PartialImportException partial) {
-                host.showMessage("会话导入部分完成：" + partial.userSummary);
-            } catch (Exception error) {
-                host.showMessage("会话导入失败：" + safe(error));
-            } finally {
-                importInProgress.set(false);
-                emitView();
-            }
         });
     }
 
@@ -1536,8 +1498,6 @@ final class ChatCoordinator implements AutoCloseable {
         emitStreamingView(id);
     }
 
-    private void refreshSources() throws Exception { RemoteDataBridge.Status status = remoteBridge.status(); remoteSources = status.available ? remoteBridge.listSources() : new JSONArray(); }
-
     private void createLocalBranch(String sourceSessionId, Integer throughSeq) throws Exception {
         ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
         if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching");
@@ -1585,15 +1545,6 @@ final class ChatCoordinator implements AutoCloseable {
         throw new IllegalArgumentException("message not found");
     }
 
-    private void createRemoteBranch(String sourceId, Integer throughSeq, String contextMode, String webMode) throws Exception {
-        if (!remoteBridge.status().available) throw new IllegalStateException("RemoteDataBridge unavailable");
-        ChatDatabase.Provider provider = preferredProvider(); if (provider == null) throw new IllegalStateException("configure a Chat provider before importing a Remote branch");
-        ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); if (profile == null) throw new IllegalStateException("configure a model before importing a Remote branch");
-        ChatDatabase.Snapshot snapshot = snapshots.importRemote(remoteBridge.createSnapshot(sourceId, throughSeq));
-        ChatDatabase.Session branch = db.createSession(profile, "分支 · " + snapshot.sourceTitle, snapshot.id, null, ReasoningPolicy.DEFAULT, contextMode, webMode);
-        activate(branch.id);
-    }
-
     private void recordVerificationFeedback(String sessionId, int localSeq, String label) {
         if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before rating verification");
         String normalized = label == null ? "" : label.trim().toLowerCase(java.util.Locale.ROOT);
@@ -1602,48 +1553,6 @@ final class ChatCoordinator implements AutoCloseable {
         }
         db.verificationForFeedback(sessionId, localSeq, normalized);
         host.showMessage("校验反馈已记录");
-    }
-
-    private void createImportedBranch(String snapshotId, String contextMode, String webMode) throws Exception {
-        ChatDatabase.Snapshot snapshot = db.getSnapshot(snapshotId);
-        if (snapshot == null || !("import-chatgpt".equals(snapshot.sourceType) || "import-claude".equals(snapshot.sourceType))) {
-            throw new IllegalArgumentException("imported conversation not found");
-        }
-        ChatDatabase.Provider provider = preferredProvider(); if (provider == null) throw new IllegalStateException("configure a Chat provider before opening an imported conversation");
-        ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); if (profile == null) throw new IllegalStateException("configure a model before opening an imported conversation");
-        ChatDatabase.Session branch = db.createSession(profile, "导入 · " + snapshot.sourceTitle, snapshot.id, null,
-                ReasoningPolicy.DEFAULT, contextMode, webMode);
-        activate(branch.id);
-    }
-
-    private ChatDatabase.Provider preferredProvider() {
-        for (ChatDatabase.Provider provider : db.listProviders()) if (secrets.has(provider.id)) return provider;
-        return null;
-    }
-
-    private void createHandoff(String sessionId) throws Exception {
-        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
-        if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before creating a handoff");
-        JSONArray timeline = db.timeline(sessionId);
-        String summary = latestAssistantText(timeline);
-        if (summary.isEmpty()) throw new IllegalStateException("no assistant conclusion available");
-        JSONObject payload = new JSONObject().put("handoffId", UUID.randomUUID().toString()).put("branchSessionId", sessionId)
-                .put("sourceSnapshotId", session.originSnapshotId == null ? JSONObject.NULL : session.originSnapshotId)
-                .put("summary", summary).put("selectedContext", new JSONArray()).put("createdAt", Instant.now().toString());
-        ChatDatabase.Handoff h = new ChatDatabase.Handoff(); h.id = payload.getString("handoffId"); h.branchSessionId = sessionId; h.state = "draft"; h.summary = summary; h.payload = payload.toString(); h.createdAt = payload.getString("createdAt"); db.saveHandoff(h);
-        route = "handoffs"; db.putSetting("route", route);
-    }
-
-    private void submitHandoff(String handoffId) throws Exception {
-        ChatDatabase.Handoff h = db.getHandoff(handoffId); if (h == null) throw new IllegalArgumentException("handoff not found");
-        if ("submitted".equals(h.state)) throw new IllegalStateException("handoff already submitted");
-        if (!remoteBridge.status().available) throw new IllegalStateException("RemoteDataBridge unavailable; handoff remains local");
-        remoteBridge.submitHandoff(new JSONObject(h.payload)); h.state = "submitted"; db.saveHandoff(h);
-    }
-
-    private static String latestAssistantText(JSONArray timeline) {
-        for (int i = timeline.length() - 1; i >= 0; i--) { JSONObject item = timeline.optJSONObject(i); if (item != null && "message".equals(item.optString("kind")) && "assistant".equals(item.optString("role")) && !item.optBoolean("streaming", false)) { String text = item.optString("text", "").trim(); if (!text.isEmpty()) return text; } }
-        return "";
     }
 
     private void attachProviderContinuation(JSONObject seed, TurnConfig turnConfig, JSONArray items) throws Exception {
@@ -1753,19 +1662,10 @@ final class ChatCoordinator implements AutoCloseable {
                     if ("conversation".equals(route)) view.put("activeSession", sessionJson(active, true));
                 }
             }
-            RemoteDataBridge.Status rs = remoteBridge.status(); JSONObject remote = new JSONObject().put("available", rs.available); if (rs.contractVersion > 0) remote.put("contractVersion", rs.contractVersion); if (rs.reason != null) remote.put("reason", rs.reason);
-            JSONArray importedSources = new JSONArray();
-            for (ChatDatabase.Snapshot snapshot : db.listImportedSnapshots()) importedSources.put(new JSONObject()
-                    .put("snapshotId", snapshot.id).put("sourceType", snapshot.sourceType).put("sourceTitle", snapshot.sourceTitle)
-                    .put("sourceRuntime", snapshot.sourceRuntime == null ? JSONObject.NULL : snapshot.sourceRuntime)
-                    .put("createdAt", snapshot.createdAt).put("itemCount", snapshot.itemCount)
-                    .put("sourceItemCount", snapshot.sourceItemCount).put("truncated", snapshot.truncated));
-            JSONArray handoffs = new JSONArray(); for (ChatDatabase.Handoff h : db.listHandoffs()) handoffs.put(new JSONObject().put("handoffId", h.id).put("branchSessionId", h.branchSessionId).put("state", h.state).put("createdAt", h.createdAt).put("summary", h.summary));
-            view.put("remoteBridge", remote).put("remoteSources", remoteSources).put("importedSources", importedSources).put("handoffs", handoffs)
-                    .put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
-                            .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("importInProgress", importInProgress.get())
-                            .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
-                            .put("standardSubagentMode", standardSubagentMode));
+            view.put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
+                    .put("crossChatMemoryEnabled", crossChatMemoryEnabled)
+                    .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
+                    .put("standardSubagentMode", standardSubagentMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));
         } catch (Exception error) { host.showMessage("view update failed: " + safe(error)); }
     }
@@ -1877,22 +1777,10 @@ final class ChatCoordinator implements AutoCloseable {
     private static String required(JSONObject p, String key) { String v = p.optString(key, "").trim(); if (v.isEmpty()) throw new IllegalArgumentException("missing " + key); return v; }
     private static int requiredSeq(JSONObject p) { if (!p.has("localSeq")) throw new IllegalArgumentException("missing localSeq"); int seq = p.optInt("localSeq", -1); if (seq < 1) throw new IllegalArgumentException("invalid localSeq"); return seq; }
     private static String safe(Exception e) { String m = e.getMessage(); return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m; }
-    private static String importSource(String source) {
-        String value = source == null ? "" : source.trim().toLowerCase(java.util.Locale.ROOT);
-        if (ConversationImportService.SOURCE_CHATGPT.equals(value) || ConversationImportService.SOURCE_CLAUDE.equals(value)) return value;
-        throw new IllegalArgumentException("unsupported import source");
-    }
-    private static String importDisplayName(ContentResolver resolver, Uri uri) {
-        if (resolver == null || uri == null) return "conversations.json";
-        try (Cursor c = resolver.query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (c != null && c.moveToFirst()) { String value = c.getString(0); if (value != null && !value.trim().isEmpty()) return value.trim(); }
-        } catch (Exception ignored) { }
-        String last = uri.getLastPathSegment(); return last == null || last.trim().isEmpty() ? "conversations.json" : last.trim();
-    }
     private static String nonEmpty(String value, String fallback) { return value == null || value.trim().isEmpty() ? fallback : value.trim(); }
     private static String empty(String v) { return v == null || v.isEmpty() ? null : v; }
     private static String bounded(String value, int max, String label) { String v = value == null ? "" : value.trim(); if (v.isEmpty()) throw new IllegalArgumentException(label + " required"); if (v.length() > max) throw new IllegalArgumentException(label + " too long"); return v; }
-    private static String validRoute(String value) { String v = value == null ? "" : value.trim(); if (!("home".equals(v) || "conversation".equals(v) || "providers".equals(v) || "imports".equals(v) || "handoffs".equals(v) || "settings".equals(v))) return "home"; return v; }
+    private static String validRoute(String value) { String v = value == null ? "" : value.trim(); if (!("home".equals(v) || "conversation".equals(v) || "providers".equals(v) || "settings".equals(v))) return "home"; return v; }
     private static String validTheme(String value) { String v = value == null ? "" : value.trim(); if (!("system".equals(v) || "light".equals(v) || "dark".equals(v))) return "system"; return v; }
 
     @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); webService.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); worker.shutdownNow(); }

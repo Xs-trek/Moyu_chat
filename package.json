@@ -1,10 +1,11 @@
 {
   "name": "moyu-chat-ui",
-  "version": "0.0.5",
+  "version": "0.0.6-beta",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "node scripts/static-check.mjs",
-    "build": "node scripts/static-check.mjs"
+    "build": "node scripts/static-check.mjs",
+    "verify": "bash scripts/verify.sh"
   }
 }

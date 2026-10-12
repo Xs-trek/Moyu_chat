@@ -8,14 +8,14 @@ import org.junit.Test;
 public class ContextModeTest {
     @Test public void explicitModesHaveStableHarnessStrength() {
         ChatDatabase.Session session = new ChatDatabase.Session();
-        ChatDatabase.Snapshot remote = new ChatDatabase.Snapshot(); remote.sourceType = "remote";
+        ChatDatabase.Snapshot branch = new ChatDatabase.Snapshot(); branch.sourceType = SnapshotService.SOURCE_CHAT;
 
         session.contextMode = ContextMode.MINIMAL;
-        ContextMode.Policy minimal = ContextMode.resolve(session, remote);
+        ContextMode.Policy minimal = ContextMode.resolve(session, branch);
         assertFalse(minimal.routerEnabled); assertFalse(minimal.checkpointEnabled); assertFalse(minimal.retrievalEnabled); assertFalse(minimal.evidencePolicyEnabled); assertEquals("minimal", minimal.effectiveLabel);
 
         session.contextMode = ContextMode.STANDARD;
-        ContextMode.Policy standard = ContextMode.resolve(session, remote);
+        ContextMode.Policy standard = ContextMode.resolve(session, branch);
         assertFalse(standard.routerEnabled); assertTrue(standard.checkpointEnabled); assertTrue(standard.retrievalEnabled); assertFalse(standard.evidencePolicyEnabled); assertEquals("standard", standard.effectiveLabel);
 
         session.contextMode = ContextMode.SMART;
@@ -26,8 +26,8 @@ public class ContextModeTest {
     @Test public void legacyAutoNormalizesToStandardWithoutOriginHeuristics() {
         assertEquals(ContextMode.STANDARD, ContextMode.normalize("auto"));
         ChatDatabase.Session session = new ChatDatabase.Session(); session.contextMode = "auto";
-        ChatDatabase.Snapshot remote = new ChatDatabase.Snapshot(); remote.sourceType = "remote";
-        ContextMode.Policy policy = ContextMode.resolve(session, remote);
+        ChatDatabase.Snapshot branch = new ChatDatabase.Snapshot(); branch.sourceType = SnapshotService.SOURCE_CHAT;
+        ContextMode.Policy policy = ContextMode.resolve(session, branch);
         assertFalse(policy.routerEnabled);
         assertTrue(policy.checkpointEnabled);
         assertTrue(policy.retrievalEnabled);

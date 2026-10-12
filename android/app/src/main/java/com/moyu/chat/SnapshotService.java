@@ -11,12 +11,11 @@ import java.util.Collections;
 import java.util.Locale;
 import java.util.UUID;
 
-/** Creates immutable provider-neutral snapshots from local, Remote, or explicitly imported visible history. */
+/** Creates immutable provider-neutral snapshots of local visible history for branches. */
 final class SnapshotService {
+    static final String SOURCE_CHAT = "chat";
     private static final int MAX_ITEMS = 2_000;
     private static final int MAX_TEXT_CHARS = 300_000;
-    private static final int IMPORT_MAX_ITEMS = 10_000;
-    private static final int IMPORT_MAX_TEXT_CHARS = 2_000_000;
     private static final int MAX_METADATA_CHARS = 512;
     private final ChatDatabase db;
 
@@ -37,64 +36,23 @@ final class SnapshotService {
         JSONArray source = new JSONArray();
         if (session.originSnapshotId != null) append(source, db.snapshotItems(session.originSnapshotId));
         append(source, db.timelineThrough(sessionId, throughSeq));
-        Normalized normalized = normalize(source, MAX_ITEMS, MAX_TEXT_CHARS);
-        return persist("chat", sessionId, bounded(session.title, "source title"), null, normalized,
-                Instant.now().toString(), normalized.sourceItemCount, normalized.truncated, false);
+        Normalized normalized = normalize(source);
+        return persist(sessionId, bounded(session.title, "source title"), normalized);
     }
 
-    ChatDatabase.Snapshot importRemote(JSONObject exported) throws Exception {
-        if (exported == null) throw new IllegalArgumentException("remote snapshot missing");
-        String sourceId = bounded(required(exported, "sourceId"), "source id");
-        String title = bounded(required(exported, "sourceTitle"), "source title");
-        String runtime = nullable(exported, "sourceRuntime");
-        if (runtime != null) runtime = bounded(runtime, "source runtime");
-        String createdAt = bounded(exported.optString("createdAt", Instant.now().toString()), "createdAt");
-        Normalized normalized = normalize(exported.optJSONArray("items"), MAX_ITEMS, MAX_TEXT_CHARS);
-        int advertisedSourceCount = Math.max(0, exported.optInt("sourceItemCount", 0));
-        int sourceCount = Math.max(normalized.sourceItemCount, advertisedSourceCount);
-        boolean truncated = normalized.truncated || exported.optBoolean("truncated", false) || sourceCount > normalized.items.length();
-        return persist("remote", sourceId, title, runtime, normalized, createdAt, sourceCount, truncated, false);
-    }
-
-    ChatDatabase.Snapshot importExternal(String source, ConversationImportService.ImportedConversation imported) throws Exception {
-        if (imported == null) throw new IllegalArgumentException("imported conversation missing");
-        String normalizedSource = source == null ? "" : source.trim().toLowerCase(Locale.ROOT);
-        String sourceType;
-        String runtime;
-        if (ConversationImportService.SOURCE_CHATGPT.equals(normalizedSource)) {
-            sourceType = "import-chatgpt"; runtime = "ChatGPT export";
-        } else if (ConversationImportService.SOURCE_CLAUDE.equals(normalizedSource)) {
-            sourceType = "import-claude"; runtime = "Claude export";
-        } else throw new IllegalArgumentException("unsupported import source");
-        String sourceId = bounded(imported.sourceId, "source id");
-        String title = bounded(imported.title, "source title");
-        Normalized normalized = normalize(imported.items, IMPORT_MAX_ITEMS, IMPORT_MAX_TEXT_CHARS);
-        int sourceCount = Math.max(normalized.sourceItemCount, imported.sourceMessageCount);
-        boolean truncated = normalized.truncated || sourceCount > normalized.items.length();
-        return persist(sourceType, sourceId, title, runtime, normalized,
-                bounded(imported.createdAt, "createdAt"), sourceCount, truncated, true);
-    }
-
-    private ChatDatabase.Snapshot persist(String sourceType, String sourceId, String title, String runtime,
-                                          Normalized normalized, String createdAt, int sourceItemCount,
-                                          boolean truncated, boolean deduplicate) throws Exception {
-        String contentHash = sha256(normalized.items.toString());
-        if (deduplicate) {
-            ChatDatabase.Snapshot existing = db.findSnapshotBySourceContent(sourceType, sourceId, contentHash);
-            if (existing != null) return existing;
-        }
+    private ChatDatabase.Snapshot persist(String sourceId, String title, Normalized normalized) throws Exception {
         ChatDatabase.Snapshot snapshot = new ChatDatabase.Snapshot();
-        snapshot.id = UUID.randomUUID().toString(); snapshot.sourceType = sourceType; snapshot.sourceId = sourceId;
-        snapshot.sourceTitle = title; snapshot.sourceRuntime = runtime; snapshot.createdAt = createdAt;
-        snapshot.itemCount = normalized.items.length(); snapshot.sourceItemCount = Math.max(snapshot.itemCount, sourceItemCount);
-        snapshot.truncated = truncated || snapshot.sourceItemCount > snapshot.itemCount;
-        snapshot.contentHash = contentHash;
+        snapshot.id = UUID.randomUUID().toString(); snapshot.sourceType = SOURCE_CHAT; snapshot.sourceId = sourceId;
+        snapshot.sourceTitle = title; snapshot.sourceRuntime = null; snapshot.createdAt = Instant.now().toString();
+        snapshot.itemCount = normalized.items.length(); snapshot.sourceItemCount = Math.max(snapshot.itemCount, normalized.sourceItemCount);
+        snapshot.truncated = normalized.truncated || snapshot.sourceItemCount > snapshot.itemCount;
+        snapshot.contentHash = sha256(normalized.items.toString());
         db.saveSnapshot(snapshot, normalized.items);
         return snapshot;
     }
 
     /** Keeps one contiguous recent tail of complete user-led turns; orphan assistants are never snapshotted alone. */
-    private static Normalized normalize(JSONArray raw, int maxItems, int maxTextChars) throws Exception {
+    private static Normalized normalize(JSONArray raw) throws Exception {
         if (raw == null) return new Normalized(new JSONArray(), 0, false);
         int sourceVisible = 0;
         boolean structurallyOmitted = false;
@@ -121,10 +79,10 @@ final class SnapshotService {
             ArrayList<JSONObject> turn = turns.get(i);
             int turnChars = 0;
             for (JSONObject item : turn) turnChars += item.optString("text", "").length();
-            if (keptReverse.isEmpty() && (turn.size() > maxItems || turnChars > maxTextChars)) {
+            if (keptReverse.isEmpty() && (turn.size() > MAX_ITEMS || turnChars > MAX_TEXT_CHARS)) {
                 throw new IllegalArgumentException("latest snapshot turn exceeds snapshot limit");
             }
-            if (keptItems + turn.size() > maxItems || chars + turnChars > maxTextChars) { truncated = true; break; }
+            if (keptItems + turn.size() > MAX_ITEMS || chars + turnChars > MAX_TEXT_CHARS) { truncated = true; break; }
             keptReverse.add(turn); keptItems += turn.size(); chars += turnChars;
         }
         Collections.reverse(keptReverse);
@@ -177,8 +135,6 @@ final class SnapshotService {
         StringBuilder out = new StringBuilder(64); for (byte b : digest) out.append(String.format(Locale.ROOT, "%02x", b & 255)); return out.toString();
     }
 
-    private static String required(JSONObject o, String key) { String value = o.optString(key, "").trim(); if (value.isEmpty()) throw new IllegalArgumentException("missing " + key); return value; }
-    private static String nullable(JSONObject o, String key) { if (!o.has(key) || o.isNull(key)) return null; String value = o.optString(key, "").trim(); return value.isEmpty() ? null : value; }
     private static String bounded(String value, String label) {
         String clean = value == null ? "" : value.replace('\n', ' ').replace('\r', ' ').trim();
         if (clean.length() > MAX_METADATA_CHARS) throw new IllegalArgumentException(label + " too long");

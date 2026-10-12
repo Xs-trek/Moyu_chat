@@ -3,21 +3,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Signature-level permission declared by Moyu Remote; granted at install when both APKs share a signing key. -->
-    <uses-permission android:name="com.moyu.remote.permission.CHAT_BRIDGE" />
-
-    <!-- Required for explicit package/signature verification before optional cross-APK bridge calls. -->
-    <queries>
-        <package android:name="com.moyu.remote" />
-        <provider android:authorities="com.moyu.remote.chatbridge" />
-    </queries>
 
     <application
         android:name=".MoyuChatApplication"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:networkSecurityConfig="@xml/network_security_config"
-        android:label="Moyu Chat"
+        android:label="Moyu Chat β"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <service android:name=".ChatTurnService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
