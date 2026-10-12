@@ -160,6 +160,67 @@ export function compact(n) {
 export function full(n) { return n === null || n === undefined ? '—' : Math.round(n).toLocaleString(); }
 export function secs(ms) { return ms === null || ms === undefined ? '—' : `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)}s`; }
 
+const STAGE_LABELS = { accept: '接收', context: '上下文', route: '路由', checkpoint: '压缩', web_plan: '联网规划', tools: '工具选择', web_retrieve: '联网检索', generate: '生成', verify: '校验', repair: '修正', subagent: '子任务' };
+const STATUS_LABELS = { ok: '完成', skipped: '跳过', failed: '失败', cancelled: '已停止', open: '未结束' };
+const SKIP_REASONS = { mode_off: '当前模式未启用', task_profile_cached: '沿用本会话的路由结果', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验' };
+const WEB_EXECUTION = { host: '本机检索', provider: '模型侧联网', client_tools: '工具调用联网', none: '不联网' };
+const VERDICTS = { pass: '通过', fail: '不通过', partial: '部分通过' };
+const ACTIONS = { accept: '采纳', repair: '需修正', abstain: '存疑' };
+/** Stages that exist only to help the main call; their share of tokens is what "is this helper still worth it" weighs. */
+const HELPER_STAGES = new Set(['route', 'checkpoint', 'web_plan', 'verify', 'repair', 'subagent']);
+
+function stageNote(span) {
+  const d = span.detail || {};
+  switch (span.stage) {
+    case 'accept': return [contextLabel(d.effectiveContextMode || d.contextMode), d.harnessPreset].filter(Boolean).join(' · ');
+    case 'context': return `${d.messages ?? '—'} 条消息${d.truncated ? ' · 已截断' : ''}${d.compactionDue ? ' · 需要压缩' : ''}`;
+    case 'route': return d.routed === false ? '路由未返回结果，按通用问答处理' : `${d.domain || '—'} / ${d.taskType || '—'}${Number.isFinite(d.confidence) ? ` · 置信 ${Number(d.confidence).toFixed(2)}` : ''}`;
+    case 'checkpoint': return d.updated ? `已更新 · 覆盖 ${d.coveredItems} 条` : '未更新';
+    case 'web_plan': {
+      const queries = Array.isArray(d.queries) ? d.queries : [];
+      return `${d.useWeb ? '联网' : '不联网'}${d.useWeb && queries.length ? ` · ${queries.length} 个查询` : ''}${d.plannerCalled ? ' · 模型规划' : ' · 规则判断'}`;
+    }
+    case 'tools': return [WEB_EXECUTION[d.webExecution] || '', d.clientTools ? `工具 ${d.clientTools}` : '', d.schemasDropped ? '工具说明放不下已省略' : ''].filter(Boolean).join(' · ');
+    case 'web_retrieve': return `${d.sources ?? 0} 个来源 · ${full(d.evidenceChars ?? 0)} 字${d.backend ? ` · ${d.backend}` : ''}`;
+    case 'generate': return `${d.rounds ?? 1} 轮${d.clientToolBatches ? ` · 工具 ${d.clientToolBatches} 次` : ''}${d.subagents ? ` · 子任务 ${d.subagents}` : ''}`;
+    case 'verify': return [VERDICTS[d.verdict] || d.status || '', Number.isFinite(d.risk) ? `风险 ${Number(d.risk).toFixed(2)}` : '', d.repaired ? '已修正' : ACTIONS[d.action] || ''].filter(Boolean).join(' · ');
+    case 'repair': return d.repaired ? '已改写回答' : '没有产出修正';
+    default: return '';
+  }
+}
+
+/**
+ * One turn's pipeline as display rows: what ran, what was skipped and why, how long each stage took
+ * relative to the slowest one, and the helpers' share of the turn's tokens.
+ */
+export function traceView(trace) {
+  if (!trace || !Array.isArray(trace.spans)) return null;
+  const durations = trace.spans.map((s) => Number(s.durationMs)).filter((ms) => Number.isFinite(ms) && ms > 0);
+  const longest = Math.max(1, ...durations);
+  let helperTokens = 0, mainTokens = 0;
+  const rows = trace.spans.map((span) => {
+    const ms = Number(span.durationMs);
+    const usage = span.usage || null;
+    const tokens = usage ? (count(usage.inputTokens) || 0) + (count(usage.outputTokens) || 0) : 0;
+    if (HELPER_STAGES.has(span.stage)) helperTokens += tokens; else mainTokens += tokens;
+    const note = span.status === 'skipped' ? (SKIP_REASONS[span.reason] || span.reason || '')
+      : span.status === 'ok' ? stageNote(span) : (span.reason || '');
+    const calls = usage?.calls || 0;
+    return {
+      stage: span.stage,
+      label: STAGE_LABELS[span.stage] || span.stage,
+      status: span.status,
+      statusLabel: STATUS_LABELS[span.status] || span.status,
+      ms: Number.isFinite(ms) && ms >= 0 ? ms : null,
+      share: Number.isFinite(ms) && ms > 0 ? ms / longest : 0,
+      usage: calls ? `${calls} 次调用 · ${compact(count(usage.inputTokens))}/${compact(count(usage.outputTokens))}${span.detail?.usageIncomplete ? ' · 未报告完整' : ''}` : '',
+      note,
+    };
+  });
+  const total = helperTokens + mainTokens;
+  return { rows, status: trace.status, statusLabel: STATUS_LABELS[trace.status] || trace.status, terminalCode: trace.terminalCode || '', helperShare: total > 0 && helperTokens > 0 ? helperTokens / total : null };
+}
+
 /** Normalised numbers for one turn's usage row (all optional; null means not reported). */
 export function turnUsage(usage) {
   if (!usage) return null;

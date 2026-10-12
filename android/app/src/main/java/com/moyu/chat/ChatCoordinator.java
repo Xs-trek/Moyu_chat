@@ -258,7 +258,7 @@ final class ChatCoordinator implements AutoCloseable {
                             } catch (Exception error) {
                                 // Last-resort durable terminal guard: if beginTurn() already committed a live row,
                                 // no escaping preparation exception may leave the DB stuck in running/streaming.
-                                pipeline.persistFinalUsage(sessionId, turnControl);
+                                pipeline.abandon(sessionId, turnControl, turnControl.isCancelled() ? "cancelled" : "turn_internal_error");
                                 try { db.failUnhandledTurn(sessionId, turnControl.isCancelled() ? "cancelled" : "turn_internal_error", safe(error)); } catch (Exception ignored) { }
                                 turnControls.remove(sessionId, turnControl);
                                 startingSessions.remove(sessionId);
@@ -307,6 +307,12 @@ final class ChatCoordinator implements AutoCloseable {
                 }
                 case "verification.feedback": recordVerificationFeedback(required(p, "localSessionId"), requiredSeq(p), required(p, "label")); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
+                case "turn.trace.get": {
+                    JSONObject trace = db.turnTrace(required(p, "localSessionId"), required(p, "turnId"));
+                    if (trace == null) throw new IllegalArgumentException("turn not found");
+                    result(requestId, true, null, trace);
+                    return; // read-only: no view change
+                }
                 default: throw new IllegalArgumentException("unsupported intent: " + type);
             }
             result(requestId, true, null); emitView();
@@ -465,9 +471,6 @@ final class ChatCoordinator implements AutoCloseable {
         mediaStore.pruneUnreferenced(db.referencedMediaIds());
         if (id.equals(activeSessionId)) { activeSessionId = null; db.putSetting("activeSessionId", ""); route = "home"; db.putSetting("route", route); }
     }
-
-    /** Trace of the session's last finished turn (stages run / skipped and why, durations, helper usage). */
-    TurnTrace lastTrace(String sessionId) { return pipeline.lastTrace(sessionId); }
 
     /** The pipeline's view of coordinator runtime: executors, busy flags and view emission. */
     private final class PipelineEnv implements TurnPipeline.Env {
@@ -707,7 +710,7 @@ final class ChatCoordinator implements AutoCloseable {
                 ? new DisplayTimeline(new JSONArray(), 0)
                 : boundedInheritedDisplay(db.snapshotItems(s.originSnapshotId));
         JSONArray out = new JSONArray(inheritedDisplay.items.toString());
-        JSONArray local = db.timeline(s.id);
+        JSONArray local = withTurnUsage(db.timeline(s.id), db.turns(s.id));
         for (int i = 0; i < local.length(); i++) {
             JSONObject item = local.optJSONObject(i); if (item == null) continue;
             JSONObject visible = new JSONObject(item.toString());
@@ -716,6 +719,38 @@ final class ChatCoordinator implements AutoCloseable {
             out.put(visible);
         }
         return new DisplayTimeline(out, inheritedDisplay.omittedInheritedItems);
+    }
+
+    /**
+     * Usage is stored on the turn record, not in the timeline. The view keeps its long-standing shape:
+     * a {kind: usage} row right after the turn's assistant reply (or after the user row when the turn
+     * produced no reply), so the frontend attaches it to the reply it belongs to.
+     */
+    static JSONArray withTurnUsage(JSONArray timeline, JSONArray turns) throws Exception {
+        java.util.HashMap<Integer, JSONObject> byUserSeq = new java.util.HashMap<>();
+        for (int i = 0; turns != null && i < turns.length(); i++) {
+            JSONObject turn = turns.optJSONObject(i); if (turn == null) continue;
+            JSONObject usage = turn.optJSONObject("usage");
+            if (usage == null || usage.length() == 0) continue;
+            byUserSeq.put(turn.optInt("userSeq"), new JSONObject(usage.toString()).put("kind", "usage").put("turnId", turn.optString("turnId")));
+        }
+        JSONArray out = new JSONArray();
+        JSONObject pending = null;
+        for (int i = 0; timeline != null && i < timeline.length(); i++) {
+            JSONObject item = timeline.optJSONObject(i); if (item == null) continue;
+            boolean message = "message".equals(item.optString("kind", "message"));
+            String role = item.optString("role", "");
+            if (message && "user".equals(role)) {
+                if (pending != null) out.put(pending);
+                out.put(item);
+                pending = byUserSeq.get(item.optInt("localSeq", -1));
+                continue;
+            }
+            out.put(item);
+            if (pending != null && message && "assistant".equals(role)) { out.put(pending); pending = null; }
+        }
+        if (pending != null) out.put(pending);
+        return out;
     }
 
     private JSONObject sessionJson(ChatDatabase.Session s, boolean detail) throws Exception {
@@ -765,7 +800,8 @@ final class ChatCoordinator implements AutoCloseable {
         return o;
     }
 
-    private void result(String requestId, boolean ok, String error) { if (requestId == null || requestId.isEmpty()) return; try { JSONObject e = new JSONObject().put("version", 1).put("type", "intent.result").put("requestId", requestId).put("ok", ok); if (error != null) e.put("error", new JSONObject().put("summary", error)); host.dispatch(e); } catch (Exception ignored) { } }
+    private void result(String requestId, boolean ok, String error) { result(requestId, ok, error, null); }
+    private void result(String requestId, boolean ok, String error, JSONObject data) { if (requestId == null || requestId.isEmpty()) return; try { JSONObject e = new JSONObject().put("version", 1).put("type", "intent.result").put("requestId", requestId).put("ok", ok); if (error != null) e.put("error", new JSONObject().put("summary", error)); if (data != null) e.put("data", data); host.dispatch(e); } catch (Exception ignored) { } }
     private static String required(JSONObject p, String key) { String v = p.optString(key, "").trim(); if (v.isEmpty()) throw new IllegalArgumentException("missing " + key); return v; }
     private static int requiredSeq(JSONObject p) { if (!p.has("localSeq")) throw new IllegalArgumentException("missing localSeq"); int seq = p.optInt("localSeq", -1); if (seq < 1) throw new IllegalArgumentException("invalid localSeq"); return seq; }
     private static String safe(Exception e) { String m = e.getMessage(); return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m; }

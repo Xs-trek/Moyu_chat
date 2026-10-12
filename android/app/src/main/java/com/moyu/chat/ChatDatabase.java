@@ -15,8 +15,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Chat-owned database: providers, model profiles, sessions, timeline, branch snapshots, verifier
- * labels and app preferences. API keys never live here (see {@link ChatSecretStore}).
+ * Chat-owned database: providers, model profiles, sessions, timeline, turns with their stage traces,
+ * branch snapshots, verifier labels and app preferences. API keys never live here (see {@link ChatSecretStore}).
  */
 public final class ChatDatabase extends SQLiteOpenHelper {
     /**
@@ -147,6 +147,19 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 + "session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
                 + "local_seq INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,"
                 + "UNIQUE(session_id,local_seq))");
+        // Turn: one accepted user turn. Holds the frozen turn configuration and the usage summary (the
+        // timeline holds only what the user sees). Rows are owned by the session and rewound with it.
+        db.execSQL("CREATE TABLE turns(turn_id TEXT PRIMARY KEY,"
+                + "session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
+                + "user_seq INTEGER NOT NULL,assistant_key TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,"
+                + "status TEXT NOT NULL,terminal_code TEXT NOT NULL DEFAULT '',config TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',"
+                + "UNIQUE(session_id,user_seq))");
+        db.execSQL("CREATE INDEX turns_started ON turns(started_at)");
+        // Turn span: one pipeline stage of a turn (ran / skipped and why, duration, decision, helper usage).
+        db.execSQL("CREATE TABLE turn_spans(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"
+                + "ordinal INTEGER NOT NULL,stage TEXT NOT NULL,status TEXT NOT NULL,started_at_ms INTEGER NOT NULL,duration_ms INTEGER NOT NULL,"
+                + "reason TEXT NOT NULL DEFAULT '',calls INTEGER NOT NULL DEFAULT 0,input_tokens INTEGER,output_tokens INTEGER,"
+                + "detail TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(turn_id,ordinal))");
         // Snapshot: immutable branch origin. The source session may be deleted later; the snapshot stays.
         db.execSQL("CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY,source_session_id TEXT NOT NULL,source_title TEXT NOT NULL,"
                 + "created_at TEXT NOT NULL,item_count INTEGER NOT NULL,source_item_count INTEGER NOT NULL,"
@@ -171,7 +184,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     /** Child tables first so foreign keys never block the drop (PRAGMA foreign_keys cannot change inside the upgrade transaction). */
     private static void dropAll(SQLiteDatabase db) {
-        for (String table : new String[]{"knowledge_fts", "snapshot_items", "timeline", "handoffs", "sessions", "snapshots",
+        for (String table : new String[]{"knowledge_fts", "snapshot_items", "turn_spans", "turns", "timeline", "handoffs", "sessions", "snapshots",
                 "model_profiles", "providers", "verifier_labels", "settings"}) {
             db.execSQL("DROP TABLE IF EXISTS " + table);
         }
@@ -284,6 +297,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** Cold-start recovery: no provider turn can survive process death, so every durable streaming row is stale. */
     public synchronized void recoverInterruptedSessions() {
         SQLiteDatabase db = getWritableDatabase();
+        db.execSQL("UPDATE turns SET status='failed',terminal_code='process_died',ended_at=? WHERE status='running'", new Object[]{Instant.now().toString()});
         java.util.LinkedHashSet<String> affected = new java.util.LinkedHashSet<>();
         try (Cursor c = db.rawQuery("SELECT local_id FROM sessions WHERE state='running'", null)) {
             while (c.moveToNext()) affected.add(c.getString(0));
@@ -435,6 +449,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            // A turn's rows run from its user row to the next user row; rewinding into a turn removes that turn's record too.
+            Integer firstRemovedTurn = null;
+            try (Cursor c = db.rawQuery("SELECT MAX(user_seq) FROM turns WHERE session_id=? AND user_seq<=?", new String[]{sessionId, String.valueOf(localSeq)})) {
+                if (c.moveToFirst() && !c.isNull(0)) firstRemovedTurn = c.getInt(0);
+            }
+            db.delete("turns", "session_id=? AND user_seq>=?", new String[]{sessionId, String.valueOf(firstRemovedTurn == null ? localSeq : firstRemovedTurn)});
             db.delete("timeline", "session_id=? AND local_seq>=?", new String[]{sessionId, String.valueOf(localSeq)});
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(sessionId)});
             ContentValues state = new ContentValues();
@@ -459,7 +479,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     /** Atomically commits the user's turn and one unique live assistant projection before network streaming starts. */
-    public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody) {
+    /** Atomically commits the user's turn, one unique live assistant projection and the turn record before network streaming starts. */
+    public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody,
+                                       String turnId, JSONObject config) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -478,6 +500,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             ContentValues live = new ContentValues(); live.put("item_key", streamKey); live.put("session_id", sessionId); live.put("local_seq", seq + 1);
             live.put("kind", kindOf(liveBody)); live.put("body", liveBody.toString()); live.put("created_at", liveBody.optString("createdAt", Instant.now().toString()));
             db.insertWithOnConflict("timeline", null, live, SQLiteDatabase.CONFLICT_ABORT);
+
+            ContentValues turn = new ContentValues(); turn.put("turn_id", turnId); turn.put("session_id", sessionId); turn.put("user_seq", seq);
+            turn.put("assistant_key", streamKey); turn.put("started_at", Instant.now().toString()); turn.put("status", "running");
+            turn.put("config", config == null ? "{}" : config.toString());
+            db.insertWithOnConflict("turns", null, turn, SQLiteDatabase.CONFLICT_ABORT);
 
             ContentValues state = new ContentValues(); state.put("state", "running"); state.put("updated_at", Instant.now().toString());
             state.put("draft", ""); state.put("draft_media", "[]");
@@ -579,6 +606,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", Instant.now().toString());
                 db.update("sessions", state, "local_id=?", new String[]{sessionId});
             }
+            ContentValues turn = new ContentValues(); turn.put("status", "failed"); turn.put("terminal_code", code == null ? "turn_internal_error" : code);
+            turn.put("ended_at", Instant.now().toString());
+            db.update("turns", turn, "session_id=? AND status='running'", new String[]{sessionId});
             db.setTransactionSuccessful();
         } catch (org.json.JSONException error) {
             throw new IllegalStateException(error);
@@ -588,15 +618,101 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized void deleteTimelineItem(String itemKey) { getWritableDatabase().delete("timeline", "item_key=?", new String[]{itemKey}); }
     public synchronized JSONArray timeline(String sessionId) { return timelineThrough(sessionId, null); }
 
-    /** Usage rows created at or after {@code sinceIso}, limited to sessions updated since then (session index, not a table scan). */
+    /** Usage summaries of turns started at or after {@code sinceIso} (turns_started index). Turns without model calls are left out. */
     public synchronized JSONArray usageSince(String sinceIso) {
         JSONArray out = new JSONArray();
         if (sinceIso == null) return out;
-        String sql = "SELECT t.body FROM sessions s JOIN timeline t ON t.session_id=s.local_id WHERE s.updated_at>=? AND t.kind='usage' AND t.created_at>=?";
-        try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sinceIso, sinceIso})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT usage FROM turns WHERE started_at>=? AND usage<>'{}'", new String[]{sinceIso})) {
             while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
         }
         return out;
+    }
+
+    /** Live usage summary of a running or finished turn. */
+    public synchronized void updateTurnUsage(String turnId, JSONObject usage) {
+        if (turnId == null || usage == null) return;
+        ContentValues v = new ContentValues(); v.put("usage", usage.toString());
+        getWritableDatabase().update("turns", v, "turn_id=?", new String[]{turnId});
+    }
+
+    /** Settles a turn record: terminal status, final usage and the stage trace ({@link TurnTrace#toJson()}). */
+    public synchronized void completeTurn(String turnId, String status, String terminalCode, JSONObject usage, JSONArray spans) {
+        if (turnId == null) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            ContentValues turn = new ContentValues();
+            turn.put("status", status == null || status.isEmpty() ? "failed" : status);
+            turn.put("terminal_code", terminalCode == null ? "" : terminalCode);
+            turn.put("ended_at", Instant.now().toString());
+            if (usage != null) turn.put("usage", usage.toString());
+            if (db.update("turns", turn, "turn_id=?", new String[]{turnId}) != 1) { db.setTransactionSuccessful(); return; }
+            db.delete("turn_spans", "turn_id=?", new String[]{turnId});
+            if (spans != null) for (int i = 0; i < spans.length(); i++) {
+                JSONObject span = spans.optJSONObject(i); if (span == null) continue;
+                JSONObject spanUsage = span.optJSONObject("usage");
+                ContentValues row = new ContentValues();
+                row.put("turn_id", turnId); row.put("ordinal", i); row.put("stage", span.optString("stage", ""));
+                row.put("status", span.optString("status", "")); row.put("started_at_ms", span.optLong("startedAtMs", 0L));
+                row.put("duration_ms", span.optLong("durationMs", -1L)); row.put("reason", span.optString("reason", ""));
+                row.put("calls", spanUsage == null ? 0 : spanUsage.optInt("calls", 0));
+                if (spanUsage != null && spanUsage.has("inputTokens")) row.put("input_tokens", spanUsage.optLong("inputTokens"));
+                if (spanUsage != null && spanUsage.has("outputTokens")) row.put("output_tokens", spanUsage.optLong("outputTokens"));
+                JSONObject detail = span.optJSONObject("detail");
+                if (spanUsage != null && spanUsage.optBoolean("incomplete", false)) {
+                    try { detail = (detail == null ? new JSONObject() : detail).put("usageIncomplete", true); } catch (Exception ignored) { }
+                }
+                row.put("detail", detail == null ? "{}" : detail.toString());
+                db.insertWithOnConflict("turn_spans", null, row, SQLiteDatabase.CONFLICT_ABORT);
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    /** Turn records of a session in user-turn order: {turnId, userSeq, status, usage}. */
+    public synchronized JSONArray turns(String sessionId) {
+        JSONArray out = new JSONArray();
+        if (sessionId == null) return out;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT turn_id,user_seq,status,usage FROM turns WHERE session_id=? ORDER BY user_seq", new String[]{sessionId})) {
+            while (c.moveToNext()) try {
+                out.put(new JSONObject().put("turnId", c.getString(0)).put("userSeq", c.getInt(1)).put("status", c.getString(2))
+                        .put("usage", new JSONObject(c.getString(3))));
+            } catch (Exception ignored) { }
+        }
+        return out;
+    }
+
+    /** One turn with its configuration, usage and ordered stage spans; null when the turn does not belong to the session. */
+    public synchronized JSONObject turnTrace(String sessionId, String turnId) {
+        if (sessionId == null || turnId == null) return null;
+        SQLiteDatabase db = getReadableDatabase();
+        try {
+            JSONObject turn;
+            try (Cursor c = db.rawQuery("SELECT turn_id,user_seq,started_at,ended_at,status,terminal_code,config,usage FROM turns WHERE session_id=? AND turn_id=?", new String[]{sessionId, turnId})) {
+                if (!c.moveToFirst()) return null;
+                turn = new JSONObject().put("turnId", c.getString(0)).put("userSeq", c.getInt(1)).put("startedAt", c.getString(2))
+                        .put("endedAt", c.isNull(3) ? JSONObject.NULL : c.getString(3)).put("status", c.getString(4))
+                        .put("terminalCode", c.getString(5)).put("config", new JSONObject(c.getString(6))).put("usage", new JSONObject(c.getString(7)));
+            }
+            JSONArray spans = new JSONArray();
+            try (Cursor c = db.rawQuery("SELECT stage,status,started_at_ms,duration_ms,reason,calls,input_tokens,output_tokens,detail FROM turn_spans WHERE turn_id=? ORDER BY ordinal", new String[]{turnId})) {
+                while (c.moveToNext()) {
+                    JSONObject span = new JSONObject().put("stage", c.getString(0)).put("status", c.getString(1))
+                            .put("startedAtMs", c.getLong(2)).put("durationMs", c.getLong(3));
+                    if (!c.getString(4).isEmpty()) span.put("reason", c.getString(4));
+                    if (c.getInt(5) > 0) {
+                        JSONObject usage = new JSONObject().put("calls", c.getInt(5));
+                        if (!c.isNull(6)) usage.put("inputTokens", c.getLong(6));
+                        if (!c.isNull(7)) usage.put("outputTokens", c.getLong(7));
+                        span.put("usage", usage);
+                    }
+                    JSONObject detail = new JSONObject(c.getString(8));
+                    if (detail.length() > 0) span.put("detail", detail);
+                    spans.put(span);
+                }
+            }
+            return turn.put("spans", spans);
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }
 
     public synchronized JSONArray timelineThrough(String sessionId, Integer throughSeq) {

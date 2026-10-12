@@ -106,19 +106,84 @@ public class ChatDatabaseTest {
 
     // ---------- per-entity state ----------
 
-    @Test public void timelineKindMirrorsBodyAndDrivesUsageQueries() throws Exception {
+    @Test public void timelineKindMirrorsBody() throws Exception {
         TestDeployments.save(db, provider("p-kind"));
         ChatDatabase.Session s = TestDeployments.session(db, "p-kind", "model", null, null);
-        String since = Instant.now().minusSeconds(60).toString();
-        db.appendTimeline(s.id, "u", message("user", "mentions \"kind\":\"usage\" in plain text"));
-        db.appendTimeline(s.id, "usage", new JSONObject().put("kind", "usage").put("inputTokens", 12).put("createdAt", Instant.now().toString()));
+        db.appendTimeline(s.id, "u", message("user", "hello"));
         db.appendTimeline(s.id, "bare", new JSONObject().put("role", "assistant").put("text", "no kind").put("createdAt", Instant.now().toString()));
         assertEquals("message", kindOf("u"));
-        assertEquals("usage", kindOf("usage"));
         assertEquals("items without kind are messages", "message", kindOf("bare"));
-        JSONArray usage = db.usageSince(since);
-        assertEquals("usage query matches the kind column, not JSON text", 1, usage.length());
-        assertEquals(12, usage.getJSONObject(0).optInt("inputTokens"));
+    }
+
+    // ---------- turns ----------
+
+    private String startTurn(ChatDatabase.Session s, String text) throws Exception {
+        String turnId = java.util.UUID.randomUUID().toString();
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
+        db.beginTurn(s.id, "u:" + turnId, message("user", text), "live:" + turnId, live, turnId, new JSONObject().put("contextMode", "minimal"));
+        return turnId;
+    }
+
+    @Test public void turnRecordCarriesConfigUsageAndOrderedSpans() throws Exception {
+        TestDeployments.save(db, provider("p-turn"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-turn", "model", null, null);
+        String since = Instant.now().minusSeconds(60).toString();
+        String turnId = startTurn(s, "question");
+        assertEquals("running", db.turns(s.id).getJSONObject(0).optString("status"));
+        assertEquals("a turn without model calls has no usage", 0, db.usageSince(since).length());
+
+        db.updateTurnUsage(turnId, new JSONObject().put("inputTokens", 12).put("outputTokens", 3));
+        JSONArray spans = new JSONArray()
+                .put(new JSONObject().put("stage", "route").put("status", "skipped").put("reason", "mode_off").put("durationMs", 0))
+                .put(new JSONObject().put("stage", "generate").put("status", "ok").put("durationMs", 40)
+                        .put("usage", new JSONObject().put("calls", 1).put("inputTokens", 12).put("outputTokens", 3))
+                        .put("detail", new JSONObject().put("rounds", 1)));
+        db.completeTurn(turnId, "ok", "", new JSONObject().put("inputTokens", 12).put("outputTokens", 3), spans);
+
+        JSONObject trace = db.turnTrace(s.id, turnId);
+        assertEquals("ok", trace.optString("status"));
+        assertEquals("minimal", trace.getJSONObject("config").optString("contextMode"));
+        assertEquals(12, trace.getJSONObject("usage").optInt("inputTokens"));
+        JSONArray stored = trace.getJSONArray("spans");
+        assertEquals(2, stored.length());
+        assertEquals("mode_off", stored.getJSONObject(0).optString("reason"));
+        assertEquals(1, stored.getJSONObject(1).getJSONObject("usage").optInt("calls"));
+        assertEquals(1, stored.getJSONObject(1).getJSONObject("detail").optInt("rounds"));
+        assertNull("a turn is only readable through its own session", db.turnTrace("other-session", turnId));
+        assertEquals(1, db.usageSince(since).length());
+        for (int i = 0; i < db.timeline(s.id).length(); i++) assertNotEquals("usage", db.timeline(s.id).getJSONObject(i).optString("kind"));
+    }
+
+    @Test public void rewindingIntoATurnRemovesItsRecordAndColdStartFailsRunningTurns() throws Exception {
+        TestDeployments.save(db, provider("p-rewind"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-rewind", "model", null, null);
+        String first = startTurn(s, "first");
+        db.finalizeTurn(s.id, "live:" + first, new JSONObject().put("kind", "message").put("role", "assistant").put("text", "one").put("createdAt", Instant.now().toString()), null, null, "completed");
+        String second = startTurn(s, "second");
+        db.recoverInterruptedSessions();
+        assertEquals("process_died", db.turnTrace(s.id, second).optString("terminalCode"));
+        assertEquals("failed", db.turnTrace(s.id, second).optString("status"));
+
+        db.truncateTimelineFrom(s.id, 2); // the first turn's assistant row
+        assertEquals("rewinding into a turn removes that turn and every later one", 0, db.turns(s.id).length());
+        assertNull(db.turnTrace(s.id, first));
+    }
+
+    @Test public void viewProjectsTurnUsageRightAfterItsReply() throws Exception {
+        JSONArray timeline = new JSONArray()
+                .put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 1))
+                .put(new JSONObject().put("kind", "message").put("role", "assistant").put("localSeq", 2))
+                .put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 3))
+                .put(new JSONObject().put("kind", "error").put("localSeq", 4));
+        JSONArray turns = new JSONArray()
+                .put(new JSONObject().put("turnId", "t1").put("userSeq", 1).put("usage", new JSONObject().put("inputTokens", 5)))
+                .put(new JSONObject().put("turnId", "t2").put("userSeq", 3).put("usage", new JSONObject().put("inputTokens", 7)));
+        JSONArray view = ChatCoordinator.withTurnUsage(timeline, turns);
+        assertEquals(6, view.length());
+        assertEquals("usage", view.getJSONObject(2).optString("kind"));
+        assertEquals("t1", view.getJSONObject(2).optString("turnId"));
+        assertEquals("error", view.getJSONObject(4).optString("kind"));
+        assertEquals("a turn without a reply keeps its usage after its own rows", 7, view.getJSONObject(5).optInt("inputTokens"));
     }
 
     @Test public void credentialEpochLivesOnTheProviderRow() {
@@ -281,7 +346,7 @@ public class ChatDatabaseTest {
         ChatDatabase.Session s = TestDeployments.session(db, "p-finalize", "m", null, null);
         JSONObject user = message("user", "question");
         JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
-        db.beginTurn(s.id, "u", user, "live", live);
+        db.beginTurn(s.id, "u", user, "live", live, "turn-finalize", new JSONObject());
         assertEquals("running", db.getSession(s.id).state);
         JSONObject done = new JSONObject(live.toString()).put("text", "answer").put("streaming", false);
 

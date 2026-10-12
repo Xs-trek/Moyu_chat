@@ -5,9 +5,12 @@ import { createRenderGate } from './render-gate.js';
 import { patchConversation, render, renderNotice, resizeTextarea, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
 import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
+import { forgetTrace, onTraceChange } from './trace.js';
 import * as vm from './view-model.js';
 
 const renderGate = createRenderGate(render);
+// A requested turn trace arrived: refresh the expanded footer in place.
+onTraceChange(() => { if (!patchConversation()) renderGate.request(); });
 subscribe((_state, change) => {
   if (change?.scope === 'toast') renderNotice();
   else if (!patchConversation()) renderGate.request();
@@ -175,6 +178,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'session-menu') sessionMenu(target);
   else if (action === 'message-menu') messageMenu(target);
   else if (action === 'toggle-turn-details') { toggleTurnDetails(target.dataset.itemKey); if (!patchConversation()) renderGate.request(); }
+  else if (action === 'trace-retry') { forgetTrace(target.dataset.turnId); if (!patchConversation()) renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
   else if (action === 'toggle-turn-nav') {
     const nav = target.closest('.turn-nav');

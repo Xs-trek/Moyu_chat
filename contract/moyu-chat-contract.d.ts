@@ -46,7 +46,9 @@ export type MoyuChatIntent =
   | UiIntent<'provider.configure.open', { providerId?: string }>
   | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
   | UiIntent<'verification.feedback', { localSessionId: string; localSeq: number; label: 'accurate' | 'false_alarm' | 'missed_error' }>
-  | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>;
+  | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
+  /** Read-only; the intent.result carries `data: TurnTraceView`. Traces are never pushed with the view. */
+  | UiIntent<'turn.trace.get', { localSessionId: string; turnId: string }>;
 
 export interface MediaView {
   mediaId: string;
@@ -203,9 +205,36 @@ export interface SessionView {
 }
 
 export type TimelineItem =
-  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'connecting' | 'connected' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
-  | { localSeq: number; kind: 'usage'; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'connecting' | 'connected' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
+  /** Projected from the turn record (not a stored timeline row): placed right after the turn's reply, or after its user row when there is none. */
+  | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
+
+/** One pipeline stage of a turn. Skipped stages say why (`reason`); `usage` is the stage's own model calls. */
+export interface TurnSpanView {
+  stage: 'accept' | 'context' | 'route' | 'checkpoint' | 'web_plan' | 'tools' | 'web_retrieve' | 'generate' | 'verify' | 'repair' | 'subagent' | string;
+  status: 'ok' | 'skipped' | 'failed' | 'cancelled' | 'open';
+  startedAtMs?: number;
+  /** -1 when the stage has no duration of its own (subagent calls inside client-tool rounds). */
+  durationMs: number;
+  reason?: string;
+  usage?: { calls: number; inputTokens?: number; outputTokens?: number };
+  /** Small decision summary, e.g. route {domain, taskType, confidence}, web_plan {useWeb, queries}, verify {verdict, risk, action, repaired}. */
+  detail?: Record<string, unknown>;
+}
+
+export interface TurnTraceView {
+  turnId: string;
+  userSeq: number;
+  startedAt: string;
+  endedAt: string | null;
+  status: 'running' | 'ok' | 'failed' | 'cancelled';
+  terminalCode: string;
+  /** The turn's frozen configuration: model, protocol, context mode, harness preset, Web mode, effort, limits. */
+  config: Record<string, unknown>;
+  usage: Record<string, unknown>;
+  spans: TurnSpanView[];
+}
 
 export interface SessionDetailView extends SessionView {
   messages: TimelineItem[];
@@ -245,7 +274,7 @@ export interface AppViewModel {
   now: string;
   /** resolvedTheme is computed natively from the Android night mode when theme is 'system'. */
   appearance: { theme: Theme; resolvedTheme: 'light' | 'dark'; tone: Tone; delight: boolean };
-  /** Local-day usage across sessions (usage rows created since local midnight). */
+  /** Local-day usage across sessions (turns started since local midnight). */
   usageToday?: UsageTodayView;
   providers: ProviderView[];
   sessions: SessionView[];
@@ -260,5 +289,5 @@ declare global {
     /** Called by MainActivity on Android Back; returns true when a drawer, sheet or dialog was closed. */
     moyuHandleBack?: () => boolean;
   }
-  interface WindowEventMap { 'moyu:view': CustomEvent<{ version: 1; type: string; revision?: number; view?: AppViewModel; patch?: ConversationStreamPatch; requestId?: string; ok?: boolean; error?: { summary?: string } }> }
+  interface WindowEventMap { 'moyu:view': CustomEvent<{ version: 1; type: string; revision?: number; view?: AppViewModel; patch?: ConversationStreamPatch; requestId?: string; ok?: boolean; error?: { summary?: string }; data?: unknown }> }
 }

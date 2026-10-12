@@ -4,6 +4,7 @@ import { button, fmtTime, h, icon, iconButton } from './dom.js';
 import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
+import { loadTrace, peekTrace } from './trace.js';
 import * as vm from './view-model.js';
 
 export { openConfirmDialog, openTextDialog } from './overlays.js';
@@ -307,14 +308,40 @@ function detailRows(item, sessionId, canAct) {
             : button('漏错', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'missed_error' }, 'btn small ghost'),
         ] : null));
   }
+  if (item.turnId && !item.inherited) out.push(traceSection(sessionId, item.turnId));
   return out;
+}
+
+/** Stage-by-stage view of the turn, fetched when the details are first expanded. */
+function traceSection(sessionId, turnId) {
+  const entry = loadTrace(sessionId, turnId);
+  const section = h('section', { class: 'trace', 'aria-label': '调用链' });
+  const view = entry?.state === 'ready' ? vm.traceView(entry.data) : null;
+  section.append(h('div', { class: 'trace-head' }, h('span', { text: '调用链' }),
+    view?.helperShare !== null && view?.helperShare !== undefined ? h('small', { text: `辅助调用占 ${Math.round(view.helperShare * 100)}% token` }) : null));
+  if (!entry || entry.state === 'loading') { section.append(h('p', { class: 'trace-empty', text: '读取中…' })); return section; }
+  if (entry.state === 'error' || !view) {
+    section.append(h('p', { class: 'trace-empty' }, `未能读取：${entry.error || '没有记录'} `, button('重试', 'trace-retry', { turnId }, 'btn small ghost')));
+    return section;
+  }
+  section.append(h('ol', { class: 'trace-list' }, view.rows.map((row) => {
+    const fill = h('span', { class: 'trace-fill' });
+    fill.style.width = `${Math.max(row.share > 0 ? 2 : 0, Math.round(row.share * 100))}%`;
+    return h('li', { class: `trace-row ${row.status || ''}` },
+      h('span', { class: 'trace-stage', text: row.label }),
+      h('span', { class: 'trace-bar', 'aria-hidden': 'true' }, fill),
+      h('span', { class: 'trace-ms', text: row.status === 'skipped' ? row.statusLabel : row.ms !== null ? vm.secs(row.ms) : row.statusLabel }),
+      row.note || row.usage ? h('span', { class: 'trace-note', text: [row.status !== 'ok' && row.status !== 'skipped' ? row.statusLabel : '', row.note, row.usage].filter(Boolean).join(' · ') }) : null);
+  })));
+  if (view.terminalCode) section.append(h('p', { class: 'trace-empty', text: `结束：${view.statusLabel} · ${view.terminalCode}` }));
+  return section;
 }
 
 function summaryFooter(item, ctx, canAct) {
   const key = vm.timelineKey(item);
   const expanded = expandedTurns.has(key);
   const verification = vm.verificationState(item.verification);
-  const signature = JSON.stringify({ usage: item.__usage || null, v: item.verification || null, canAct, expanded, d: ctx.delight, inc: item.incomplete, src: item.sources?.length || 0, wb: item.webBackend || '' });
+  const signature = JSON.stringify({ usage: item.__usage || null, v: item.verification || null, canAct, expanded, d: ctx.delight, inc: item.incomplete, src: item.sources?.length || 0, wb: item.webBackend || '', tr: expanded ? peekTrace(item.turnId)?.state || '' : '' });
   return h('footer', { class: 'turn-foot', dataset: { footerSignature: signature } },
     h('div', { class: 'turn-sum' },
       h('button', { type: 'button', class: 'sum-toggle', 'aria-expanded': expanded ? 'true' : 'false', 'aria-label': expanded ? '收起用量详情' : '展开用量详情', dataset: { action: 'toggle-turn-details', itemKey: key } },

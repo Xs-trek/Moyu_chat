@@ -259,8 +259,8 @@ public class ChatCoordinatorE2eTest {
         for (int i = 0; i < timeline.length(); i++) {
             JSONObject row = timeline.optJSONObject(i);
             if ("message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) sawAssistant = true;
-            if ("usage".equals(row.optString("kind"))) sawUsage = true;
         }
+        sawUsage = lastTurnUsage(sessionId) != null;
         assertTrue("assistant answer recorded", sawAssistant);
         assertTrue("usage recorded from stream", sawUsage);
         assertTrue(session.optBoolean("canSend"));
@@ -676,11 +676,11 @@ public class ChatCoordinatorE2eTest {
         });
         assertNull("interrupt during preflight must prevent the main provider request", server.takeRequest(800, TimeUnit.MILLISECONDS));
         JSONArray rows = app.database().timeline(sessionId);
-        assertEquals("cancelled-before-main keeps the user and usage, but removes the empty live assistant", 2, rows.length());
+        assertEquals("cancelled-before-main keeps the user row and removes the empty live assistant", 1, rows.length());
         assertEquals("user", rows.getJSONObject(0).optString("role"));
         assertEquals("cancel while routing", rows.getJSONObject(0).optString("text"));
-        JSONObject usage = rows.getJSONObject(1);
-        assertEquals("usage", usage.getString("kind"));
+        JSONObject usage = lastTurnUsage(sessionId);
+        assertNotNull("the router call is still accounted on the turn", usage);
         assertEquals(1, usage.getInt("auxiliaryCallCount"));
         assertTrue(usage.getBoolean("usageIncomplete"));
         assertFalse("cancelled request did not report usage; do not invent zero", usage.has("totalInputTokens"));
@@ -879,12 +879,11 @@ public class ChatCoordinatorE2eTest {
         await("reasoning turn completes", () -> "completed".equals(activeSession(latestView()).optString("state")));
 
         JSONArray timeline = app.database().timeline(sessionId);
-        JSONObject assistant = null, usage = null;
+        JSONObject assistant = null, usage = lastTurnUsage(sessionId);
         for (int i = 0; i < timeline.length(); i++) {
             JSONObject row = timeline.optJSONObject(i);
             if (row == null) continue;
             if ("message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) assistant = row;
-            if ("usage".equals(row.optString("kind"))) usage = row;
         }
         assertNotNull(assistant); assertEquals("visible answer", assistant.optString("text")); assertEquals("private thought", assistant.optString("reasoning"));
         assertNotNull(usage); assertEquals(10, usage.optInt("inputTokens")); assertEquals(4, usage.optInt("cachedInputTokens"));
@@ -1362,14 +1361,22 @@ public class ChatCoordinatorE2eTest {
     }
 
     private JSONObject turnUsage(String sessionId) throws Exception {
-        JSONArray rows = app.database().timeline(sessionId);
-        JSONObject usage = null; int count = 0;
-        for (int i = 0; i < rows.length(); i++) {
-            JSONObject row = rows.getJSONObject(i);
-            if ("usage".equals(row.optString("kind"))) { usage = row; count++; }
+        JSONArray turns = app.database().turns(sessionId);
+        assertEquals("a user turn has one durable turn record", 1, turns.length());
+        for (int i = 0; i < app.database().timeline(sessionId).length(); i++) {
+            assertNotEquals("usage is never a timeline row", "usage", app.database().timeline(sessionId).getJSONObject(i).optString("kind"));
         }
-        assertEquals("a user turn has one durable usage row", 1, count);
-        return usage;
+        return turns.getJSONObject(0).getJSONObject("usage");
+    }
+
+    /** Usage summary of the session's latest turn that made model calls, or null. */
+    private JSONObject lastTurnUsage(String sessionId) {
+        JSONArray turns = app.database().turns(sessionId);
+        for (int i = turns.length() - 1; i >= 0; i--) {
+            JSONObject usage = turns.optJSONObject(i).optJSONObject("usage");
+            if (usage != null && usage.length() > 0) return usage;
+        }
+        return null;
     }
 
     @Test public void minimalWebPlannerUsageIsIncludedEvenWhenItChoosesNoRetrieval() throws Exception {
@@ -1489,12 +1496,11 @@ public class ChatCoordinatorE2eTest {
         assertTrue("second parent round must receive child tool result", requestBodies.stream().anyMatch(body -> body.contains("\"role\":\"tool\"") && body.contains("child finding")));
 
         JSONArray rows = app.database().timeline(sessionId);
-        JSONObject assistant = null, usage = null;
+        JSONObject assistant = null, usage = lastTurnUsage(sessionId);
         int assistantCount = 0;
         for (int i = 0; i < rows.length(); i++) {
             JSONObject row = rows.optJSONObject(i); if (row == null) continue;
-            if ("message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) { assistant = row; assistantCount++; }
-            if ("usage".equals(row.optString("kind"))) usage = row;
+            if ("message".equals(row.optString("kind")) && "assistant".equals(row.optString("role"))) { assistantCount++; assistant = row; }
         }
         assertEquals("tool decision must not create an extra visible assistant turn", 1, assistantCount);
         assertNotNull(assistant);

@@ -44,8 +44,8 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask）、`WebOrchestrator`（规划）、`MoyuWebService`（检索/抓取） |
 | 观察 | `TurnUsage`（按主调用 / 辅助调用 / 子任务分类，并按发起阶段归属每次模型调用）、`TurnTrace`（每个阶段的状态、耗时、判断摘要，跳过时记录原因） |
 | 存储 | `ChatDatabase`（`moyu-beta.db`，schema 1）、`ChatMediaStore`、`ChatSecretStore` |
-| 前端 | `src/bridge.js`（intent 发送、视图接收）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/mascot.js`（像素小鱼与彩蛋）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
-| 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |
+| 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/mascot.js`（像素小鱼与彩蛋）、`src/trace.js`（调用链按需读取与缓存）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
+| 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。调用链只通过 `turn.trace.get` 按需读取，不随视图推送；用量存在 `turns` 表，由原生按原有形状投影成 `kind: usage` 条目。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |
 | 契约 | `contract/moyu-chat-contract.d.ts`：intent 与视图模型类型，改动原生视图或 intent 时同步更新 |
 
 ## 构建与验证

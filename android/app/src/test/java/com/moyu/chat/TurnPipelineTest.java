@@ -79,21 +79,50 @@ public class TurnPipelineTest {
         } catch (Exception e) { throw new RuntimeException(e); }
     }
 
+    /** Persisted trace of the session's latest finished turn, read back from the database. */
+    private static final class Trace {
+        final JSONObject turn;
+        Trace(JSONObject turn) { this.turn = turn; }
+        String terminalStatus() { return turn.optString("status"); }
+        JSONObject span(String stage) {
+            JSONArray spans = turn.optJSONArray("spans");
+            for (int i = spans.length() - 1; i >= 0; i--) if (stage.equals(spans.optJSONObject(i).optString("stage"))) return spans.optJSONObject(i);
+            return null;
+        }
+        String status(String stage) { JSONObject s = span(stage); return s == null ? null : s.optString("status"); }
+        String reason(String stage) { JSONObject s = span(stage); return s == null ? null : s.optString("reason"); }
+        JSONObject usage(String stage) { JSONObject s = span(stage); return s == null ? null : s.optJSONObject("usage"); }
+        java.util.List<String> stages(String status) {
+            java.util.ArrayList<String> out = new java.util.ArrayList<>();
+            JSONArray spans = turn.optJSONArray("spans");
+            for (int i = 0; i < spans.length(); i++) if (status.equals(spans.optJSONObject(i).optString("status"))) out.add(spans.optJSONObject(i).optString("stage"));
+            return out;
+        }
+    }
+
+    private Trace finishedTrace(String sessionId) {
+        JSONArray turns = app.database().turns(sessionId);
+        if (turns.length() == 0) return null;
+        JSONObject last = turns.optJSONObject(turns.length() - 1);
+        if ("running".equals(last.optString("status"))) return null;
+        return new Trace(app.database().turnTrace(sessionId, last.optString("turnId")));
+    }
+
     /** Sends one message in a fresh session and returns the finished turn's trace. */
-    private TurnTrace runTurn(String contextMode, String text) throws Exception {
+    private Trace runTurn(String contextMode, String text) throws Exception {
         post("chat.session.create", new JSONObject().put("providerId", "p").put("contextMode", contextMode).put("webMode", ChatTurnOptions.WEB_OFF));
         await("session", () -> latestView() != null && !latestView().optString("activeLocalSessionId", "").isEmpty());
         String sessionId = latestView().optString("activeLocalSessionId");
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", text));
-        await("turn finished", () -> coordinator.lastTrace(sessionId) != null && !coordinator.lastTrace(sessionId).terminalStatus().isEmpty());
-        return coordinator.lastTrace(sessionId);
+        await("turn finished", () -> finishedTrace(sessionId) != null);
+        return finishedTrace(sessionId);
     }
 
     @Test public void minimalModeRunsOnlyTheMainCallAndSaysWhyHelpersWereSkipped() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) { return chat("minimal answer"); }
         });
-        TurnTrace trace = runTurn(ContextMode.MINIMAL, "hello");
+        Trace trace = runTurn(ContextMode.MINIMAL, "hello");
 
         assertEquals(TurnTrace.OK, trace.terminalStatus());
         assertEquals(Arrays.asList(TurnTrace.ACCEPT, TurnTrace.CONTEXT, TurnTrace.WEB_PLAN, TurnTrace.TOOLS, TurnTrace.GENERATE), trace.stages(TurnTrace.OK));
@@ -104,13 +133,38 @@ public class TurnPipelineTest {
         assertEquals(1, trace.usage(TurnTrace.GENERATE).optInt("calls"));
         assertNull("no helper call was made", trace.usage(TurnTrace.ROUTE));
         assertEquals(1, server.getRequestCount());
+
+        // The UI reads the same trace on demand; the full view never carries it.
+        String sessionId = latestView().optString("activeLocalSessionId");
+        String turnId = trace.turn.optString("turnId");
+        post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId));
+        String request = "r" + requestId;
+        await("trace result", () -> resultFor(request) != null);
+        JSONObject data = resultFor(request).optJSONObject("data");
+        assertNotNull(data);
+        assertEquals(turnId, data.optString("turnId"));
+        assertTrue(data.getJSONArray("spans").length() >= 9);
+        assertFalse("views never carry traces", latestView().toString().contains("\"spans\""));
+        JSONObject usageRow = null;
+        JSONArray messages = latestView().getJSONObject("activeSession").getJSONArray("messages");
+        for (int i = 0; i < messages.length(); i++) if ("usage".equals(messages.getJSONObject(i).optString("kind"))) usageRow = messages.getJSONObject(i);
+        assertNotNull("the view still shows the turn's usage row", usageRow);
+        assertEquals(turnId, usageRow.optString("turnId"));
+        assertEquals(100, usageRow.optInt("inputTokens"));
+    }
+
+    private JSONObject resultFor(String request) {
+        synchronized (host.envelopes) {
+            for (JSONObject envelope : host.envelopes) if ("intent.result".equals(envelope.optString("type")) && request.equals(envelope.optString("requestId"))) return envelope;
+        }
+        return null;
     }
 
     @Test public void standardModeWatchesTheBudgetButNeverRoutesOrVerifies() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) { return chat("standard answer"); }
         });
-        TurnTrace trace = runTurn(ContextMode.STANDARD, "hello");
+        Trace trace = runTurn(ContextMode.STANDARD, "hello");
 
         assertEquals(TurnTrace.OK, trace.terminalStatus());
         assertEquals("mode_off", trace.reason(TurnTrace.ROUTE));
@@ -129,7 +183,7 @@ public class TurnPipelineTest {
                 return chat("not a verifier verdict");
             }
         });
-        TurnTrace trace = runTurn(ContextMode.SMART, "Find the root cause of this crash");
+        Trace trace = runTurn(ContextMode.SMART, "Find the root cause of this crash");
 
         assertEquals(TurnTrace.OK, trace.terminalStatus());
         assertEquals(TurnTrace.OK, trace.status(TurnTrace.ROUTE));
@@ -139,9 +193,7 @@ public class TurnPipelineTest {
         assertTrue(trace.usage(TurnTrace.VERIFY).optInt("calls") >= 1);
         assertEquals(100, trace.usage(TurnTrace.ROUTE).optInt("inputTokens"));
 
-        JSONArray json = trace.toJson();
-        JSONObject route = null;
-        for (int i = 0; i < json.length(); i++) if (TurnTrace.ROUTE.equals(json.getJSONObject(i).optString("stage"))) route = json.getJSONObject(i);
+        JSONObject route = trace.span(TurnTrace.ROUTE);
         assertNotNull(route);
         assertEquals("debug", route.getJSONObject("detail").optString("taskType"));
         assertEquals(1, route.getJSONObject("usage").optInt("calls"));
@@ -164,9 +216,9 @@ public class TurnPipelineTest {
         assertTrue("router call started", routerHeld.await(10, TimeUnit.SECONDS));
         post("chat.session.interrupt", new JSONObject().put("localSessionId", sessionId));
         release.countDown();
-        await("turn finished", () -> coordinator.lastTrace(sessionId) != null && !coordinator.lastTrace(sessionId).terminalStatus().isEmpty());
+        await("turn finished", () -> finishedTrace(sessionId) != null);
 
-        TurnTrace trace = coordinator.lastTrace(sessionId);
+        Trace trace = finishedTrace(sessionId);
         assertNotEquals(TurnTrace.OK, trace.terminalStatus());
         assertNull("generation never started", trace.status(TurnTrace.GENERATE));
         assertEquals("only the router request reached the provider", 1, server.getRequestCount());

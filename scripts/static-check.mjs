@@ -54,7 +54,10 @@ for (const file of ['ProviderContinuationIdentity', 'LocalKnowledgeStore', 'Smar
   if (/putSetting\(|\.setting\(/.test(read(`android/app/src/main/java/com/moyu/chat/${file}.java`))) fail(`${file} must not keep per-entity state in settings`);
 }
 // timeline.kind mirrors body.kind so queries never pattern-match JSON text.
-if (!db.includes('local_seq INTEGER NOT NULL,kind TEXT NOT NULL') || !db.includes("t.kind='usage'") || db.includes("instr(t.body,'\\\"kind")) fail('timeline queries must use the kind column');
+if (!db.includes('local_seq INTEGER NOT NULL,kind TEXT NOT NULL') || db.includes("instr(t.body,'\\\"kind")) fail('timeline queries must use the kind column');
+// Turn records: usage and stage traces live beside the timeline, owned by the session and rewound with it.
+if (!db.includes('CREATE TABLE turns(') || !db.includes('CREATE TABLE turn_spans(') || !db.includes('REFERENCES turns(turn_id) ON DELETE CASCADE')) fail('turn records and stage spans need their own tables');
+if (!db.includes('SELECT usage FROM turns WHERE started_at>=?') || !db.includes('db.delete("turns", "session_id=? AND user_seq>=?"') || !db.includes("terminal_code='process_died'")) fail('usage queries, rollback and cold-start recovery must cover turn records');
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 for (const marker of ['protocol', 'auth_mode', 'reasoning_wire', 'thinking_mode', 'thinking_budget_tokens', 'continuation_mode']) if (!db.includes(marker)) fail(`deployment-scoped model/session capability persistence missing: ${marker}`);
@@ -93,6 +96,9 @@ for (const stage of ['ACCEPT', 'CONTEXT', 'ROUTE', 'CHECKPOINT', 'WEB_PLAN', 'TO
   if (!coordinator.includes(`TurnTrace.${stage}`)) fail(`turn stage ${stage} must record a trace span`);
 }
 if (!turnPipeline.includes('r.trace().skip(TurnTrace.ROUTE') || !turnPipeline.includes('r.trace().skip(TurnTrace.CHECKPOINT') || !turnPipeline.includes('r.trace().skip(TurnTrace.WEB_RETRIEVE') || !coordinator.includes('r.trace().skip(TurnTrace.VERIFY')) fail('skipped helper stages must record why they were skipped');
+if (/appendTimeline\([^)]*usage/.test(coordinator) || coordinator.includes('usageKey')) fail('usage must be stored on the turn record, never as a timeline row');
+if (!turnPipeline.includes('db.completeTurn(') || !coordinatorOnly.includes('static JSONArray withTurnUsage(')) fail('finished turns must persist their trace, and the view must project usage from turn records');
+if (!coordinatorOnly.includes('case "turn.trace.get"') || coordinatorOnly.includes('"spans"')) fail('turn traces are read on demand through turn.trace.get, never pushed with the view');
 if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
 if (!coordinator.includes('contexts.buildCommitted(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');

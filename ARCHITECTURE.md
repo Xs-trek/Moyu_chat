@@ -56,14 +56,16 @@ providers        shared endpoint + credential_epoch (bumped when a new key is st
 model_profiles   one deployment: wire protocol, limits, capabilities, catalog provenance
 sessions         identity, lineage (parent / origin snapshot), frozen deployment, per-session
                  choices, derived context state, knowledge_indexed_at
-timeline         one JSON item per row; kind (message / usage / error) mirrors body.kind
+timeline         one JSON item per row (what the user sees); kind (message / error) mirrors body.kind
+turns            one accepted user turn: frozen turn config, usage summary, status / terminal code
+turn_spans       the turn's pipeline stages: status, skip reason, duration, helper usage, decision
 snapshots        immutable branch origin + snapshot_items
 knowledge_fts    FTS4 lexical index, scope chat:<session> / snapshot:<snapshot>
 verifier_labels  explicit verifier feedback per calibration key (bounded)
 settings         app preferences only
 ```
 
-The layout follows the common local-agent pattern (OpenAI Agents SDK `SQLiteSession`: a session table plus an ordered JSON item log; its `AdvancedSQLiteSession` adds per-turn usage and branch structure as side tables). Per-turn call traces for the observation work will be added the same way, as side tables keyed by session and turn, without changing the item log.
+The layout follows the common local-agent pattern (OpenAI Agents SDK `SQLiteSession`: a session table plus an ordered JSON item log; its `AdvancedSQLiteSession` adds per-turn usage and branch structure as side tables). Turn records and their stage spans are such side tables: usage is stored on `turns` and projected into the view as a `kind: usage` row after the turn's reply, so the frontend contract did not change; the trace is read on demand with `turn.trace.get` (the intent result carries `data`).
 
 ## 3. Provider / Model / Session separation
 

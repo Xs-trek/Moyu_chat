@@ -2,7 +2,6 @@ package com.moyu.chat;
 
 import org.json.JSONObject;
 
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -11,8 +10,8 @@ import java.util.concurrent.atomic.AtomicReference;
 final class TurnControl implements ClientToolRuntime.TurnCancellation {
     final TurnUsage usage = new TurnUsage();
     final TurnTrace trace = new TurnTrace();
-    final String usageKey = "usage:turn:" + UUID.randomUUID();
-    final boolean[] usagePersisted = new boolean[]{false};
+    /** Durable turn record id; set when the turn is accepted (ChatDatabase.beginTurn). */
+    volatile String turnId;
     JSONObject usageState;
     long requestStartedNanos;
     private final AtomicBoolean cancelled = new AtomicBoolean(false);

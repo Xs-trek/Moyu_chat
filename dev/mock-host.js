@@ -66,8 +66,34 @@ function emitPatch(s, item) {
       webPreparingStage: d.webPreparingStage ?? null, postProcessingStage: d.postProcessingStage ?? null }, item } });
 }
 
-function result(requestId, ok = true, summaryText = '') {
-  setTimeout(() => dispatch({ version: 1, type: 'intent.result', requestId, ok, ...(ok ? {} : { error: { summary: summaryText } }) }), 0);
+function result(requestId, ok = true, summaryText = '', data = undefined) {
+  setTimeout(() => dispatch({ version: 1, type: 'intent.result', requestId, ok, ...(ok ? {} : { error: { summary: summaryText } }), ...(data === undefined ? {} : { data }) }), 0);
+}
+
+/** A plausible stage trace for a finished reply, shaped like ChatDatabase.turnTrace(). */
+function mockTrace(s, turnId) {
+  const reply = s?.messages.find((x) => x.turnId === turnId);
+  if (!reply) throw new Error('turn not found');
+  const mode = s.contextMode || 'standard';
+  const smart = mode === 'smart';
+  const web = Boolean(reply.sources?.length);
+  const skip = (stage, reason) => ({ stage, status: 'skipped', durationMs: 0, reason });
+  const ok = (stage, durationMs, detail, usage) => ({ stage, status: 'ok', durationMs, detail, ...(usage ? { usage } : {}) });
+  const spans = [
+    ok('accept', 3, { contextMode: mode, effectiveContextMode: mode, harnessPreset: 'balanced', webMode: s.webMode }),
+    ok('context', 21, { messages: s.messages.filter((x) => x.kind === 'message').length, truncated: false, compactionDue: false }),
+    smart ? ok('route', 840, { routed: true, domain: 'writing', taskType: 'explain', depth: 'standard', confidence: 0.86 }, { calls: 1, inputTokens: 1650, outputTokens: 64 }) : skip('route', 'mode_off'),
+    mode === 'minimal' ? skip('checkpoint', 'mode_off') : skip('checkpoint', 'within_budget'),
+    ok('web_plan', web && smart ? 620 : 1, { webMode: s.webMode, useWeb: web, plannerCalled: web && smart, intent: web ? 'fresh_facts' : 'none', queries: web ? ['长文 阅读 排版 行宽', 'CJK line length readability'] : [], urls: 0 },
+      web && smart ? { calls: 1, inputTokens: 980, outputTokens: 120 } : undefined),
+    ok('tools', 2, { webExecution: web ? 'host' : 'none', clientTools: '', schemaTokens: 0, schemasDropped: false }),
+    web ? ok('web_retrieve', 1640, { backend: reply.webBackend || 'Moyu Web · Exa + Fetch', sources: reply.sources.length, evidenceChars: 9400, evidenceCap: 24000 }) : skip('web_retrieve', 'web_not_needed'),
+    ok('generate', 6200, { rounds: 1, clientToolBatches: 0, subagents: 0, usedClientWeb: false, sources: reply.sources?.length || 0, outputChars: reply.text.length }, { calls: 1, inputTokens: 18432, outputTokens: 1210 }),
+    smart && reply.verification ? ok('verify', 1900, { status: 'valid', verdict: reply.verification.verdict || 'pass', risk: reply.verification.risk ?? 0.12, action: reply.verification.action || 'accept', repairAttempted: Boolean(reply.verification.repairAttempted), repaired: Boolean(reply.verification.repaired), attempts: reply.verification.repaired ? 2 : 1 }, { calls: reply.verification.repaired ? 2 : 1, inputTokens: 5200, outputTokens: 260 })
+      : skip('verify', smart ? 'not_needed' : 'mode_off'),
+  ];
+  if (smart && reply.verification?.repairAttempted) spans.push(ok('repair', 3100, { repaired: Boolean(reply.verification.repaired) }, { calls: 1, inputTokens: 6100, outputTokens: 980 }));
+  return { turnId, status: reply.incomplete ? 'cancelled' : 'ok', terminalCode: reply.incomplete ? (reply.terminalCode || 'cancelled') : '', config: { contextMode: mode, model: s.model }, usage: {}, spans };
 }
 
 function notice(text) { window.dispatchEvent(new CustomEvent('moyu:notice', { detail: { level: 'info', text: `[mock] ${text}` } })); }
@@ -76,7 +102,7 @@ function notice(text) { window.dispatchEvent(new CustomEvent('moyu:notice', { de
 function startStream(s, text, { web = s.webMode === 'on', fail = false } = {}) {
   const user = { localSeq: nextSeq(s), kind: 'message', role: 'user', text, createdAt: now() };
   s.messages.push(user);
-  const reply = { localSeq: nextSeq(s), kind: 'message', role: 'assistant', text: '', reasoning: '', model: s.model, modelName: s.modelName, modelProfileId: s.modelProfileId,
+  const reply = { localSeq: nextSeq(s), turnId: `turn-live-${Date.now()}`, kind: 'message', role: 'assistant', text: '', reasoning: '', model: s.model, modelName: s.modelName, modelProfileId: s.modelProfileId,
     reasoningAvailable: Boolean(s.reasoningLevels), reasoningEffort: s.reasoningEffort, streaming: true, streamStage: 'preparing', createdAt: now() };
   s.messages.push(reply);
   s.composerDraft = '';
@@ -194,6 +220,11 @@ function handle(type, p) {
 window.MoyuHost = {
   postMessage(raw) {
     const message = JSON.parse(raw);
+    if (message.type === 'turn.trace.get') {
+      try { result(message.requestId, true, '', mockTrace(findSession(message.payload?.localSessionId), message.payload?.turnId)); }
+      catch (error) { result(message.requestId, false, error.message); }
+      return;
+    }
     try { handle(message.type, message.payload || {}); result(message.requestId); }
     catch (error) { result(message.requestId, false, error.message); }
   },

@@ -121,8 +121,7 @@ final class ProviderRoundLoop {
 
     private void persistUsageProjection() throws Exception {
         refreshUsageProjection();
-        if (turnControl.usagePersisted[0]) p.db.replaceTimelineBody(turnControl.usageKey, usageState);
-        else { p.db.appendTimeline(id, turnControl.usageKey, usageState); turnControl.usagePersisted[0] = true; }
+        p.db.updateTurnUsage(turnControl.turnId, usageState);
     }
 
     private void commitRoundUsage() throws Exception {

@@ -57,8 +57,6 @@ final class TurnPipeline {
     final FocusedSubagentService focusedSubagent = new FocusedSubagentService();
     private final WebOrchestrator webOrchestrator = new WebOrchestrator();
     final MoyuWebService webService = new MoyuWebService();
-    /** Last finished trace per session; in-memory until traces are persisted with their turn. */
-    private final Map<String, TurnTrace> lastTraces = new java.util.concurrent.ConcurrentHashMap<>();
 
     TurnPipeline(Env env, ChatDatabase db, ContextBuilder contexts, ChatMediaStore mediaStore, ChatTransportRegistry transports) {
         this.env = env; this.db = db; this.contexts = contexts; this.mediaStore = mediaStore; this.transports = transports;
@@ -125,8 +123,11 @@ final class TurnPipeline {
                 .put("reasoningEffort", turnConfig.reasoningEffort)
                 .put("contextMode", turnConfig.contextMode)
                 .put("effectiveContextMode", r.contextPolicy.effectiveLabel);
-        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live);
-        turnControl.usageState = new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString());
+        String turnId = UUID.randomUUID().toString();
+        turnControl.turnId = turnId;
+        r.live.put("turnId", turnId);
+        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, turnConfigJson(r));
+        turnControl.usageState = new JSONObject().put("createdAt", Instant.now().toString());
         env.setStarting(id, true);
         r.requestStartedNanos = System.nanoTime();
         turnControl.requestStartedNanos = r.requestStartedNanos;
@@ -137,6 +138,18 @@ final class TurnPipeline {
         env.emitView();
         if (cancelled(r)) return null;
         return r;
+    }
+
+    /** What this turn was configured to do; stored with the turn so results stay attributable after settings change. */
+    private static JSONObject turnConfigJson(TurnRun r) throws org.json.JSONException {
+        TurnConfig c = r.config;
+        return new JSONObject().put("providerId", c.providerId).put("modelProfileId", c.modelProfileId == null ? "" : c.modelProfileId)
+                .put("model", c.model).put("modelName", c.modelName).put("protocol", r.provider.protocol)
+                .put("contextMode", c.contextMode).put("effectiveContextMode", r.contextPolicy.effectiveLabel)
+                .put("harnessPreset", c.harnessPreset).put("webMode", c.webMode).put("subagentMode", r.adaptivePolicy.subagentMode)
+                .put("reasoningEffort", c.reasoningEffort).put("thinkingMode", c.thinkingMode).put("thinkingBudgetTokens", c.thinkingBudgetTokens)
+                .put("continuationMode", c.continuationMode).put("clientToolCalling", c.clientToolCalling)
+                .put("contextTokens", c.contextTokens).put("inputTokens", c.inputTokens).put("maxOutputTokens", c.maxOutputTokens);
     }
 
     // ---------- context ----------
@@ -527,8 +540,7 @@ final class TurnPipeline {
                     if (visibleOutput > 0) usageState.put("outputTokensPerSecond", visibleOutput * 1000.0d / outputDurationMs);
                 }
             }
-            if (control.usagePersisted[0]) db.replaceTimelineBody(control.usageKey, usageState);
-            else { db.appendTimeline(r.id, control.usageKey, usageState); control.usagePersisted[0] = true; }
+            db.updateTurnUsage(control.turnId, usageState);
         } catch (Exception ignored) { }
     }
 
@@ -538,8 +550,7 @@ final class TurnPipeline {
                 control.usage.project(control.usageState);
                 control.usageState.put("requestDurationMs", Math.max(0L,
                         (System.nanoTime() - control.requestStartedNanos) / 1_000_000L));
-                if (control.usagePersisted[0]) db.replaceTimelineBody(control.usageKey, control.usageState);
-                else { db.appendTimeline(id, control.usageKey, control.usageState); control.usagePersisted[0] = true; }
+                db.updateTurnUsage(control.turnId, control.usageState);
             } catch (Exception ignored) { }
         }
     }
@@ -555,9 +566,7 @@ final class TurnPipeline {
         if (terminalError == null && !hasVisibleOutput) {
             terminalError = new String[]{"empty_assistant_output", "Provider completed without visible text or image output"};
         }
-        r.trace().terminate(terminalError);
-        try { r.trace().attachUsage(r.control.usage.stageUsage()); } catch (Exception ignored) { }
-        lastTraces.put(id, r.trace());
+        recordTrace(r.control, terminalError);
         String finalState = terminalError == null || "cancelled".equals(terminalError[0]) ? "completed" : "failed";
         try {
             JSONObject finished = null;
@@ -585,7 +594,23 @@ final class TurnPipeline {
         }
     }
 
-    TurnTrace lastTrace(String sessionId) { return sessionId == null ? null : lastTraces.get(sessionId); }
+    /** Settles the turn record with its terminal status, final usage and stage trace. */
+    private void recordTrace(TurnControl control, String[] terminalError) {
+        control.trace.terminate(terminalError);
+        try {
+            control.trace.attachUsage(control.usage.stageUsage());
+            // A turn that never reached a model keeps no usage summary, so it never shows as a usage row.
+            db.completeTurn(control.turnId, control.trace.terminalStatus(), terminalError == null ? "" : terminalError[0],
+                    control.usage.hasRequests() ? control.usageState : null, control.trace.toJson());
+        } catch (Exception error) { env.showMessage("turn trace not saved: " + safe(error)); }
+    }
+
+    /** Last-resort path for an exception that escaped the stages: keep whatever usage and trace the turn produced. */
+    void abandon(String id, TurnControl control, String code) {
+        if (control == null || control.turnId == null) return;
+        persistFinalUsage(id, control);
+        recordTrace(control, new String[]{code, code});
+    }
 
     void attachProviderContinuation(JSONObject seed, TurnConfig turnConfig, JSONArray items) throws Exception {
         if (seed == null || turnConfig == null || turnConfig.provider == null || items == null || items.length() == 0
