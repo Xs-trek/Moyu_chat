@@ -30,7 +30,6 @@ final class LocalKnowledgeStore {
     }
 
     private static final int MAX_CANDIDATES = 96;
-    private static final String INDEX_MARKER_PREFIX = "knowledgeIndex:";
     private final ChatDatabase db;
 
     LocalKnowledgeStore(ChatDatabase db) { this.db = db; }
@@ -125,8 +124,7 @@ final class LocalKnowledgeStore {
     }
 
     private void ensureSessionIndexed(ChatDatabase.Session session) {
-        String markerKey = INDEX_MARKER_PREFIX + session.id;
-        String marker = db.setting(markerKey, "");
+        String marker = db.knowledgeIndexedAt(session.id);
         if (session.updatedAt != null && session.updatedAt.equals(marker)) return;
         String scope = chatScope(session.id);
         JSONArray items = db.timeline(session.id);
@@ -141,7 +139,7 @@ final class LocalKnowledgeStore {
             }
             writable.setTransactionSuccessful();
         } finally { writable.endTransaction(); }
-        db.putSetting(markerKey, session.updatedAt == null ? "" : session.updatedAt);
+        db.markKnowledgeIndexed(session.id, session.updatedAt);
     }
 
     private static void indexMessage(SQLiteDatabase writable, String scope, String itemRef, int ordinal, JSONObject item) {
@@ -160,5 +158,4 @@ final class LocalKnowledgeStore {
 
     static String snapshotScope(String snapshotId) { return "snapshot:" + snapshotId; }
     static String chatScope(String sessionId) { return "chat:" + (sessionId == null ? "" : sessionId); }
-    static String indexMarkerKey(String sessionId) { return INDEX_MARKER_PREFIX + sessionId; }
 }

@@ -8,7 +8,7 @@ import org.junit.Test;
 public class ContextModeTest {
     @Test public void explicitModesHaveStableHarnessStrength() {
         ChatDatabase.Session session = new ChatDatabase.Session();
-        ChatDatabase.Snapshot branch = new ChatDatabase.Snapshot(); branch.sourceType = SnapshotService.SOURCE_CHAT;
+        ChatDatabase.Snapshot branch = new ChatDatabase.Snapshot();
 
         session.contextMode = ContextMode.MINIMAL;
         ContextMode.Policy minimal = ContextMode.resolve(session, branch);
@@ -26,7 +26,7 @@ public class ContextModeTest {
     @Test public void legacyAutoNormalizesToStandardWithoutOriginHeuristics() {
         assertEquals(ContextMode.STANDARD, ContextMode.normalize("auto"));
         ChatDatabase.Session session = new ChatDatabase.Session(); session.contextMode = "auto";
-        ChatDatabase.Snapshot branch = new ChatDatabase.Snapshot(); branch.sourceType = SnapshotService.SOURCE_CHAT;
+        ChatDatabase.Snapshot branch = new ChatDatabase.Snapshot();
         ContextMode.Policy policy = ContextMode.resolve(session, branch);
         assertFalse(policy.routerEnabled);
         assertTrue(policy.checkpointEnabled);

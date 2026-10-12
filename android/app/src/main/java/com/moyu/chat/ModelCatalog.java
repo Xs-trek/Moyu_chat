@@ -9,7 +9,6 @@ package com.moyu.chat;
 final class ModelCatalog {
     static final String CONFIG_AUTO = "auto";
     static final String CONFIG_MANUAL = "manual";
-    static final String CONFIG_LEGACY_MANUAL = "legacy-manual";
     static final String CATALOG_VERSION = "2026-08-28-v1";
 
     static final class Resolution {
@@ -38,7 +37,7 @@ final class ModelCatalog {
 
     static String normalizeConfigMode(String raw) {
         String value = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
-        if (CONFIG_AUTO.equals(value) || CONFIG_MANUAL.equals(value) || CONFIG_LEGACY_MANUAL.equals(value)) return value;
+        if (CONFIG_AUTO.equals(value) || CONFIG_MANUAL.equals(value)) return value;
         // Unknown/corrupt values must fail conservative: Auto may enable optional deployment capabilities.
         return CONFIG_MANUAL;
     }

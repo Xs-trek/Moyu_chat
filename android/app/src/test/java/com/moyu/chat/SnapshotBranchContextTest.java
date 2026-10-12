@@ -30,7 +30,7 @@ public class SnapshotBranchContextTest {
         db.getWritableDatabase();
         snapshots = new SnapshotService(db);
         contexts = new ContextBuilder(db);
-        db.saveProvider(provider("p1"));
+        TestDeployments.save(db, provider("p1"));
     }
 
     private static JSONObject message(String role, String text) throws Exception {
@@ -45,7 +45,7 @@ public class SnapshotBranchContextTest {
     }
 
     private ChatDatabase.Session sessionWithTurns(int turns) throws Exception {
-        ChatDatabase.Session s = db.createSession("p1", "model", null, null);
+        ChatDatabase.Session s = TestDeployments.session(db, "p1", "model", null, null);
         for (int i = 1; i <= turns; i++) {
             db.appendTimeline(s.id, "u" + i, message("user", "user turn " + i));
             db.appendTimeline(s.id, "a" + i, message("assistant", "assistant turn " + i));
@@ -71,7 +71,7 @@ public class SnapshotBranchContextTest {
     }
 
     @Test public void createLocalDropsNonVisibleKinds() throws Exception {
-        ChatDatabase.Session s = db.createSession("p1", "model", null, null);
+        ChatDatabase.Session s = TestDeployments.session(db, "p1", "model", null, null);
         db.appendTimeline(s.id, "usage", new JSONObject().put("kind", "usage").put("createdAt", Instant.now().toString()));
         db.appendTimeline(s.id, "err", new JSONObject().put("kind", "error").put("code", "x").put("createdAt", Instant.now().toString()));
         db.appendTimeline(s.id, "live", new JSONObject().put("kind", "message").put("role", "assistant").put("text", "partial").put("streaming", true).put("createdAt", Instant.now().toString()));
@@ -84,7 +84,7 @@ public class SnapshotBranchContextTest {
     }
 
     @Test public void oversizedHistoryKeepsNewestTailAndMarksTruncated() throws Exception {
-        ChatDatabase.Session s = db.createSession("p1", "model", null, null);
+        ChatDatabase.Session s = TestDeployments.session(db, "p1", "model", null, null);
         int total = 2_500;
         for (int i = 1; i <= total; i++) db.appendTimeline(s.id, "u" + i, message("user", "m" + i));
         ChatDatabase.Snapshot snapshot = snapshots.createLocal(s.id, null);
@@ -101,7 +101,7 @@ public class SnapshotBranchContextTest {
     @Test public void localBranchContextCombinesSnapshotTimelineAndPendingInput() throws Exception {
         ChatDatabase.Session source = sessionWithTurns(2); // u1 a1 u2 a2
         ChatDatabase.Snapshot snapshot = snapshots.createLocal(source.id, 4);
-        ChatDatabase.Session branch = db.createSession("p1", "model", "branch", snapshot.id, source.id);
+        ChatDatabase.Session branch = TestDeployments.session(db, "p1", "model", "branch", snapshot.id, source.id);
         db.appendTimeline(branch.id, "b-u1", message("user", "branch question"));
         db.appendTimeline(branch.id, "b-a1", message("assistant", "branch answer"));
 
@@ -116,10 +116,10 @@ public class SnapshotBranchContextTest {
     }
 
     @Test public void branchContextBudgetTrimsInheritedHistoryButKeepsPendingInput() throws Exception {
-        ChatDatabase.Session source = db.createSession("p1", "model", null, null);
+        ChatDatabase.Session source = TestDeployments.session(db, "p1", "model", null, null);
         for (int i = 1; i <= 40; i++) db.appendTimeline(source.id, "u" + i, message("user", "historic filler content number " + i + " padding"));
         ChatDatabase.Snapshot snapshot = snapshots.createLocal(source.id, null);
-        ChatDatabase.Session branch = db.createSession("p1", "model", "branch", snapshot.id, null);
+        ChatDatabase.Session branch = TestDeployments.session(db, "p1", "model", "branch", snapshot.id, null);
 
         CanonicalPrompt prompt = contexts.build(branch, 2_000, 512, "CURRENT question that must survive");
         assertTrue(prompt.truncated);
@@ -129,7 +129,7 @@ public class SnapshotBranchContextTest {
     }
 
     @Test public void incompleteAssistantRemainsPartialAcrossProjectionAndSnapshot() throws Exception {
-        ChatDatabase.Session s = db.createSession("p1", "model", null, null);
+        ChatDatabase.Session s = TestDeployments.session(db, "p1", "model", null, null);
         db.appendTimeline(s.id, "u", message("user", "question"));
         db.appendTimeline(s.id, "a", new JSONObject().put("kind", "message").put("role", "assistant")
                 .put("text", "partial result").put("incomplete", true).put("terminalCode", "cancelled")
@@ -144,7 +144,7 @@ public class SnapshotBranchContextTest {
     }
 
     @Test public void optionalCommittedContextNeverMakesBaselineTurnFail() throws Exception {
-        ChatDatabase.Session s = db.createSession("p1", "model", null, null);
+        ChatDatabase.Session s = TestDeployments.session(db, "p1", "model", null, null);
         for (int i = 1; i <= 60; i++) {
             db.appendTimeline(s.id, "u-opt-" + i, message("user", "historic user " + i + " padding padding padding"));
             db.appendTimeline(s.id, "a-opt-" + i, message("assistant", "historic assistant " + i + " padding padding padding"));

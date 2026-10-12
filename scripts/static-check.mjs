@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const VERSION_NAME = '0.0.6-beta';
 const VERSION_CODE = 6;
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 const uiRoot = join(projectRoot, 'src');
 const javaRoot = join(projectRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'moyu', 'chat');
 let failed = false;
@@ -41,14 +41,26 @@ if (/insertWithOnConflict\("sessions"[\s\S]{0,160}CONFLICT_REPLACE/.test(db)) fa
 if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery hook missing');
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
 if (!db.includes(`private static final int VERSION = ${SCHEMA_VERSION}`)) fail(`SQLite schema must be v${SCHEMA_VERSION}`);
-if (/CREATE TABLE handoffs/.test(db) || !db.includes('DROP TABLE IF EXISTS handoffs')) fail('v16 must drop the removed Remote handoff table and never recreate it');
+if (/CREATE TABLE handoffs/.test(db)) fail('the removed Remote handoff table must never be recreated');
+// Beta baseline: no pre-baseline migration chain; older/newer files are dropped and recreated.
+if (!db.includes(`static final int BASELINE_VERSION = ${SCHEMA_VERSION}`) || !db.includes('if (oldVersion < BASELINE_VERSION) { dropAll(db); onCreate(db); }') || !db.includes('public void onDowngrade(')) fail('beta baseline must reset pre-baseline and newer database files');
+if (/ALTER TABLE/.test(db)) fail('baseline schema must be created whole; post-baseline migrations need a reviewed onUpgrade step and a matching assertion here');
+// Providers persist only the shared endpoint; wire/capabilities live on Model Profile and are frozen into Session.
+if (/CREATE TABLE providers\([^)]*(protocol|auth_mode|reasoning_wire|\bmodel\b|context_tokens)/.test(db)) fail('providers must not persist deployment fields (protocol ≠ capability: they belong to Model Profile)');
+if (db.includes('legacyProfile(') || /createSession\(String providerId, String model/.test(db)) fail('legacy one-step provider/model creation must stay removed');
+// Per-entity state lives on its own rows, not in the preferences table.
+if (!db.includes('credential_epoch INTEGER NOT NULL') || !db.includes('knowledge_indexed_at TEXT NOT NULL') || !db.includes('CREATE TABLE verifier_labels(')) fail('credential epoch, knowledge index marker and verifier labels need their own columns/table');
+for (const file of ['ProviderContinuationIdentity', 'LocalKnowledgeStore', 'SmartVerifierCalibration']) {
+  if (/putSetting\(|\.setting\(/.test(read(`android/app/src/main/java/com/moyu/chat/${file}.java`))) fail(`${file} must not keep per-entity state in settings`);
+}
+// timeline.kind mirrors body.kind so queries never pattern-match JSON text.
+if (!db.includes('local_seq INTEGER NOT NULL,kind TEXT NOT NULL') || !db.includes("t.kind='usage'") || db.includes("instr(t.body,'\\\"kind")) fail('timeline queries must use the kind column');
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 for (const marker of ['protocol', 'auth_mode', 'reasoning_wire', 'thinking_mode', 'thinking_budget_tokens', 'continuation_mode']) if (!db.includes(marker)) fail(`deployment-scoped model/session capability persistence missing: ${marker}`);
 for (const marker of ['config_mode', 'catalog_key', 'catalog_version', 'catalog_source', 'harness_preset', 'client_tool_calling', 'subagent_mode']) if (!db.includes(marker)) fail(`v0.0.4 catalog/harness/tool persistence missing: ${marker}`);
-if (!db.includes('CONFIG_LEGACY_MANUAL') || !db.includes("ALTER TABLE model_profiles ADD COLUMN config_mode TEXT NOT NULL DEFAULT 'legacy-manual'")) fail('v0.0.4 migration must preserve existing v0.0.3 model profiles as manual deployments');
 if (!db.includes('static Provider deploymentProvider(Provider shared, ModelProfile profile)') || !db.includes('static Provider deploymentProvider(Provider shared, Session session)')) fail('shared Provider data must resolve through one model/session deployment snapshot before transport use');
-if (!db.includes('CREATE VIRTUAL TABLE knowledge_fts USING fts4') || !db.includes("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'")) fail('lightweight FTS4 knowledge index / auto-to-standard migration missing');
+if (!db.includes('CREATE VIRTUAL TABLE knowledge_fts USING fts4')) fail('lightweight FTS4 knowledge index missing');
 const contextMode = read('android/app/src/main/java/com/moyu/chat/ContextMode.java');
 const promptPolicy = read('android/app/src/main/java/com/moyu/chat/PromptPolicy.java');
 const modelCatalog = read('android/app/src/main/java/com/moyu/chat/ModelCatalog.java');
@@ -58,7 +70,7 @@ const clientTools = read('android/app/src/main/java/com/moyu/chat/ClientToolRunt
 const focusedSubagent = read('android/app/src/main/java/com/moyu/chat/FocusedSubagentService.java');
 const knowledgeStore = read('android/app/src/main/java/com/moyu/chat/LocalKnowledgeStore.java');
 if (!contextMode.includes('STANDARD = "standard"') || !contextMode.includes('retrievalEnabled') || !contextMode.includes('evidencePolicyEnabled')) fail('three-tier Harness policy missing');
-if (!modelCatalog.includes('CONFIG_AUTO') || !modelCatalog.includes('CONFIG_MANUAL') || !modelCatalog.includes('CONFIG_LEGACY_MANUAL') || !modelCatalog.includes('CATALOG_VERSION')) fail('v0.0.4 reviewed model catalog/config modes missing');
+if (!modelCatalog.includes('CONFIG_AUTO') || !modelCatalog.includes('CONFIG_MANUAL') || !modelCatalog.includes('CATALOG_VERSION')) fail('v0.0.4 reviewed model catalog/config modes missing');
 if (!modelCatalog.includes('return CONFIG_MANUAL;') || modelCatalog.includes('base.contains("api.anthropic.com")') || modelCatalog.includes('base.startsWith("https://opencode.ai/zen/go/v1")') || modelCatalog.includes('base.equals("https://api.openai.com")') || modelCatalog.includes('model.startsWith("gpt-5.6-")')) fail('Auto catalog overlays must fail conservative and match only exact reviewed deployment roots/model IDs');
 if (!modelValidator.includes('requireHarnessPreset(') || !modelValidator.includes('requireClientToolCalling(') || !modelValidator.includes('requireNativeWebCapabilities(') || !modelValidator.includes('requireThinkingMode(') || !modelValidator.includes('requireContinuationMode(') || !modelValidator.includes('requireTextModality(')) fail('editable Model Profile fields require strict user-facing validation instead of silent normalization');
 if (!harnessResolver.includes('shouldVerify(') || !harnessResolver.includes('SUBAGENT_AUTO') || !harnessResolver.includes('HarnessProfile.LEAN')) fail('v0.0.4 adaptive Harness/verifier/subagent policy missing');
@@ -121,7 +133,7 @@ const reasoningPolicy = read('android/app/src/main/java/com/moyu/chat/ReasoningP
 const continuationPolicy = read('android/app/src/main/java/com/moyu/chat/ProviderContinuationPolicy.java');
 if (!reasoningPolicy.includes('Third-party') || !reasoningPolicy.includes('return WIRE_NONE;')) fail('protocol must not imply optional reasoning capability for third-party endpoints');
 if (!reasoningPolicy.includes('MINIMAL = "minimal"') || !reasoningPolicy.includes('validateLevelsForProvider(') || !reasoningPolicy.includes('validateEffortForProvider(') || !reasoningPolicy.includes('reasoning wire is incompatible with selected protocol')) fail('v0.0.3 reasoning capability/wire validation missing');
-if (!db.includes('String defaultReasoning = ReasoningPolicy.DEFAULT;') || db.includes('reasoningEffort == null ? profile.defaultReasoning')) fail('Model Profile defaultReasoning must remain an inert schema-compatibility field; effort authority belongs to Session/Turn');
+if (db.includes('defaultReasoning') || db.includes('default_reasoning')) fail('Model Profile must not carry a default effort; effort authority belongs to Session/Turn');
 if (!db.includes('reasoning_levels') || !coordinator.includes('ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort)')) fail('accepted turns must validate durable session effort against the session-frozen reasoning capability boundary');
 if (!continuationPolicy.includes('static final String NONE = "none"') || !continuationPolicy.includes('static final String NATIVE = "native"')) fail('provider-private continuation must be an explicit deployment capability');
 if (!contextBuilder.includes('mode.providerContinuationEnabled && ProviderContinuationPolicy.enabled(session.continuationMode)') || !coordinator.includes('ProviderContinuationPolicy.enabled(turnConfig.continuationMode)')) fail('native continuation requires both Harness-mode and frozen deployment-capability gates');

@@ -17,8 +17,8 @@ import java.time.Instant;
 
 /**
  * Durable transcript invariants on a real (Robolectric) SQLite instance:
- * session saves never delete timeline rows, migrations preserve data, interrupted streams recover,
- * and snapshots are append-only.
+ * session saves never delete timeline rows, pre-baseline files are reset, per-entity state stays on
+ * its own rows, interrupted streams recover, and snapshots are append-only.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
@@ -40,8 +40,8 @@ public class ChatDatabaseTest {
     // ---------- session saves must never delete timeline ----------
 
     @Test public void saveSessionStateChangesPreserveTimeline() throws Exception {
-        db.saveProvider(provider("p1"));
-        ChatDatabase.Session s = db.createSession("p1", "m", null, null);
+        TestDeployments.save(db, provider("p1"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p1", "m", null, null);
         db.appendTimeline(s.id, "u1", message("user", "hello"));
         db.appendTimeline(s.id, "a1", message("assistant", "hi"));
         db.setDraft(s.id, "draft text");
@@ -65,233 +65,127 @@ public class ChatDatabaseTest {
         assertEquals("renamed", reloaded.title);
     }
 
-    // ---------- migrations ----------
+    // ---------- baseline ----------
 
-    @Test public void upgradeFromV1PreservesRowsAndAddsColumns() throws Exception {
+    @Test public void preBaselineDatabaseIsDroppedAndRecreated() throws Exception {
         db.close();
         context.deleteDatabase("moyu-chat.db");
-        createLegacyDatabase(1);
-        ChatDatabase upgraded = new ChatDatabase(context);
-        upgraded.getWritableDatabase();
-
-        ChatDatabase.Provider p = upgraded.getProvider("legacy-p");
-        assertNotNull(p);
-        assertEquals("Legacy", p.displayName);
-        assertEquals("token columns must default after v1 upgrade",
-                ContextBudgetManager.DEFAULT_CONTEXT_TOKENS, p.contextTokens);
-        assertEquals(ContextBudgetManager.DEFAULT_OUTPUT_TOKENS, p.maxOutputTokens);
-        assertEquals(ProviderAuth.BEARER, p.authMode);
-        assertEquals(ProviderAuth.X_API_KEY, upgraded.getProvider("legacy-a").authMode);
-
-        ChatDatabase.Session s = upgraded.getSession("legacy-s");
-        assertNotNull("session row must survive migration", s);
-        assertNull("parent_session_id must default to null", s.parentSessionId);
-
-        assertEquals(2, upgraded.timeline("legacy-s").length());
-        assertEquals("legacy user", upgraded.timeline("legacy-s").getJSONObject(0).optString("text"));
-
-        ChatDatabase.Snapshot snap = upgraded.getSnapshot("legacy-snap");
-        assertNotNull(snap);
-        assertEquals("snapshot columns must default after upgrade", snap.itemCount, snap.sourceItemCount);
-        assertFalse(snap.truncated);
-        JSONArray items = upgraded.snapshotItems("legacy-snap");
-        assertEquals(1, items.length());
-        assertEquals("legacy assistant", items.getJSONObject(0).optString("text"));
-    }
-
-    @Test public void upgradeFromV2PreservesSnapshotData() throws Exception {
-        db.close();
-        context.deleteDatabase("moyu-chat.db");
-        createLegacyDatabase(2);
-        ChatDatabase upgraded = new ChatDatabase(context);
-        upgraded.getWritableDatabase();
-        ChatDatabase.Snapshot snap = upgraded.getSnapshot("legacy-snap");
-        assertNotNull(snap);
-        assertEquals(1, snap.itemCount);
-        assertEquals("source_item_count must be backfilled", snap.itemCount, snap.sourceItemCount);
-        assertFalse(snap.truncated);
-        assertEquals(ProviderAuth.BEARER, upgraded.getProvider("legacy-p").authMode);
-        assertEquals(ProviderAuth.X_API_KEY, upgraded.getProvider("legacy-a").authMode);
-    }
-
-    @Test public void upgradeFromV3PreservesProviderSessionTimelineAndMigratesAuth() throws Exception {
-        db.close();
-        context.deleteDatabase("moyu-chat.db");
-        createLegacyDatabase(3);
-        ChatDatabase upgraded = new ChatDatabase(context);
-        upgraded.getWritableDatabase();
-
-        ChatDatabase.Provider openAi = upgraded.getProvider("legacy-p");
-        ChatDatabase.Provider anthropic = upgraded.getProvider("legacy-a");
-        assertNotNull(openAi);
-        assertNotNull(anthropic);
-        assertEquals(ProviderAuth.BEARER, openAi.authMode);
-        assertEquals(ProviderAuth.X_API_KEY, anthropic.authMode);
-        assertNotNull(upgraded.getSession("legacy-s"));
-        assertEquals(2, upgraded.timeline("legacy-s").length());
-        assertEquals(1, upgraded.snapshotItems("legacy-snap").length());
-    }
-
-    @Test public void upgradeFromV4CreatesDeploymentScopedModelProfileAndSessionSnapshot() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(4);
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.Provider provider = upgraded.getProvider("legacy-p");
-        assertEquals(ReasoningPolicy.WIRE_OPENAI_RESPONSES, provider.reasoningWire);
-        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
-        assertNotNull(profile); assertEquals(ContextBudgetManager.DEFAULT_CONTEXT_TOKENS, profile.contextTokens);
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertEquals(profile.id, session.modelProfileId); assertEquals(profile.contextTokens, session.contextTokens);
-        assertEquals(profile.maxOutputTokens, session.maxOutputTokens); assertEquals(ReasoningPolicy.DEFAULT, session.reasoningEffort);
-        assertEquals("text", profile.inputModalities); assertEquals("text", profile.outputModalities);
-        assertEquals("text", session.inputModalities); assertEquals("text", session.outputModalities); assertEquals(0, upgraded.draftMedia(session.id).length());
-    }
-
-    @Test public void upgradeFromV4DoesNotMisbindSessionModelOverrideToProviderDefaultProfile() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(4);
-        android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
-        raw.execSQL("UPDATE sessions SET model='legacy-session-override' WHERE local_id='legacy-s'"); raw.close();
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertEquals("legacy-session-override", session.model);
-        assertNull("an old session-level model override must not point at the provider default model profile", session.modelProfileId);
-        assertEquals(ContextBudgetManager.DEFAULT_CONTEXT_TOKENS, session.contextTokens);
-        assertEquals(ContextBudgetManager.DEFAULT_OUTPUT_TOKENS, session.maxOutputTokens);
-    }
-
-    @Test public void upgradeFromV5AddsMultimodalDefaultsWithoutChangingExistingSemantics() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(5);
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertNotNull(profile); assertNotNull(session);
-        assertEquals("text", profile.inputModalities); assertEquals("text", profile.outputModalities);
-        assertEquals("text", session.inputModalities); assertEquals("text", session.outputModalities);
-        assertEquals(0, upgraded.draftMedia(session.id).length());
-        assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
-    }
-
-    @Test public void upgradeFromV6AddsSmartContextStateWithoutChangingTranscript() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(6);
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertNotNull(session);
-        assertEquals("", session.taskProfile);
-        assertEquals("", session.contextCheckpoint);
-        assertEquals(0, session.checkpointCoveredItems);
-        assertEquals(2, upgraded.timeline(session.id).length());
-        assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
-    }
-
-    @Test public void upgradeFromV7AddsContextModeWithoutChangingTranscript() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(7);
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertNotNull(session);
-        assertEquals(ContextMode.AUTO, session.contextMode);
-        assertEquals("", session.taskProfile);
-        assertEquals("", session.contextCheckpoint);
-        assertEquals(2, upgraded.timeline(session.id).length());
-        assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
-    }
-
-    @Test public void upgradeFromV8AddsWebDefaultsAndPreservesTimeline() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(8);
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
-        assertNotNull(session); assertNotNull(profile);
-        assertEquals("", profile.toolCapabilities);
-        assertEquals("", session.toolCapabilities);
-        assertEquals(ChatTurnOptions.WEB_AUTO, session.webMode);
-        assertEquals(ContextMode.AUTO, session.contextMode);
-        assertEquals(2, upgraded.timeline(session.id).length());
-        assertEquals("legacy user", upgraded.timeline(session.id).getJSONObject(0).optString("text"));
-        assertEquals("legacy assistant", upgraded.timeline(session.id).getJSONObject(1).optString("text"));
-    }
-
-    @Test public void upgradeFromV12MovesWireAuthorityToModelAndSessionWithoutChangingRoutes() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(12);
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-
-        ChatDatabase.Provider responsesProvider = upgraded.getProvider("legacy-p");
-        ChatDatabase.ModelProfile responsesProfile = upgraded.findModelProfile("legacy-p", "legacy-model");
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertNotNull(responsesProvider); assertNotNull(responsesProfile); assertNotNull(session);
-        assertEquals(OpenAiCompatibleTransport.RESPONSES, responsesProfile.protocol);
-        assertEquals(ProviderAuth.BEARER, responsesProfile.authMode);
-        assertEquals(ReasoningPolicy.WIRE_OPENAI_RESPONSES, responsesProfile.reasoningWire);
-        assertEquals("existing Session must freeze the migrated deployment protocol", OpenAiCompatibleTransport.RESPONSES, session.protocol);
-        assertEquals(ProviderAuth.BEARER, session.authMode);
-        assertEquals(ReasoningPolicy.WIRE_OPENAI_RESPONSES, session.reasoningWire);
-
-        ChatDatabase.Provider messagesProvider = upgraded.getProvider("legacy-a");
-        ChatDatabase.ModelProfile messagesProfile = upgraded.findModelProfile("legacy-a", "legacy-claude");
-        assertNotNull(messagesProvider); assertNotNull(messagesProfile);
-        assertEquals("legacy Messages base must become the common /v1 API root", "https://legacy-anthropic.example/v1", messagesProvider.baseUrl);
-        assertEquals(AnthropicMessagesTransport.PROTOCOL, messagesProfile.protocol);
-        assertEquals(ProviderAuth.X_API_KEY, messagesProfile.authMode);
-        assertEquals(ReasoningPolicy.WIRE_ANTHROPIC_EFFORT, messagesProfile.reasoningWire);
-        upgraded.close();
-    }
-
-    @Test public void upgradeFromV13PreservesManualDeploymentAndFreezesV004Defaults() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(13);
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.ModelProfile profile = upgraded.findModelProfile("legacy-p", "legacy-model");
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertNotNull(profile); assertNotNull(session);
-        assertEquals("v0.0.3 profiles must never become auto-catalog deployments during migration",
-                ModelCatalog.CONFIG_LEGACY_MANUAL, profile.configMode);
-        assertEquals("legacy-v0.0.3", profile.catalogSource);
-        assertEquals(HarnessProfile.BALANCED, profile.harnessPreset);
-        assertEquals(ClientToolRuntime.NONE, profile.clientToolCalling);
-        assertEquals(HarnessProfile.BALANCED, session.harnessPreset);
-        assertEquals(ClientToolRuntime.NONE, session.clientToolCalling);
-        assertEquals(HarnessPolicyResolver.SUBAGENT_OFF, session.subagentMode);
-        assertEquals(OpenAiCompatibleTransport.RESPONSES, session.protocol);
-        assertEquals(2, upgraded.timeline(session.id).length());
-        upgraded.close();
-    }
-
-    @Test public void upgradeFromV14FreezesReasoningLevelsIntoExistingSessions() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(14);
-        android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
-        raw.execSQL("UPDATE model_profiles SET reasoning_levels='low,high,xhigh' WHERE profile_id='legacy-p:default'");
-        raw.execSQL("UPDATE sessions SET reasoning_effort='xhigh' WHERE local_id='legacy-s'");
-        raw.close();
-        ChatDatabase upgraded = new ChatDatabase(context); upgraded.getWritableDatabase();
-        ChatDatabase.Session session = upgraded.getSession("legacy-s");
-        assertNotNull(session);
-        assertEquals("low,high,xhigh", session.reasoningLevels);
-        assertEquals("xhigh", session.reasoningEffort);
-        upgraded.close();
-    }
-
-    @Test public void upgradeToV16DropsRemoteHandoffsAndOrphanSnapshots() throws Exception {
-        db.close(); context.deleteDatabase("moyu-chat.db"); createLegacyDatabase(14);
-        android.database.sqlite.SQLiteDatabase raw = context.openOrCreateDatabase("moyu-chat.db", Context.MODE_PRIVATE, null);
-        raw.execSQL("INSERT INTO handoffs VALUES('h1','legacy-s','draft','summary','{}','2020-01-01T00:00:00Z')");
-        raw.execSQL("INSERT INTO snapshots(snapshot_id,source_type,source_id,source_title,created_at,item_count) VALUES('orphan-import','import-chatgpt','x','Imported','2020-01-01T00:00:00Z',1)");
-        raw.execSQL("INSERT INTO snapshot_items VALUES('orphan-import',0,'{\"kind\":\"message\",\"role\":\"user\",\"text\":\"imported\"}')");
-        raw.execSQL("INSERT INTO knowledge_fts(scope_id,item_ref,ordinal,role,text,terms) VALUES('snapshot:orphan-import','r',0,'user','imported','imported')");
-        raw.close();
-        ChatDatabase upgraded = new ChatDatabase(context);
-        android.database.sqlite.SQLiteDatabase w = upgraded.getWritableDatabase();
-        try (android.database.Cursor c = w.rawQuery("SELECT 1 FROM sqlite_master WHERE name='handoffs'", null)) {
-            assertFalse("handoffs table must be dropped", c.moveToFirst());
+        try (android.database.sqlite.SQLiteDatabase raw = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath("moyu-chat.db"), null)) {
+            raw.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,model TEXT NOT NULL,updated_at TEXT NOT NULL)");
+            raw.execSQL("CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,provider_id TEXT NOT NULL,model TEXT NOT NULL,state TEXT NOT NULL,updated_at TEXT NOT NULL)");
+            raw.execSQL("CREATE TABLE timeline(item_key TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,local_seq INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL)");
+            raw.execSQL("CREATE TABLE handoffs(handoff_id TEXT PRIMARY KEY)");
+            raw.execSQL("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
+            raw.execSQL("INSERT INTO providers VALUES('old-p','Old','openai-responses','https://old.example/v1','m','2025-01-01T00:00:00Z')");
+            raw.execSQL("INSERT INTO sessions VALUES('old-s','Old','old-p','m','idle','2025-01-01T00:00:00Z')");
+            raw.execSQL("INSERT INTO timeline VALUES('u','old-s',1,'{}','2025-01-01T00:00:00Z')");
+            raw.execSQL("INSERT INTO settings VALUES('knowledgeIndex:old-s','x')");
+            raw.setVersion(16);
         }
-        assertNull("unreferenced import snapshot is removed", upgraded.getSnapshot("orphan-import"));
-        assertEquals(0, upgraded.snapshotItems("orphan-import").length());
-        try (android.database.Cursor c = w.rawQuery("SELECT COUNT(*) FROM knowledge_fts WHERE scope_id='snapshot:orphan-import'", null)) {
-            assertTrue(c.moveToFirst()); assertEquals(0, c.getInt(0));
-        }
-        assertNotNull("session-referenced snapshot survives", upgraded.getSnapshot("legacy-snap"));
-        assertEquals(1, upgraded.snapshotItems("legacy-snap").length());
-        upgraded.close();
+
+        db = new ChatDatabase(context);
+        assertTrue("no pre-baseline provider survives", db.listProviders().isEmpty());
+        assertTrue("no pre-baseline session survives", db.listSessions().isEmpty());
+        assertEquals("settings start empty", "", db.setting("knowledgeIndex:old-s", ""));
+        assertEquals(ChatDatabase.BASELINE_VERSION, db.getReadableDatabase().getVersion());
+        assertTrue(tableExists("verifier_labels"));
+        assertFalse("removed Remote table must be gone", tableExists("handoffs"));
+        assertTrue("timeline carries kind", columns("timeline").contains("kind"));
+        assertFalse("providers no longer persist deployment fields", columns("providers").contains("protocol"));
     }
+
+    @Test public void newerDatabaseIsResetInsteadOfGuessed() throws Exception {
+        TestDeployments.save(db, provider("p-new"));
+        db.getWritableDatabase().setVersion(99);
+        db.close();
+        db = new ChatDatabase(context);
+        assertTrue(db.listProviders().isEmpty());
+        assertEquals(ChatDatabase.BASELINE_VERSION, db.getReadableDatabase().getVersion());
+    }
+
+    // ---------- per-entity state ----------
+
+    @Test public void timelineKindMirrorsBodyAndDrivesUsageQueries() throws Exception {
+        TestDeployments.save(db, provider("p-kind"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-kind", "model", null, null);
+        String since = Instant.now().minusSeconds(60).toString();
+        db.appendTimeline(s.id, "u", message("user", "mentions \"kind\":\"usage\" in plain text"));
+        db.appendTimeline(s.id, "usage", new JSONObject().put("kind", "usage").put("inputTokens", 12).put("createdAt", Instant.now().toString()));
+        db.appendTimeline(s.id, "bare", new JSONObject().put("role", "assistant").put("text", "no kind").put("createdAt", Instant.now().toString()));
+        assertEquals("message", kindOf("u"));
+        assertEquals("usage", kindOf("usage"));
+        assertEquals("items without kind are messages", "message", kindOf("bare"));
+        JSONArray usage = db.usageSince(since);
+        assertEquals("usage query matches the kind column, not JSON text", 1, usage.length());
+        assertEquals(12, usage.getJSONObject(0).optInt("inputTokens"));
+    }
+
+    @Test public void credentialEpochLivesOnTheProviderRow() {
+        ChatDatabase.Provider p = provider("p-epoch");
+        db.saveProviderAndProfiles(p, null, true);
+        assertEquals(1L, db.credentialEpoch(p.id));
+        p.displayName = "Renamed";
+        db.saveProvider(p);
+        assertEquals("saving without a new key keeps the epoch", 1L, db.credentialEpoch(p.id));
+        db.saveProviderAndProfiles(p, null, true);
+        assertEquals(2L, db.credentialEpoch(p.id));
+        assertEquals("Renamed", db.getProvider(p.id).displayName);
+    }
+
+    @Test public void knowledgeMarkerLivesOnTheSessionRow() throws Exception {
+        TestDeployments.save(db, provider("p-know"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-know", "model", null, null);
+        db.appendTimeline(s.id, "u", message("user", "hello"));
+        s = db.getSession(s.id);
+        db.markKnowledgeIndexed(s.id, s.updatedAt);
+        assertEquals(s.updatedAt, db.knowledgeIndexedAt(s.id));
+        assertEquals("marking the index never bumps updated_at", s.updatedAt, db.getSession(s.id).updatedAt);
+        db.saveSession(db.getSession(s.id));
+        assertEquals("session saves keep the marker", s.updatedAt, db.knowledgeIndexedAt(s.id));
+        db.truncateTimelineFrom(s.id, 1);
+        assertEquals("rollback invalidates the index", "", db.knowledgeIndexedAt(s.id));
+    }
+
+    @Test public void verifierLabelsAreBoundedPerCalibrationKey() throws Exception {
+        for (int i = 0; i < 5; i++) db.addVerifierLabel("key-a", new JSONArray().put(i), i % 2, 3);
+        db.addVerifierLabel("key-b", new JSONArray().put(9), 1, 3);
+        JSONArray a = db.verifierLabels("key-a");
+        assertEquals(3, a.length());
+        assertEquals("oldest-first, newest kept", 2, a.getJSONObject(0).getJSONArray("x").getInt(0));
+        assertEquals(4, a.getJSONObject(2).getJSONArray("x").getInt(0));
+        assertEquals("other keys are untouched", 1, db.verifierLabels("key-b").length());
+    }
+
+    @Test public void sessionsKeepCreationTimeAndLineage() {
+        TestDeployments.save(db, provider("p-line"));
+        ChatDatabase.Session parent = TestDeployments.session(db, "p-line", "model", "parent", null);
+        ChatDatabase.Session child = db.branchSession(parent, "child", null, parent.id);
+        String created = db.getSession(child.id).createdAt;
+        assertNotNull(created);
+        ChatDatabase.Session edited = db.getSession(child.id); edited.updatedAt = Instant.now().plusSeconds(5).toString(); db.saveSession(edited);
+        assertEquals("created_at never moves", created, db.getSession(child.id).createdAt);
+        db.deleteSession(parent.id);
+        assertNull("deleting the parent clears the child's lineage pointer", db.getSession(child.id).parentSessionId);
+    }
+
+    private boolean tableExists(String name) {
+        try (android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", new String[]{name})) { return c.moveToFirst(); }
+    }
+
+    private java.util.Set<String> columns(String table) {
+        java.util.HashSet<String> out = new java.util.HashSet<>();
+        try (android.database.Cursor c = db.getReadableDatabase().rawQuery("PRAGMA table_info(" + table + ")", null)) { while (c.moveToNext()) out.add(c.getString(1)); }
+        return out;
+    }
+
+    private String kindOf(String itemKey) {
+        try (android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT kind FROM timeline WHERE item_key=?", new String[]{itemKey})) { return c.moveToFirst() ? c.getString(0) : null; }
+    }
+
+    // ---------- providers, profiles, sessions ----------
 
     @Test public void localBranchesInheritFrozenContextMode() {
-        ChatDatabase.Provider provider = provider("p-mode"); db.saveProvider(provider);
+        ChatDatabase.Provider provider = provider("p-mode"); TestDeployments.save(db, provider);
         ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id); assertNotNull(profile);
         ChatDatabase.Session source = db.createSession(profile, "source", null, null, ReasoningPolicy.DEFAULT, ContextMode.MINIMAL);
         ChatDatabase.Session branch = db.branchSession(source, "branch", null, source.id);
@@ -300,13 +194,13 @@ public class ChatDatabaseTest {
     }
 
     @Test public void oneProviderCanOwnMultipleModelsAndSessionSnapshotsCapabilities() {
-        ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; db.saveProvider(provider);
+        ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; TestDeployments.save(db, provider);
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
         second.id = "profile-b"; second.providerId = provider.id; second.modelId = "model-b"; second.displayName = "Model B";
         second.contextTokens = 128_000; second.inputTokens = 96_000; second.maxOutputTokens = 8_192;
         second.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; second.authMode = ProviderAuth.BEARER;
         second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
-        second.reasoningLevels = "low,high,xhigh"; second.defaultReasoning = "high";
+        second.reasoningLevels = "low,high,xhigh";
         second.inputModalities = "text,image"; second.outputModalities = "text,image"; db.saveModelProfile(second);
         assertEquals(2, db.listModelProfiles(provider.id).size());
 
@@ -319,7 +213,7 @@ public class ChatDatabaseTest {
         assertEquals(ProviderAuth.BEARER, session.authMode);
         assertEquals(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, session.reasoningWire);
 
-        second.contextTokens = 64_000; second.inputTokens = 48_000; second.defaultReasoning = "low"; second.reasoningLevels = "low"; second.inputModalities = "text";
+        second.contextTokens = 64_000; second.inputTokens = 48_000; second.reasoningLevels = "low"; second.inputModalities = "text";
         second.protocol = OpenAiCompatibleTransport.RESPONSES; second.authMode = ProviderAuth.API_KEY;
         second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES; db.saveModelProfile(second);
         ChatDatabase.Session reloaded = db.getSession(session.id);
@@ -452,14 +346,14 @@ public class ChatDatabaseTest {
     // ---------- interrupted streaming recovery ----------
 
     @Test public void recoverInterruptedSessionsCleansStaleStreamingRowsOnly() throws Exception {
-        db.saveProvider(provider("p1"));
-        ChatDatabase.Session running = db.createSession("p1", "m", null, null);
+        TestDeployments.save(db, provider("p1"));
+        ChatDatabase.Session running = TestDeployments.session(db, "p1", "m", null, null);
         db.appendTimeline(running.id, "u1", message("user", "question"));
         db.appendTimeline(running.id, "live1", new JSONObject().put("kind", "message").put("role", "assistant").put("text", "partial").put("streaming", true).put("createdAt", Instant.now().toString()));
         running.state = "running";
         db.saveSession(running);
 
-        ChatDatabase.Session healthy = db.createSession("p1", "m", null, null);
+        ChatDatabase.Session healthy = TestDeployments.session(db, "p1", "m", null, null);
         db.appendTimeline(healthy.id, "u2", message("user", "done turn"));
         db.appendTimeline(healthy.id, "a2", message("assistant", "answer"));
         healthy.state = "completed";
@@ -477,8 +371,8 @@ public class ChatDatabaseTest {
     }
 
     @Test public void recoverInterruptedSessionsAlsoRepairsDivergedStreamingFlag() throws Exception {
-        db.saveProvider(provider("p-diverged"));
-        ChatDatabase.Session s = db.createSession("p-diverged", "m", null, null);
+        TestDeployments.save(db, provider("p-diverged"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-diverged", "m", null, null);
         db.appendTimeline(s.id, "u", message("user", "question"));
         db.appendTimeline(s.id, "live", new JSONObject().put("kind", "message").put("role", "assistant")
                 .put("text", "stale").put("streaming", true).put("createdAt", Instant.now().toString()));
@@ -493,8 +387,8 @@ public class ChatDatabaseTest {
     }
 
     @Test public void finalizeTurnSettlesLiveProjectionAndSessionTogether() throws Exception {
-        db.saveProvider(provider("p-finalize"));
-        ChatDatabase.Session s = db.createSession("p-finalize", "m", null, null);
+        TestDeployments.save(db, provider("p-finalize"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-finalize", "m", null, null);
         JSONObject user = message("user", "question");
         JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
         db.beginTurn(s.id, "u", user, "live", live);
@@ -527,7 +421,7 @@ public class ChatDatabaseTest {
 
     private static ChatDatabase.Snapshot snapshot(String id, int itemCount, int sourceItemCount) {
         ChatDatabase.Snapshot s = new ChatDatabase.Snapshot();
-        s.id = id; s.sourceType = "chat"; s.sourceId = "src"; s.sourceTitle = "title";
+        s.id = id; s.sourceSessionId = "src"; s.sourceTitle = "title";
         s.createdAt = Instant.now().toString(); s.itemCount = itemCount; s.sourceItemCount = sourceItemCount;
         s.truncated = false; s.contentHash = "hash";
         return s;

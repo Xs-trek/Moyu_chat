@@ -6,8 +6,6 @@ import java.util.Locale;
 
 /** Stable deployment identity for verifier calibration and provider-continuation matching. */
 final class ProviderContinuationIdentity {
-    private static final String CREDENTIAL_EPOCH_PREFIX = "providerCredentialEpoch:";
-
     private ProviderContinuationIdentity() { }
 
     /** Concrete deployment identity; intentionally stable across ordinary conversation edits. */
@@ -16,26 +14,19 @@ final class ProviderContinuationIdentity {
         String endpoint;
         try { endpoint = ProviderEndpoint.normalize(provider.baseUrl); }
         catch (Exception ignored) { endpoint = provider.baseUrl == null ? "" : provider.baseUrl.trim(); }
-        String credentialEpoch = db.setting(CREDENTIAL_EPOCH_PREFIX + provider.id, "0");
+        String credentialEpoch = Long.toString(db.credentialEpoch(provider.id));
         String profile = session.modelProfileId == null ? "" : session.modelProfileId;
-        String authMode = provider.authMode == null ? "" : provider.authMode.trim();
-        return digest(provider.protocol + "\n" + endpoint + "\n" + authMode + "\n" + provider.id + "\n"
+        // Wire identity comes from the session's frozen deployment, so a shared Provider row (which
+        // carries no protocol/auth) and the request-local deployment view yield the same fingerprint.
+        String protocol = session.protocol == null ? "" : session.protocol.trim();
+        String authMode = session.authMode == null ? "" : session.authMode.trim();
+        return digest(protocol + "\n" + endpoint + "\n" + authMode + "\n" + provider.id + "\n"
                 + profile + "\n" + session.model + "\n" + credentialEpoch);
-    }
-
-    static String credentialEpochSettingKey(String providerId) {
-        return CREDENTIAL_EPOCH_PREFIX + (providerId == null ? "" : providerId);
     }
 
     static void bumpCredentialEpoch(ChatDatabase db, String providerId) {
         if (db == null || providerId == null || providerId.trim().isEmpty()) return;
-        bump(db, credentialEpochSettingKey(providerId));
-    }
-
-    private static void bump(ChatDatabase db, String key) {
-        long current = 0L;
-        try { current = Long.parseLong(db.setting(key, "0")); } catch (Exception ignored) { }
-        db.putSetting(key, Long.toString(current + 1L));
+        db.bumpCredentialEpoch(providerId);
     }
 
     private static String digest(String value) {

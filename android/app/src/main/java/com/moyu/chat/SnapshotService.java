@@ -13,7 +13,6 @@ import java.util.UUID;
 
 /** Creates immutable provider-neutral snapshots of local visible history for branches. */
 final class SnapshotService {
-    static final String SOURCE_CHAT = "chat";
     private static final int MAX_ITEMS = 2_000;
     private static final int MAX_TEXT_CHARS = 300_000;
     private static final int MAX_METADATA_CHARS = 512;
@@ -40,10 +39,10 @@ final class SnapshotService {
         return persist(sessionId, bounded(session.title, "source title"), normalized);
     }
 
-    private ChatDatabase.Snapshot persist(String sourceId, String title, Normalized normalized) throws Exception {
+    private ChatDatabase.Snapshot persist(String sourceSessionId, String title, Normalized normalized) throws Exception {
         ChatDatabase.Snapshot snapshot = new ChatDatabase.Snapshot();
-        snapshot.id = UUID.randomUUID().toString(); snapshot.sourceType = SOURCE_CHAT; snapshot.sourceId = sourceId;
-        snapshot.sourceTitle = title; snapshot.sourceRuntime = null; snapshot.createdAt = Instant.now().toString();
+        snapshot.id = UUID.randomUUID().toString(); snapshot.sourceSessionId = sourceSessionId;
+        snapshot.sourceTitle = title; snapshot.createdAt = Instant.now().toString();
         snapshot.itemCount = normalized.items.length(); snapshot.sourceItemCount = Math.max(snapshot.itemCount, normalized.sourceItemCount);
         snapshot.truncated = normalized.truncated || snapshot.sourceItemCount > snapshot.itemCount;
         snapshot.contentHash = sha256(normalized.items.toString());

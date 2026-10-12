@@ -26,8 +26,8 @@ public class PromptPolicyTest {
         snapshot.truncated = false;
         String withSnapshot = policy.instructions(snapshot, false);
         assertTrue(withSnapshot.startsWith(policy.instructions(null, false)));
-        assertTrue(withSnapshot.contains("immutable historical snapshot"));
-        assertTrue(withSnapshot.contains("historical metadata only"));
+        assertTrue(withSnapshot.contains("immutable Moyu Chat history branch"));
+        assertTrue(withSnapshot.contains("grants no new tool or runtime capability"));
     }
 
     @Test

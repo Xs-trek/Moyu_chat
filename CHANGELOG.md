@@ -2,7 +2,22 @@
 
 ## v0.0.6-beta — 2026-10-12
 
-Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 16。
+Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 17（beta 基线）。
+
+### 数据库基线（schema 17）
+
+不保留旧数据：schema 17 之前（或更新）的数据库文件直接删除重建，v1→v16 的迁移链和对应测试一并移除。设计参照 OpenAI Agents SDK 的 `SQLiteSession` / `AdvancedSQLiteSession`：会话表加有序的 JSON 条目日志，用量、分支、校验这类结构化信息放在侧表。
+
+- `providers` 只存共享 endpoint（名称、Base URL），去掉 protocol / auth / reasoning wire / model / 上下文上限等旧列；只填 Provider 就自动生成模型的一步式创建和 `legacyProfile` 一并删除。
+- `model_profiles` 去掉无效的 `default_reasoning`；配置模式只剩 auto / manual。
+- `sessions` 保留“创建或切换模型时冻结部署能力”的语义，新增 `created_at`；与 Provider、Model Profile、父会话、来源快照之间加上外键（删除父会话时把子会话的父指针置空）；按 `updated_at` 建索引。
+- `timeline` 新增 `kind` 列，与条目里的 kind 一致。今日用量按这一列查询，不再在 JSON 文本里匹配；去掉与 UNIQUE 约束重复的索引；冷启动恢复只解析可能处于流式状态的行。
+- `snapshots` 只描述本地分支：去掉 `source_type` / `source_runtime`，`source_id` 改名为 `source_session_id`；提示词里“从其他运行时导入”的分支说明随之删除。视图 `origin` 去掉 `sourceType` / `sourceRuntime`，新增 `sourceSessionId`。
+- 原来塞在 settings 表里的状态各回各的位置：凭据代次放到 `providers.credential_epoch`，知识索引标记放到 `sessions.knowledge_indexed_at`（随会话级联删除、回退时清空），校验反馈标签放到新的 `verifier_labels` 表（每个校准键保留最新 200 条）。settings 表只放偏好设置。
+- 部署身份指纹改为从会话冻结的 protocol / authMode 计算，传入共享 Provider 还是部署视图结果都一样。
+- 启动时清理：删除没有对应 Provider 的 API Key，以及没有任何引用的本地图片。
+- 删除旧的 `context.intelligence.set` intent 和 `smartContextEnabled` 设置回退。
+- 测试：新增 `TestDeployments` 辅助类（Provider 加一个默认 Model Profile）；新增基线重置、kind 列、凭据代次、索引标记、校验标签上限、会话创建时间与父子关系等测试。
 
 ### 前端重做（阶段 1）
 

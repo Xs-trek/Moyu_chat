@@ -31,8 +31,8 @@ public class SmartVerifierCalibrationTest {
         provider.protocol = OpenAiCompatibleTransport.RESPONSES;
         provider.baseUrl = "https://one.example/v1";
         provider.model = "model-a";
-        db.saveProvider(provider);
-        session = db.createSession(provider.id, provider.model, "calibration", null);
+        TestDeployments.save(db, provider);
+        session = TestDeployments.session(db, provider.id, provider.model, "calibration", null);
     }
 
     @Test public void deploymentChangesProduceNewCalibrationEpochs() {

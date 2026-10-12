@@ -4,7 +4,7 @@ Moyu Chat is an Android-local multi-model Chat client with optional bounded tool
 
 It is a personal model test bench for comparing what different models and protocols return and what native orchestration designs can achieve. The native complexity is intentional.
 
-Current version: **v0.0.6-beta** (Android versionCode 6, SQLite schema 16, applicationId `com.moyu.chat.beta`). The beta line installs beside the original `com.moyu.chat` build. See `CHANGELOG.md`.
+Current version: **v0.0.6-beta** (Android versionCode 6, SQLite schema 17, applicationId `com.moyu.chat.beta`). The beta line installs beside the original `com.moyu.chat` build. See `CHANGELOG.md`.
 
 ## Build and verify
 
@@ -37,7 +37,7 @@ Supported protocol families are `openai-chat-completions`, `openai-responses` an
 
 Moyu Chat provides a small reviewed Model Catalog for known deployment overlays. Auto mode is allowed only when the endpoint + model matches a reviewed overlay. An unknown or same-named third-party route must use **Advanced** configuration rather than guessing a protocol or capability.
 
-Context window, maximum input and maximum output remain explicit deployment/user inputs even in Auto mode. The catalog does not infer these limits from a model name. Existing v0.0.3 profiles migrate as `legacy-manual` and remain authoritative until the user explicitly changes them.
+Context window, maximum input and maximum output remain explicit deployment/user inputs even in Auto mode. The catalog does not infer these limits from a model name.
 
 Changing a Provider Base URL revalidates and re-resolves affected Auto profiles atomically. A change that would leave an Auto profile without a reviewed deployment overlay is rejected and requires that profile to be switched to Advanced first.
 

@@ -28,7 +28,6 @@ export type MoyuChatIntent =
   | UiIntent<'web.mode.default.set', { mode: WebMode }>
   | UiIntent<'subagent.standard.default.set', { mode: SubagentMode }>
   | UiIntent<'external.open', { url: string }>
-  | UiIntent<'context.intelligence.set', { enabled: boolean }>
   | UiIntent<'nav.open', { route: Route }>
   | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; contextMode?: ContextMode; webMode?: WebMode; title?: string }>
   | UiIntent<'chat.session.open', { localSessionId: string }>
@@ -76,7 +75,7 @@ export interface ModelProfileView {
   thinkingMode: 'provider-default' | 'adaptive' | 'disabled' | 'manual';
   thinkingBudgetTokens: number;
   continuationMode: 'none' | 'native';
-  configMode: 'auto' | 'manual' | 'legacy-manual';
+  configMode: 'auto' | 'manual';
   catalogKey: string;
   catalogVersion: string;
   catalogSource: string;
@@ -91,6 +90,7 @@ export interface ProviderView {
   providerId: string;
   displayName: string;
   baseUrl: string;
+  /** modelId of the first Model Profile, or '' when none is configured. */
   model: string;
   models: ModelProfileView[];
   hasCredential: boolean;
@@ -99,10 +99,9 @@ export interface ProviderView {
 
 export interface OriginView {
   snapshotId: string;
-  /** New branches are always 'chat'; other values only appear in databases upgraded from v0.0.5. */
-  sourceType: 'chat' | string;
+  /** Local session the branch was cut from; it may have been deleted since. */
+  sourceSessionId: string;
   sourceTitle: string;
-  sourceRuntime?: string;
   createdAt: string;
   itemCount: number;
   sourceItemCount?: number;

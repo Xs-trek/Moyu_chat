@@ -28,7 +28,7 @@ public class LocalKnowledgeStoreTest {
     }
 
     @Test public void retrievesRelevantEnglishAndCjkSnapshotExcerpts() throws Exception {
-        ChatDatabase.Snapshot snapshot = snapshot("snapshot-rag", "chat");
+        ChatDatabase.Snapshot snapshot = snapshot("snapshot-rag");
         JSONArray items = new JSONArray()
                 .put(message("user", "The allocator boundary is inside ring_buffer.c and must remain ABI compatible."))
                 .put(message("assistant", "缓存失效问题最终定位在中断处理与 DMA 所有权切换。"))
@@ -46,7 +46,7 @@ public class LocalKnowledgeStoreTest {
         assertTrue(chinese.get(0).text.contains("DMA 所有权"));
     }
 
-    @Test public void deletingSessionRemovesPlaintextFtsRowsAndMarker() throws Exception {
+    @Test public void deletingSessionRemovesPlaintextFtsRows() throws Exception {
         ChatDatabase db = app.database();
         ChatDatabase.ModelProfile profile = profile(db);
         ChatDatabase.Session source = db.createSession(profile, "source", null, null, ReasoningPolicy.DEFAULT);
@@ -55,16 +55,15 @@ public class LocalKnowledgeStoreTest {
         LocalKnowledgeStore store = new LocalKnowledgeStore(db);
         assertFalse(store.searchUserMemory(current.id, "privacy secret allocator", 4).isEmpty());
         assertTrue(countScope(LocalKnowledgeStore.chatScope(source.id)) > 0);
-        assertFalse(db.setting(LocalKnowledgeStore.indexMarkerKey(source.id), "").isEmpty());
+        assertFalse("the index marker lives on the session row", db.knowledgeIndexedAt(source.id).isEmpty());
 
         db.deleteSession(source.id);
         assertEquals(0, countScope(LocalKnowledgeStore.chatScope(source.id)));
-        assertEquals("", db.setting(LocalKnowledgeStore.indexMarkerKey(source.id), ""));
     }
 
     @Test public void deletingLastBranchRemovesSnapshotAndItsFtsRows() throws Exception {
         ChatDatabase db = app.database();
-        ChatDatabase.Snapshot origin = snapshot("branch-rag", SnapshotService.SOURCE_CHAT);
+        ChatDatabase.Snapshot origin = snapshot("branch-rag");
         JSONArray items = new JSONArray().put(message("user", "branched privacy token"));
         origin.sourceItemCount = items.length();
         db.saveSnapshot(origin, items);
@@ -81,10 +80,8 @@ public class LocalKnowledgeStoreTest {
         ChatDatabase.Provider provider = new ChatDatabase.Provider();
         provider.id = "p"; provider.displayName = "P"; provider.baseUrl = "https://example.test/v1";
         provider.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; provider.model = "m";
-        provider.contextTokens = 32000; provider.maxOutputTokens = 4096; db.saveProvider(provider);
-        ChatDatabase.ModelProfile profile = db.firstModelProfile(provider.id);
-        if (profile == null) throw new IllegalStateException("legacy model profile was not created");
-        return profile;
+        provider.contextTokens = 32000; provider.maxOutputTokens = 4096;
+        return TestDeployments.save(db, provider);
     }
 
     private int countScope(String scope) {
@@ -93,9 +90,9 @@ public class LocalKnowledgeStoreTest {
         }
     }
 
-    private static ChatDatabase.Snapshot snapshot(String id, String sourceType) {
+    private static ChatDatabase.Snapshot snapshot(String id) {
         ChatDatabase.Snapshot snapshot = new ChatDatabase.Snapshot();
-        snapshot.id = id; snapshot.sourceType = sourceType; snapshot.sourceId = "source-" + id;
+        snapshot.id = id; snapshot.sourceSessionId = "source-" + id; snapshot.contentHash = "hash-" + id;
         snapshot.sourceTitle = "history"; snapshot.createdAt = Instant.now().toString(); return snapshot;
     }
 

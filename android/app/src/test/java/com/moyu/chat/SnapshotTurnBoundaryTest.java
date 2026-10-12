@@ -34,8 +34,8 @@ public class SnapshotTurnBoundaryTest {
         provider.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         provider.baseUrl = "https://snapshot.example/v1";
         provider.model = "model";
-        db.saveProvider(provider);
-        session = db.createSession(provider.id, provider.model, "snapshot", null);
+        TestDeployments.save(db, provider);
+        session = TestDeployments.session(db, provider.id, provider.model, "snapshot", null);
         snapshots = new SnapshotService(db);
     }
 

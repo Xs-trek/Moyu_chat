@@ -95,17 +95,7 @@ final class SmartVerifierCalibration {
             else if (SmartVerifierService.VERDICT_PASS.equals(verdict)) y = 0;
         }
         if (y == null) return false;
-        JSONArray all = labels(db, key);
-        JSONObject sample = new JSONObject();
-        try { sample.put("x", new JSONArray(features.toString())).put("y", y); }
-        catch (Exception ignored) { return false; }
-        all.put(sample);
-        while (all.length() > MAX_LABELS) {
-            JSONArray trimmed = new JSONArray();
-            for (int i = all.length() - MAX_LABELS; i < all.length(); i++) trimmed.put(all.opt(i));
-            all = trimmed;
-        }
-        db.putSetting(settingKey(key), all.toString());
+        db.addVerifierLabel(key, features, y, MAX_LABELS);
         return true;
     }
 
@@ -190,11 +180,9 @@ final class SmartVerifierCalibration {
 
     private static JSONArray labels(ChatDatabase db, String key) {
         if (db == null || key == null || key.isEmpty()) return new JSONArray();
-        String raw = db.setting(settingKey(key), "[]");
-        try { return new JSONArray(raw); } catch (Exception ignored) { return new JSONArray(); }
+        return db.verifierLabels(key);
     }
 
-    private static String settingKey(String key) { return "verifierCalibration:" + key; }
     private static double dot(double[] a, double[] b) { double v = 0d; for (int i = 0; i < Math.min(a.length, b.length); i++) v += a[i] * b[i]; return v; }
     private static double sigmoid(double value) { if (value > 30d) return 1d; if (value < -30d) return 0d; return 1d / (1d + Math.exp(-value)); }
     private static double clamp(double value) { return Math.max(0d, Math.min(1d, value)); }

@@ -85,9 +85,9 @@ public class ChatCoordinatorE2eTest {
         secrets = new FakeSecretStore();
         coordinator = new ChatCoordinator(app, host, secrets);
         post("app.ready", new JSONObject());
-        // Legacy transport/state E2Es assert one provider request per user turn. v0.0.2 smart-context
-        // preflight has dedicated tests and is disabled here so these remain protocol-isolation tests.
-        post("context.intelligence.set", new JSONObject().put("enabled", false));
+        // Transport/state E2Es assert one provider request per user turn. Smart-context preflight has
+        // dedicated tests and is disabled here so these remain protocol-isolation tests.
+        post("context.mode.default.set", new JSONObject().put("mode", ContextMode.MINIMAL));
     }
 
     @After public void tearDown() throws Exception {
@@ -135,10 +135,19 @@ public class ChatCoordinatorE2eTest {
     }
 
     private void configureProvider(String protocol) throws Exception {
-        coordinator.saveProvider(mockProvider(protocol), SECRET);
+        saveDeployment(mockProvider(protocol));
+    }
+
+    /** Provider + key through the coordinator (as the UI does), then the single default Model Profile these tests run on. */
+    private void saveDeployment(ChatDatabase.Provider provider) throws Exception {
+        coordinator.saveProvider(provider, SECRET);
+        await("provider saved", () -> app.database().getProvider(provider.id) != null);
+        TestDeployments.save(app.database(), provider);
+        post("view.reload", new JSONObject());
         await("provider configured", () -> {
             JSONObject view = latestView();
-            return view != null && view.optJSONArray("providers") != null && view.optJSONArray("providers").length() == 1;
+            JSONArray providers = view == null ? null : view.optJSONArray("providers");
+            return providers != null && providers.length() == 1 && providers.optJSONObject(0).optJSONArray("models").length() > 0;
         });
     }
 
@@ -448,8 +457,7 @@ public class ChatCoordinatorE2eTest {
     @Test public void modelAndReasoningSwitchAffectFutureTurnsAndFreezeAssistantMetadata() throws Exception {
         ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         provider.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
-        coordinator.saveProvider(provider, SECRET);
-        await("provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
+        saveDeployment(provider);
 
         // Create and complete the first turn before another profile exists so the baseline model is deterministic.
         String sessionId = createSession();
@@ -464,7 +472,7 @@ public class ChatCoordinatorE2eTest {
         second.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; second.authMode = ProviderAuth.BEARER;
         second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
         second.inputModalities = "text,image"; second.outputModalities = "text";
-        second.reasoningLevels = "none,low,high"; second.defaultReasoning = "high"; // ignored by product semantics; capability only.
+        second.reasoningLevels = "none,low,high";
         coordinator.saveModelProfile(second);
         await("second model available", () -> {
             JSONObject view = latestView();
@@ -598,12 +606,10 @@ public class ChatCoordinatorE2eTest {
     @Test public void sendPayloadPersistsSelectedReasoningBeforeFreezeAndNavigation() throws Exception {
         ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         provider.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
-        coordinator.saveProvider(provider, SECRET);
-        await("provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
+        saveDeployment(provider);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile(provider.id);
         assertNotNull(profile);
         profile.reasoningLevels = "low,high";
-        profile.defaultReasoning = "default";
         app.database().saveModelProfile(profile);
 
         post("chat.session.create", new JSONObject().put("providerId", provider.id).put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_OFF));
@@ -1121,12 +1127,10 @@ public class ChatCoordinatorE2eTest {
     @Test public void highReasoningSurvivesNavigationDuringDeltaFloodAndStreamingUsesBoundedPatches() throws Exception {
         ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         provider.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
-        coordinator.saveProvider(provider, SECRET);
-        await("provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
+        saveDeployment(provider);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile(provider.id);
         assertNotNull(profile);
         profile.reasoningLevels = "low,high";
-        profile.defaultReasoning = "default";
         app.database().saveModelProfile(profile);
 
         post("chat.session.create", new JSONObject().put("providerId", provider.id).put("webMode", ChatTurnOptions.WEB_OFF).put("contextMode", ContextMode.MINIMAL));

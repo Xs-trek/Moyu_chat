@@ -163,7 +163,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.systemDark = () -> (app.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES;
         this.contexts = new ContextBuilder(db, mediaStore); this.snapshots = new SnapshotService(db);
         // Recovery runs on the same single worker as every intent, so it is ordered before any send.
-        worker.execute(() -> { db.recoverInterruptedSessions(); emitView(); });
+        worker.execute(() -> { db.recoverInterruptedSessions(); pruneOrphans(); emitView(); });
         this.route = validRoute(db.setting("route", "home"));
         this.activeSessionId = empty(db.setting("activeSessionId", ""));
         this.theme = validTheme(db.setting("theme", "system"));
@@ -171,10 +171,19 @@ final class ChatCoordinator implements AutoCloseable {
         this.delight = !"false".equals(db.setting("delight", "true"));
         this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
         this.crossChatMemoryEnabled = "true".equals(db.setting("crossChatMemoryEnabled", "false"));
-        String legacySmart = db.setting("smartContextEnabled", "true");
-        this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", "false".equals(legacySmart) ? ContextMode.MINIMAL : ContextMode.STANDARD));
+        this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
+    }
+
+    /** Keys and images whose owners no longer exist (deleted rows, or a beta baseline reset) never outlive them. */
+    private void pruneOrphans() {
+        try {
+            java.util.HashSet<String> providerIds = new java.util.HashSet<>();
+            for (ChatDatabase.Provider p : db.listProviders()) providerIds.add(p.id);
+            secrets.retainOnly(providerIds);
+            mediaStore.pruneUnreferenced(db.referencedMediaIds());
+        } catch (Exception error) { host.showMessage("startup cleanup failed: " + safe(error)); }
     }
 
     void postIntent(String raw) { if (raw == null || raw.length() > 1024 * 1024) return; worker.execute(() -> handle(raw)); }
@@ -195,7 +204,6 @@ final class ChatCoordinator implements AutoCloseable {
                 // Provider is the shared account/connection boundary. Protocol/auth/reasoning wire are
                 // model-deployment capabilities and are validated per Model Profile below.
                 provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
-                provider.model = provider.model == null ? "" : provider.model.trim();
 
                 java.util.List<ChatDatabase.ModelProfile> affectedProfiles = db.listModelProfiles(provider.id);
                 for (ChatDatabase.ModelProfile profile : affectedProfiles) {
@@ -263,7 +271,6 @@ final class ChatCoordinator implements AutoCloseable {
                 }
                 ModelProfileValidator.validateResolvedProfile(provider, profile);
                 if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
-                profile.defaultReasoning = ReasoningPolicy.DEFAULT;
                 db.saveModelProfile(profile); emitView();
                 if (completion != null) completion.complete(null);
             } catch (Exception error) {
@@ -298,7 +305,6 @@ final class ChatCoordinator implements AutoCloseable {
                 case "subagent.standard.default.set": standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(required(p, "mode")); db.putSetting("standardSubagentMode", standardSubagentMode); break;
                 case "external.open": host.openExternalUrl(required(p, "url")); break;
                 // v0.0.2 migration compatibility for an older UI bundle: off -> minimal, on -> standard.
-                case "context.intelligence.set": defaultContextMode = p.optBoolean("enabled", true) ? ContextMode.STANDARD : ContextMode.MINIMAL; db.putSetting("defaultContextMode", defaultContextMode); break;
                 case "nav.open": route = validRoute(required(p, "route")); db.putSetting("route", route); break;
                 case "chat.session.create": createSession(p); break;
                 case "chat.session.open": openSession(required(p, "localSessionId")); break;
@@ -1664,7 +1670,7 @@ final class ChatCoordinator implements AutoCloseable {
                         .put("clientToolCalling", ClientToolRuntime.normalizeCalling(m.clientToolCalling))
                         .put("inputModalities", m.inputModalities).put("outputModalities", m.outputModalities)
                         .put("toolCapabilities", ChatTurnOptions.normalizeCapabilities(m.toolCapabilities)));
-                String defaultModel = models.length() > 0 ? models.optJSONObject(0).optString("modelId", p.model) : p.model;
+                String defaultModel = models.length() > 0 ? models.optJSONObject(0).optString("modelId", "") : "";
                 providers.put(new JSONObject().put("providerId", p.id).put("displayName", p.displayName).put("baseUrl", p.baseUrl)
                         .put("model", defaultModel).put("hasCredential", secrets.has(p.id))
                         .put("configured", secrets.has(p.id) && models.length() > 0).put("models", models));
@@ -1778,7 +1784,7 @@ final class ChatCoordinator implements AutoCloseable {
         TaskProfile taskProfile = TaskProfile.fromStored(s.taskProfile);
         if (taskProfile != null) o.put("taskProfile", taskProfile.toJson());
         o.put("hasContextCheckpoint", ContextCheckpoint.fromStored(s.contextCheckpoint) != null);
-        if (originSnap != null) o.put("origin", new JSONObject().put("snapshotId", originSnap.id).put("sourceType", originSnap.sourceType).put("sourceTitle", originSnap.sourceTitle).put("sourceRuntime", originSnap.sourceRuntime == null ? JSONObject.NULL : originSnap.sourceRuntime).put("createdAt", originSnap.createdAt).put("itemCount", originSnap.itemCount).put("sourceItemCount", originSnap.sourceItemCount).put("truncated", originSnap.truncated));
+        if (originSnap != null) o.put("origin", new JSONObject().put("snapshotId", originSnap.id).put("sourceSessionId", originSnap.sourceSessionId).put("sourceTitle", originSnap.sourceTitle).put("createdAt", originSnap.createdAt).put("itemCount", originSnap.itemCount).put("sourceItemCount", originSnap.sourceItemCount).put("truncated", originSnap.truncated));
         if (detail) {
             DisplayTimeline display = displayTimeline(s);
             o.put("messages", display.items).put("composerDraft", s.draft == null ? "" : s.draft)

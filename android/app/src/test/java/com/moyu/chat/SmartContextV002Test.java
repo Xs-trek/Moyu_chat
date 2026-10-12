@@ -61,7 +61,7 @@ public class SmartContextV002Test {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
         p.id = "p"; p.displayName = "P"; p.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         p.baseUrl = server.url("/v1").toString(); p.model = "m"; p.contextTokens = 32_000; p.maxOutputTokens = 4_096;
-        app.database().saveProvider(p); secrets.put("p", SECRET);
+        TestDeployments.save(app.database(), p); secrets.put("p", SECRET);
         coordinator = new ChatCoordinator(app, host, secrets);
         post("app.ready", new JSONObject());
     }

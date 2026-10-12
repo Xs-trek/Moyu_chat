@@ -212,8 +212,6 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                     p.displayName = name.getText().toString().trim();
                     if (p.displayName.isEmpty()) throw new IllegalArgumentException("显示名称不能为空");
                     p.baseUrl = ProviderEndpoint.normalize(base.getText().toString());
-                    // Legacy provider wire/model columns remain migration-only and have no UI authority.
-                    p.model = "";
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
                     coordinator.saveProvider(p, key.getText().toString(), error -> runOnUiThread(() -> {
                         if (!dialog.isShowing()) return;
@@ -297,7 +295,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                         p.protocol = protocol.getText().toString().trim(); p.authMode = auth.getText().toString().trim(); p.reasoningWire = reasoningWire.getText().toString().trim();
                         p.inputModalities = inputModalities.getText().toString().trim(); p.outputModalities = outputModalities.getText().toString().trim();
                         p.toolCapabilities = toolCapabilities.getText().toString().trim();
-                        p.reasoningLevels = levels.getText().toString().trim(); p.defaultReasoning = ReasoningPolicy.DEFAULT;
+                        p.reasoningLevels = levels.getText().toString().trim();
                         p.thinkingMode = thinkingMode.getText().toString().trim(); p.thinkingBudgetTokens = ModelProfileValidator.parseInteger("Manual thinking budget", thinkingBudget.getText().toString());
                         p.continuationMode = continuationMode.getText().toString().trim();
                         p.harnessPreset = harnessPreset.getText().toString().trim();

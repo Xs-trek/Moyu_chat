@@ -177,7 +177,7 @@ function mainSessions() {
       ]),
     }),
     session('s-branch', '长文阅读排版怎么调 · 分支', 'm-gpt', {
-      updatedAt: at(5), preview: '（分支）', origin: { snapshotId: 'snap-1', sourceType: 'chat', sourceTitle: '长文阅读排版怎么调', createdAt: at(5), itemCount: 3 },
+      updatedAt: at(5), preview: '（分支）', origin: { snapshotId: 'snap-1', sourceSessionId: 's-reading', sourceTitle: '长文阅读排版怎么调', createdAt: at(5), itemCount: 3 },
       messages: timeline([{ user: '这个聊天界面看长回答很累，排版上该怎么调？', assistant: '（继承自原会话）先看行高和段间距。' }]).map((item) => ({ ...item, inherited: true })),
     }),
   ];

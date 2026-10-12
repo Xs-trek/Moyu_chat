@@ -1,6 +1,6 @@
 # Moyu Chat architecture
 
-Current source: v0.0.6-beta; SQLite schema 16.
+Current source: v0.0.6-beta; SQLite schema 17 (beta baseline).
 
 ## 1. Product boundary
 
@@ -40,6 +40,22 @@ Owns intent validation, local session lifecycle, local branching, turn cancellat
 ### Durable Chat domain
 
 `ChatDatabase` owns Providers, Model Profiles, Sessions, timeline rows and immutable branch snapshots. A branch snapshot is owned by the sessions that reference it and is collected when the last one is deleted. The durable visible transcript is the product source of truth; provider-native conversation/reasoning state is optional derived metadata.
+
+Schema 17 is the beta baseline. Any older or newer file is dropped and recreated; there is no pre-baseline migration chain. Tables:
+
+```text
+providers        shared endpoint + credential_epoch (bumped when a new key is stored)
+model_profiles   one deployment: wire protocol, limits, capabilities, catalog provenance
+sessions         identity, lineage (parent / origin snapshot), frozen deployment, per-session
+                 choices, derived context state, knowledge_indexed_at
+timeline         one JSON item per row; kind (message / usage / error) mirrors body.kind
+snapshots        immutable branch origin + snapshot_items
+knowledge_fts    FTS4 lexical index, scope chat:<session> / snapshot:<snapshot>
+verifier_labels  explicit verifier feedback per calibration key (bounded)
+settings         app preferences only
+```
+
+The layout follows the common local-agent pattern (OpenAI Agents SDK `SQLiteSession`: a session table plus an ordered JSON item log; its `AdvancedSQLiteSession` adds per-turn usage and branch structure as side tables). Per-turn call traces for the observation work will be added the same way, as side tables keyed by session and turn, without changing the item log.
 
 ## 3. Provider / Model / Session separation
 
@@ -88,7 +104,6 @@ Auto configuration is a reviewed deployment-overlay mechanism, not model-name in
 - Context/input/output limits remain explicit user/deployment inputs.
 - If Auto does not resolve a concrete deployment, saving requires Advanced/manual configuration.
 - Provider endpoint changes revalidate affected Auto profiles in the same save transaction. A change that makes an Auto deployment unresolved is rejected.
-- v0.0.3 profiles migrate as `legacy-manual` and are not silently rewritten.
 
 ## 5. Context and Harness
 
@@ -168,6 +183,6 @@ Official Anthropic shared root is `https://api.anthropic.com/v1`.
 
 ## 11. Turn usage and media bounds
 
-`TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is ordinary timeline JSON, so this release needs no schema migration.
+`TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is an ordinary timeline item (`kind = usage`).
 
 `ChatMediaStore` reads image bounds without decoding pixels, rejects excessive dimensions/area, and only then creates the private media file. Byte/draft-image limits remain in force.

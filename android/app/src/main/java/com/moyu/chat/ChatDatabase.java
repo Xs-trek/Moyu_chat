@@ -14,16 +14,24 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-/** Chat-owned database: providers, model profiles, sessions, timeline, branch snapshots and settings. */
+/**
+ * Chat-owned database: providers, model profiles, sessions, timeline, branch snapshots, verifier
+ * labels and app preferences. API keys never live here (see {@link ChatSecretStore}).
+ */
 public final class ChatDatabase extends SQLiteOpenHelper {
     private static final String NAME = "moyu-chat.db";
-    private static final int VERSION = 16;
+    /**
+     * v17 is the beta baseline. The beta line keeps no pre-baseline data: any older (or newer) file is
+     * dropped and recreated. Migrations after the baseline go forward from here in {@link #onUpgrade}.
+     */
+    static final int BASELINE_VERSION = 17;
+    private static final int VERSION = 17;
 
     public static final class Session {
-        public String id, title, providerId, modelProfileId, model, reasoningEffort, reasoningLevels, inputModalities, outputModalities, state, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
+        public String id, title, providerId, modelProfileId, model, reasoningEffort, reasoningLevels, inputModalities, outputModalities, state, createdAt, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
         /** Session-scoped context policy plus provider-neutral derived control state. */
         public String contextMode, taskProfile, contextCheckpoint, toolCapabilities, webMode;
-        /** v0.0.4 frozen model-behavior/tool orchestration policy. */
+        /** Frozen model-behavior/tool orchestration policy. */
         public String harnessPreset = HarnessProfile.BALANCED;
         public String clientToolCalling = ClientToolRuntime.NONE;
         public String subagentMode = HarnessPolicyResolver.SUBAGENT_OFF;
@@ -38,13 +46,18 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public int contextTokens, inputTokens, maxOutputTokens;
     }
 
-    /** Endpoint/deployment configuration. Legacy model/budget fields remain only for v4 migration and one-step provider creation. */
+    /**
+     * Shared account/endpoint. Only id, display name and base URL are persisted; the remaining fields
+     * are a request-local deployment view filled by {@link #deploymentProvider} from a ModelProfile or
+     * Session, so transports read one object.
+     */
     public static final class Provider {
-        public String id, displayName, baseUrl, model;
+        public String id, displayName, baseUrl;
+        /** Request-local deployment fields; not persisted in providers. */
+        public String model;
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         public String authMode = ProviderAuth.BEARER;
         public String reasoningWire = ReasoningPolicy.WIRE_NONE;
-        /** Request-local model capability copied from the selected ModelProfile; not persisted in providers. */
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
         public int thinkingBudgetTokens = 0;
         public int contextTokens = ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
@@ -54,7 +67,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     /** Model capabilities are scoped to one concrete provider deployment, not a global model name. */
     public static final class ModelProfile {
-        public String id, providerId, modelId, displayName, reasoningLevels, defaultReasoning;
+        public String id, providerId, modelId, displayName, reasoningLevels;
         /** Wire behavior belongs to the concrete model deployment, not the shared account/endpoint. */
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         public String authMode = ProviderAuth.BEARER;
@@ -63,7 +76,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         /** Explicit thinking capability; provider-default avoids model-name guessing. */
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
         public String continuationMode = ProviderContinuationPolicy.NONE;
-        /** v0.0.4 catalog + adaptive harness metadata. */
+        /** Catalog + adaptive harness metadata. */
         // Programmatic callers are explicit/manual by default. The New Model UI opts into Auto
         // deliberately, so setting protocol/capability fields can never be silently overwritten.
         public String configMode = ModelCatalog.CONFIG_MANUAL;
@@ -74,11 +87,15 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public int contextTokens, inputTokens, maxOutputTokens;
     }
 
+    /** Immutable copy of a local session's transcript prefix; the origin of a branch. */
     public static final class Snapshot {
-        public String id, sourceType, sourceId, sourceTitle, sourceRuntime, createdAt, contentHash;
+        public String id, sourceSessionId, sourceTitle, createdAt, contentHash;
         public int itemCount, sourceItemCount;
         public boolean truncated;
     }
+
+    private static final String SESSION_COLUMNS = "local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,tool_capabilities,web_mode,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,context_mode,task_profile,context_checkpoint,checkpoint_covered_items,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,harness_preset,client_tool_calling,subagent_mode,reasoning_levels,created_at";
+    private static final String PROFILE_COLUMNS = "profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,input_modalities,output_modalities,tool_capabilities,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,config_mode,catalog_key,catalog_version,catalog_source,harness_preset,client_tool_calling";
 
     ChatDatabase(Context context) { super(context, NAME, null, VERSION); }
 
@@ -88,143 +105,79 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     @Override public void onCreate(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,auth_mode TEXT NOT NULL DEFAULT 'bearer',reasoning_wire TEXT NOT NULL DEFAULT 'none',model TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL DEFAULT 4096,updated_at TEXT NOT NULL)");
-        db.execSQL("CREATE TABLE model_profiles(profile_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,model_id TEXT NOT NULL,display_name TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL DEFAULT 4096,reasoning_levels TEXT NOT NULL DEFAULT '',default_reasoning TEXT NOT NULL DEFAULT 'default',input_modalities TEXT NOT NULL DEFAULT 'text',output_modalities TEXT NOT NULL DEFAULT 'text',tool_capabilities TEXT NOT NULL DEFAULT '',protocol TEXT NOT NULL DEFAULT 'openai-chat-completions',auth_mode TEXT NOT NULL DEFAULT 'bearer',reasoning_wire TEXT NOT NULL DEFAULT 'none',thinking_mode TEXT NOT NULL DEFAULT 'provider-default',thinking_budget_tokens INTEGER NOT NULL DEFAULT 0,continuation_mode TEXT NOT NULL DEFAULT 'none',config_mode TEXT NOT NULL DEFAULT 'auto',catalog_key TEXT NOT NULL DEFAULT 'unknown',catalog_version TEXT NOT NULL DEFAULT '',catalog_source TEXT NOT NULL DEFAULT 'neutral-defaults',harness_preset TEXT NOT NULL DEFAULT 'balanced',client_tool_calling TEXT NOT NULL DEFAULT 'none',updated_at TEXT NOT NULL,FOREIGN KEY(provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,UNIQUE(provider_id,model_id))");
-        db.execSQL("CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,provider_id TEXT NOT NULL,model_profile_id TEXT,model TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL DEFAULT 4096,reasoning_effort TEXT NOT NULL DEFAULT 'default',reasoning_levels TEXT NOT NULL DEFAULT '',input_modalities TEXT NOT NULL DEFAULT 'text',output_modalities TEXT NOT NULL DEFAULT 'text',tool_capabilities TEXT NOT NULL DEFAULT '',web_mode TEXT NOT NULL DEFAULT 'auto',state TEXT NOT NULL,updated_at TEXT NOT NULL,draft TEXT NOT NULL DEFAULT '',draft_media TEXT NOT NULL DEFAULT '[]',origin_snapshot_id TEXT,parent_session_id TEXT,preview TEXT,context_mode TEXT NOT NULL DEFAULT 'standard',task_profile TEXT NOT NULL DEFAULT '',context_checkpoint TEXT NOT NULL DEFAULT '',checkpoint_covered_items INTEGER NOT NULL DEFAULT 0,protocol TEXT NOT NULL DEFAULT 'openai-chat-completions',auth_mode TEXT NOT NULL DEFAULT 'bearer',reasoning_wire TEXT NOT NULL DEFAULT 'none',thinking_mode TEXT NOT NULL DEFAULT 'provider-default',thinking_budget_tokens INTEGER NOT NULL DEFAULT 0,continuation_mode TEXT NOT NULL DEFAULT 'none',harness_preset TEXT NOT NULL DEFAULT 'balanced',client_tool_calling TEXT NOT NULL DEFAULT 'none',subagent_mode TEXT NOT NULL DEFAULT 'off')");
-        db.execSQL("CREATE TABLE timeline(item_key TEXT PRIMARY KEY,session_id TEXT NOT NULL,local_seq INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(session_id) REFERENCES sessions(local_id) ON DELETE CASCADE,UNIQUE(session_id,local_seq))");
-        db.execSQL("CREATE INDEX timeline_session_seq ON timeline(session_id,local_seq)");
-        db.execSQL("CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,source_id TEXT NOT NULL,source_title TEXT NOT NULL,source_runtime TEXT,created_at TEXT NOT NULL,item_count INTEGER NOT NULL,source_item_count INTEGER NOT NULL DEFAULT 0,truncated INTEGER NOT NULL DEFAULT 0,content_hash TEXT)");
-        db.execSQL("CREATE TABLE snapshot_items(snapshot_id TEXT NOT NULL,ordinal INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(snapshot_id,ordinal),FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id) ON DELETE CASCADE)");
+        // Provider: shared account/endpoint. credential_epoch changes the deployment identity whenever
+        // the API key is replaced, so verifier calibration and provider continuation never cross keys.
+        db.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,base_url TEXT NOT NULL,"
+                + "credential_epoch INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)");
+        // Model Profile: one concrete deployment. Wire protocol and every capability are declared here, never inferred.
+        db.execSQL("CREATE TABLE model_profiles(profile_id TEXT PRIMARY KEY,"
+                + "provider_id TEXT NOT NULL REFERENCES providers(provider_id) ON DELETE CASCADE,"
+                + "model_id TEXT NOT NULL,display_name TEXT NOT NULL,"
+                + "protocol TEXT NOT NULL,auth_mode TEXT NOT NULL,reasoning_wire TEXT NOT NULL,"
+                + "context_tokens INTEGER NOT NULL,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL,"
+                + "reasoning_levels TEXT NOT NULL DEFAULT '',thinking_mode TEXT NOT NULL,thinking_budget_tokens INTEGER NOT NULL DEFAULT 0,"
+                + "continuation_mode TEXT NOT NULL,input_modalities TEXT NOT NULL,output_modalities TEXT NOT NULL,"
+                + "tool_capabilities TEXT NOT NULL DEFAULT '',client_tool_calling TEXT NOT NULL,harness_preset TEXT NOT NULL,"
+                + "config_mode TEXT NOT NULL,catalog_key TEXT NOT NULL,catalog_version TEXT NOT NULL DEFAULT '',catalog_source TEXT NOT NULL,"
+                + "created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(provider_id,model_id))");
+        // Session: identity, lineage, the deployment frozen at create/model switch, per-session choices,
+        // and derived context state. Profile edits never relabel an existing Chat.
+        db.execSQL("CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,state TEXT NOT NULL,"
+                + "created_at TEXT NOT NULL,updated_at TEXT NOT NULL,preview TEXT,"
+                + "draft TEXT NOT NULL DEFAULT '',draft_media TEXT NOT NULL DEFAULT '[]',"
+                + "provider_id TEXT NOT NULL REFERENCES providers(provider_id),"
+                + "model_profile_id TEXT REFERENCES model_profiles(profile_id) ON DELETE SET NULL,"
+                + "parent_session_id TEXT REFERENCES sessions(local_id) ON DELETE SET NULL,"
+                + "origin_snapshot_id TEXT REFERENCES snapshots(snapshot_id),"
+                + "model TEXT NOT NULL,protocol TEXT NOT NULL,auth_mode TEXT NOT NULL,reasoning_wire TEXT NOT NULL,"
+                + "context_tokens INTEGER NOT NULL,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL,"
+                + "reasoning_levels TEXT NOT NULL DEFAULT '',thinking_mode TEXT NOT NULL,thinking_budget_tokens INTEGER NOT NULL DEFAULT 0,"
+                + "continuation_mode TEXT NOT NULL,input_modalities TEXT NOT NULL,output_modalities TEXT NOT NULL,"
+                + "tool_capabilities TEXT NOT NULL DEFAULT '',client_tool_calling TEXT NOT NULL,harness_preset TEXT NOT NULL,"
+                + "reasoning_effort TEXT NOT NULL,web_mode TEXT NOT NULL,context_mode TEXT NOT NULL,subagent_mode TEXT NOT NULL,"
+                + "task_profile TEXT NOT NULL DEFAULT '',context_checkpoint TEXT NOT NULL DEFAULT '',"
+                + "checkpoint_covered_items INTEGER NOT NULL DEFAULT 0,knowledge_indexed_at TEXT NOT NULL DEFAULT '')");
+        db.execSQL("CREATE INDEX sessions_updated ON sessions(updated_at)");
+        // Timeline: one JSON item per row (message / usage / error), ordered by local_seq. kind mirrors
+        // body.kind so queries never pattern-match JSON. UNIQUE(session_id,local_seq) is the session index.
+        db.execSQL("CREATE TABLE timeline(item_key TEXT PRIMARY KEY,"
+                + "session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
+                + "local_seq INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,"
+                + "UNIQUE(session_id,local_seq))");
+        // Snapshot: immutable branch origin. The source session may be deleted later; the snapshot stays.
+        db.execSQL("CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY,source_session_id TEXT NOT NULL,source_title TEXT NOT NULL,"
+                + "created_at TEXT NOT NULL,item_count INTEGER NOT NULL,source_item_count INTEGER NOT NULL,"
+                + "truncated INTEGER NOT NULL DEFAULT 0,content_hash TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE snapshot_items(snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,"
+                + "ordinal INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(snapshot_id,ordinal))");
+        // Lexical index for memory/retrieval. scope_id is chat:<session> or snapshot:<snapshot>.
         db.execSQL("CREATE VIRTUAL TABLE knowledge_fts USING fts4(scope_id,item_ref,ordinal,role,text,terms,tokenize=simple)");
+        // Explicit verifier feedback, keyed by deployment calibration key; bounded per key in code.
+        db.execSQL("CREATE TABLE verifier_labels(label_id INTEGER PRIMARY KEY AUTOINCREMENT,calibration_key TEXT NOT NULL,"
+                + "features TEXT NOT NULL,label INTEGER NOT NULL CHECK(label IN (0,1)),created_at TEXT NOT NULL)");
+        db.execSQL("CREATE INDEX verifier_labels_key ON verifier_labels(calibration_key,label_id)");
+        // App preferences only (theme, route, defaults). Per-entity state belongs to its own table.
         db.execSQL("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion < 2) {
-            db.execSQL("ALTER TABLE providers ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 32000");
-            db.execSQL("ALTER TABLE providers ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 4096");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT");
-        }
-        if (oldVersion < 3) {
-            db.execSQL("ALTER TABLE snapshots ADD COLUMN source_item_count INTEGER NOT NULL DEFAULT 0");
-            db.execSQL("ALTER TABLE snapshots ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0");
-            db.execSQL("UPDATE snapshots SET source_item_count=item_count WHERE source_item_count=0");
-        }
-        if (oldVersion < 4) {
-            db.execSQL("ALTER TABLE providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
-            db.execSQL("UPDATE providers SET auth_mode='x-api-key' WHERE protocol='anthropic-messages'");
-        }
-        if (oldVersion < 5) {
-            db.execSQL("ALTER TABLE providers ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
-            db.execSQL("ALTER TABLE providers ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
-            db.execSQL("UPDATE providers SET reasoning_wire='openai-responses' WHERE protocol='openai-responses'");
-            db.execSQL("UPDATE providers SET reasoning_wire='anthropic-effort' WHERE protocol='anthropic-messages'");
-            db.execSQL("CREATE TABLE model_profiles(profile_id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,model_id TEXT NOT NULL,display_name TEXT NOT NULL,context_tokens INTEGER NOT NULL DEFAULT 32000,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL DEFAULT 4096,reasoning_levels TEXT NOT NULL DEFAULT '',default_reasoning TEXT NOT NULL DEFAULT 'default',updated_at TEXT NOT NULL,FOREIGN KEY(provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,UNIQUE(provider_id,model_id))");
-            db.execSQL("INSERT INTO model_profiles(profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,updated_at) SELECT provider_id || ':default',provider_id,model,model,context_tokens,input_tokens,max_output_tokens,'','default',updated_at FROM providers WHERE model<>''");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN model_profile_id TEXT");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 32000");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 4096");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'default'");
-            db.execSQL("UPDATE sessions SET model_profile_id=provider_id || ':default' WHERE model=(SELECT model FROM providers WHERE providers.provider_id=sessions.provider_id)");
-            db.execSQL("UPDATE sessions SET context_tokens=COALESCE((SELECT context_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),32000), input_tokens=COALESCE((SELECT input_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),0), max_output_tokens=COALESCE((SELECT max_output_tokens FROM providers WHERE providers.provider_id=sessions.provider_id),4096)");
-        }
-        if (oldVersion < 6) {
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN input_modalities TEXT NOT NULL DEFAULT 'text'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN input_modalities TEXT NOT NULL DEFAULT 'text'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN output_modalities TEXT NOT NULL DEFAULT 'text'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN draft_media TEXT NOT NULL DEFAULT '[]'");
-        }
-        if (oldVersion < 7) {
-            db.execSQL("ALTER TABLE sessions ADD COLUMN task_profile TEXT NOT NULL DEFAULT ''");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN context_checkpoint TEXT NOT NULL DEFAULT ''");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN checkpoint_covered_items INTEGER NOT NULL DEFAULT 0");
-        }
-        if (oldVersion < 8) {
-            db.execSQL("ALTER TABLE sessions ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'auto'");
-        }
-        if (oldVersion < 9) {
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN tool_capabilities TEXT NOT NULL DEFAULT ''");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN web_mode TEXT NOT NULL DEFAULT 'auto'");
-            db.execSQL("UPDATE sessions SET tool_capabilities=COALESCE((SELECT tool_capabilities FROM model_profiles WHERE profile_id=sessions.model_profile_id),'')");
-        }
-        if (oldVersion < 10) {
-            db.execSQL("UPDATE sessions SET context_mode='standard' WHERE context_mode='auto'");
-            db.execSQL("UPDATE settings SET value='standard' WHERE key='defaultContextMode' AND value='auto'");
-            db.execSQL("CREATE VIRTUAL TABLE knowledge_fts USING fts4(scope_id,item_ref,ordinal,role,text,terms,tokenize=simple)");
-        }
-        if (oldVersion < 11) {
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
-        }
-        if (oldVersion < 12) {
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'provider-default'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN thinking_budget_tokens INTEGER NOT NULL DEFAULT 0");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT NOT NULL DEFAULT 'none'");
-            db.execSQL("UPDATE sessions SET thinking_mode=COALESCE((SELECT thinking_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),'provider-default'), thinking_budget_tokens=COALESCE((SELECT thinking_budget_tokens FROM model_profiles WHERE profile_id=sessions.model_profile_id),0), continuation_mode=COALESCE((SELECT continuation_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),'none')");
-        }
-        if (oldVersion < 13) {
-            // Provider is now the shared account/endpoint. Transport/auth/reasoning wire belong to the
-            // concrete model deployment and are frozen into each session on create/model switch.
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai-chat-completions'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
-            db.execSQL("UPDATE model_profiles SET protocol=COALESCE((SELECT protocol FROM providers WHERE providers.provider_id=model_profiles.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM providers WHERE providers.provider_id=model_profiles.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM providers WHERE providers.provider_id=model_profiles.provider_id),'none')");
-            // Old Messages semantics used base + /v1/messages. New common-base semantics use base + /messages.
-            // Appending /v1 preserves the exact pre-migration request URL for every old Messages provider.
-            db.execSQL("UPDATE providers SET base_url=CASE WHEN RTRIM(base_url,'/') LIKE '%/v1' THEN RTRIM(base_url,'/') ELSE RTRIM(base_url,'/') || '/v1' END WHERE protocol='anthropic-messages'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai-chat-completions'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'bearer'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_wire TEXT NOT NULL DEFAULT 'none'");
-            db.execSQL("UPDATE sessions SET protocol=COALESCE((SELECT protocol FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT protocol FROM providers WHERE providers.provider_id=sessions.provider_id),'openai-chat-completions'), auth_mode=COALESCE((SELECT auth_mode FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT auth_mode FROM providers WHERE providers.provider_id=sessions.provider_id),'bearer'), reasoning_wire=COALESCE((SELECT reasoning_wire FROM model_profiles WHERE profile_id=sessions.model_profile_id),(SELECT reasoning_wire FROM providers WHERE providers.provider_id=sessions.provider_id),'none')");
-        }
-        if (oldVersion < 14) {
-            // Existing v0.0.3 profiles are authoritative manual deployments. Do not silently replace
-            // their wire/capabilities with catalog guesses during migration.
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN config_mode TEXT NOT NULL DEFAULT 'legacy-manual'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_key TEXT NOT NULL DEFAULT 'unknown'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_version TEXT NOT NULL DEFAULT ''");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN catalog_source TEXT NOT NULL DEFAULT 'legacy-v0.0.3'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
-            db.execSQL("ALTER TABLE model_profiles ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN harness_preset TEXT NOT NULL DEFAULT 'balanced'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN client_tool_calling TEXT NOT NULL DEFAULT 'none'");
-            db.execSQL("ALTER TABLE sessions ADD COLUMN subagent_mode TEXT NOT NULL DEFAULT 'off'");
-        }
-        if (oldVersion < 15) {
-            // Reasoning capability range is part of the frozen deployment snapshot. Profile edits must
-            // not retroactively remove or grant effort levels to already-created sessions.
-            db.execSQL("ALTER TABLE sessions ADD COLUMN reasoning_levels TEXT NOT NULL DEFAULT ''");
-            db.execSQL("UPDATE sessions SET reasoning_levels=COALESCE((SELECT reasoning_levels FROM model_profiles WHERE profile_id=sessions.model_profile_id),'')");
-        }
-        if (oldVersion < 16) {
-            // v0.0.6 removed the Moyu Remote handoff bridge and ChatGPT/Claude export import. Snapshots
-            // still referenced by a session remain immutable branch history; unreferenced ones have no owner.
-            db.execSQL("DROP TABLE IF EXISTS handoffs");
-            String orphan = "SELECT snapshot_id FROM snapshots WHERE snapshot_id NOT IN (SELECT origin_snapshot_id FROM sessions WHERE origin_snapshot_id IS NOT NULL)";
-            db.execSQL("DELETE FROM knowledge_fts WHERE scope_id IN (SELECT 'snapshot:' || snapshot_id FROM (" + orphan + "))");
-            db.execSQL("DELETE FROM snapshot_items WHERE snapshot_id IN (" + orphan + ")");
-            db.execSQL("DELETE FROM snapshots WHERE snapshot_id IN (" + orphan + ")");
-        }
+        if (oldVersion < BASELINE_VERSION) { dropAll(db); onCreate(db); }
     }
 
-    public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId) {
-        return createSession(providerId, model, title, originSnapshotId, null);
-    }
+    /** A beta build may meet a file from a newer experimental build; the beta line resets rather than guessing. */
+    @Override public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }
 
-    /** Compatibility entry point: resolve the deployment-scoped model profile, creating one from legacy provider defaults when needed. */
-    public synchronized Session createSession(String providerId, String model, String title, String originSnapshotId, String parentSessionId) {
-        ModelProfile profile = findModelProfile(providerId, model);
-        if (profile == null) {
-            Provider provider = getProvider(providerId);
-            if (provider == null) throw new IllegalArgumentException("provider not found");
-            profile = legacyProfile(provider, model == null || model.trim().isEmpty() ? provider.model : model.trim());
-            saveModelProfile(profile);
+    /** Child tables first so foreign keys never block the drop (PRAGMA foreign_keys cannot change inside the upgrade transaction). */
+    private static void dropAll(SQLiteDatabase db) {
+        for (String table : new String[]{"knowledge_fts", "snapshot_items", "timeline", "handoffs", "sessions", "snapshots",
+                "model_profiles", "providers", "verifier_labels", "settings"}) {
+            db.execSQL("DROP TABLE IF EXISTS " + table);
         }
-        return createSession(profile, title, originSnapshotId, parentSessionId, ReasoningPolicy.DEFAULT);
+        ArrayList<String> rest = new ArrayList<>();
+        try (Cursor c = db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'android_metadata'", null)) {
+            while (c.moveToNext()) rest.add(c.getString(0));
+        }
+        for (String table : rest) db.execSQL("DROP TABLE IF EXISTS \"" + table.replace("\"", "\"\"") + "\"");
     }
 
     public synchronized Session createSession(ModelProfile profile, String title, String originSnapshotId,
@@ -263,6 +216,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim();
         s.state = "idle";
         s.updatedAt = Instant.now().toString();
+        s.createdAt = s.updatedAt;
         s.draft = "";
         s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId;
@@ -295,7 +249,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.subagentMode = HarnessPolicyResolver.normalizeSubagentMode(source.subagentMode);
         s.reasoningLevels = ReasoningPolicy.normalizeLevels(source.reasoningLevels);
         s.reasoningEffort = source.reasoningEffort == null ? ReasoningPolicy.DEFAULT : source.reasoningEffort;
-        s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.draft = ""; s.draftMedia = "[]";
+        s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.createdAt = s.updatedAt; s.draft = ""; s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId;
         s.contextMode = ContextMode.normalize(source.contextMode);
         s.taskProfile = source.taskProfile == null ? "" : source.taskProfile;
@@ -312,14 +266,14 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized Session getSession(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,tool_capabilities,web_mode,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,context_mode,task_profile,context_checkpoint,checkpoint_covered_items,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,harness_preset,client_tool_calling,subagent_mode,reasoning_levels FROM sessions WHERE local_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + SESSION_COLUMNS + " FROM sessions WHERE local_id=?", new String[]{id})) {
             return c.moveToFirst() ? readSession(c) : null;
         }
     }
 
     public synchronized List<Session> listSessions() {
         ArrayList<Session> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,tool_capabilities,web_mode,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,context_mode,task_profile,context_checkpoint,checkpoint_covered_items,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,harness_preset,client_tool_calling,subagent_mode,reasoning_levels FROM sessions ORDER BY updated_at DESC", null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + SESSION_COLUMNS + " FROM sessions ORDER BY updated_at DESC", null)) {
             while (c.moveToNext()) out.add(readSession(c));
         }
         return out;
@@ -333,7 +287,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             while (c.moveToNext()) affected.add(c.getString(0));
         }
         ArrayList<String> staleKeys = new ArrayList<>();
-        try (Cursor c = db.rawQuery("SELECT item_key,session_id,body FROM timeline", null)) {
+        try (Cursor c = db.rawQuery("SELECT item_key,session_id,body FROM timeline WHERE instr(body,'\"streaming\":true')>0", null)) {
             while (c.moveToNext()) {
                 try {
                     JSONObject body = new JSONObject(c.getString(2));
@@ -366,7 +320,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(id)});
-            db.delete("settings", "key=?", new String[]{LocalKnowledgeStore.indexMarkerKey(id)});
             if (db.delete("sessions", "local_id=?", new String[]{id}) != 1) throw new IllegalStateException("session delete failed");
             if (originSnapshotId != null) {
                 boolean referenced;
@@ -482,10 +435,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         try {
             db.delete("timeline", "session_id=? AND local_seq>=?", new String[]{sessionId, String.valueOf(localSeq)});
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(sessionId)});
-            db.delete("settings", "key=?", new String[]{LocalKnowledgeStore.indexMarkerKey(sessionId)});
             ContentValues state = new ContentValues();
             state.put("state", "idle"); state.put("updated_at", Instant.now().toString()); state.put("draft", ""); state.put("draft_media", "[]");
-            state.put("task_profile", ""); state.put("context_checkpoint", ""); state.put("checkpoint_covered_items", 0);
+            state.put("task_profile", ""); state.put("context_checkpoint", ""); state.put("checkpoint_covered_items", 0); state.put("knowledge_indexed_at", "");
             state.putNull("preview");
             if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalArgumentException("session not found");
             try (Cursor c = db.rawQuery("SELECT body FROM timeline WHERE session_id=? ORDER BY local_seq DESC", new String[]{sessionId})) {
@@ -516,13 +468,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             }
             userBody.put("localSeq", seq);
             ContentValues user = new ContentValues(); user.put("item_key", userKey); user.put("session_id", sessionId); user.put("local_seq", seq);
-            user.put("body", userBody.toString()); user.put("created_at", userBody.optString("createdAt", Instant.now().toString()));
+            user.put("kind", kindOf(userBody)); user.put("body", userBody.toString()); user.put("created_at", userBody.optString("createdAt", Instant.now().toString()));
             db.insertWithOnConflict("timeline", null, user, SQLiteDatabase.CONFLICT_ABORT);
             updatePreviewFromBody(db, sessionId, userBody);
 
             liveBody.put("localSeq", seq + 1);
             ContentValues live = new ContentValues(); live.put("item_key", streamKey); live.put("session_id", sessionId); live.put("local_seq", seq + 1);
-            live.put("body", liveBody.toString()); live.put("created_at", liveBody.optString("createdAt", Instant.now().toString()));
+            live.put("kind", kindOf(liveBody)); live.put("body", liveBody.toString()); live.put("created_at", liveBody.optString("createdAt", Instant.now().toString()));
             db.insertWithOnConflict("timeline", null, live, SQLiteDatabase.CONFLICT_ABORT);
 
             ContentValues state = new ContentValues(); state.put("state", "running"); state.put("updated_at", Instant.now().toString());
@@ -542,7 +494,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } catch (Exception error) { throw new IllegalStateException(error); }
         try { body.put("localSeq", seq); } catch (Exception ignored) { }
         ContentValues v = new ContentValues();
-        v.put("item_key", itemKey); v.put("session_id", sessionId); v.put("local_seq", seq); v.put("body", body.toString());
+        v.put("item_key", itemKey); v.put("session_id", sessionId); v.put("local_seq", seq); v.put("kind", kindOf(body)); v.put("body", body.toString());
         v.put("created_at", body.optString("createdAt", Instant.now().toString()));
         db.insertWithOnConflict("timeline", null, v, SQLiteDatabase.CONFLICT_ABORT);
         updatePreviewFromBody(db, sessionId, body);
@@ -555,7 +507,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         try (Cursor c = db.rawQuery("SELECT session_id FROM timeline WHERE item_key=?", new String[]{itemKey})) {
             if (c.moveToFirst()) sessionId = c.getString(0);
         }
-        ContentValues v = new ContentValues(); v.put("body", body.toString());
+        ContentValues v = new ContentValues(); v.put("kind", kindOf(body)); v.put("body", body.toString());
         if (db.update("timeline", v, "item_key=?", new String[]{itemKey}) == 1 && sessionId != null) updatePreviewFromBody(db, sessionId, body);
     }
 
@@ -584,7 +536,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                         .put("summary", errorSummary == null ? "Provider error" : errorSummary)
                         .put("createdAt", Instant.now().toString()).put("localSeq", seq);
                 ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
-                row.put("local_seq", seq); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
+                row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
                 db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
             }
             ContentValues state = new ContentValues(); state.put("state", finalState); state.put("updated_at", Instant.now().toString());
@@ -602,7 +554,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             ArrayList<String> streamingKeys = new ArrayList<>();
-            try (Cursor c = db.rawQuery("SELECT item_key,body FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+            try (Cursor c = db.rawQuery("SELECT item_key,body FROM timeline WHERE session_id=? AND instr(body,'\"streaming\":true')>0", new String[]{sessionId})) {
                 while (c.moveToNext()) {
                     try { if (new JSONObject(c.getString(1)).optBoolean("streaming", false)) streamingKeys.add(c.getString(0)); }
                     catch (Exception ignored) { }
@@ -620,7 +572,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                         .put("summary", summary == null ? "Turn failed before provider ownership" : summary)
                         .put("createdAt", Instant.now().toString()).put("localSeq", seq);
                 ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
-                row.put("local_seq", seq); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
+                row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
                 db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
                 ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", Instant.now().toString());
                 db.update("sessions", state, "local_id=?", new String[]{sessionId});
@@ -638,7 +590,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized JSONArray usageSince(String sinceIso) {
         JSONArray out = new JSONArray();
         if (sinceIso == null) return out;
-        String sql = "SELECT t.body FROM sessions s JOIN timeline t ON t.session_id=s.local_id WHERE s.updated_at>=? AND t.created_at>=? AND instr(t.body,'\"kind\":\"usage\"')>0";
+        String sql = "SELECT t.body FROM sessions s JOIN timeline t ON t.session_id=s.local_id WHERE s.updated_at>=? AND t.kind='usage' AND t.created_at>=?";
         try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sinceIso, sinceIso})) {
             while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
         }
@@ -658,13 +610,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return out;
     }
 
-    public synchronized void saveProvider(Provider p) {
-        ContentValues v = providerValues(p);
-        SQLiteDatabase db = getWritableDatabase();
-        int updated = db.update("providers", v, "provider_id=?", new String[]{p.id});
-        if (updated == 0) db.insertWithOnConflict("providers", null, v, SQLiteDatabase.CONFLICT_ABORT);
-        if (listModelProfiles(p.id).isEmpty() && p.model != null && !p.model.trim().isEmpty()) saveModelProfile(legacyProfile(p, p.model.trim()));
-    }
+    /** Saves the shared provider row only (no model profiles, no credential change). */
+    public synchronized void saveProvider(Provider p) { saveProviderAndProfiles(p, null, false); }
 
     /** Atomically save one shared Provider plus every deployment profile affected by its endpoint change. */
     public synchronized void saveProviderAndProfiles(Provider p, List<ModelProfile> profiles, boolean bumpCredentialEpoch) {
@@ -672,49 +619,39 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            ContentValues provider = providerValues(p);
-            int updated = db.update("providers", provider, "provider_id=?", new String[]{p.id});
-            if (updated == 0) db.insertWithOnConflict("providers", null, provider, SQLiteDatabase.CONFLICT_ABORT);
-            boolean hasProfiles = profiles != null && !profiles.isEmpty();
+            upsert(db, "providers", "provider_id", p.id, providerValues(p));
             if (profiles != null) for (ModelProfile profile : profiles) {
                 if (profile == null) continue;
                 if (!p.id.equals(profile.providerId)) throw new IllegalArgumentException("model profile belongs to another provider");
-                ContentValues model = modelProfileValues(profile);
-                int modelUpdated = db.update("model_profiles", model, "profile_id=?", new String[]{profile.id});
-                if (modelUpdated == 0) db.insertWithOnConflict("model_profiles", null, model, SQLiteDatabase.CONFLICT_ABORT);
+                upsert(db, "model_profiles", "profile_id", profile.id, modelProfileValues(profile));
             }
-            // Compatibility for programmatic/legacy one-step Provider creation. The v0.0.4 UI keeps
-            // Provider.model empty and creates Model Profiles explicitly, so this never invents a model
-            // for normal Auto configuration.
-            if (!hasProfiles && p.model != null && !p.model.trim().isEmpty()) {
-                ModelProfile legacy = legacyProfile(p, p.model.trim());
-                ContentValues model = modelProfileValues(legacy);
-                int modelUpdated = db.update("model_profiles", model, "profile_id=?", new String[]{legacy.id});
-                if (modelUpdated == 0) db.insertWithOnConflict("model_profiles", null, model, SQLiteDatabase.CONFLICT_ABORT);
-            }
-            if (bumpCredentialEpoch) {
-                String key = ProviderContinuationIdentity.credentialEpochSettingKey(p.id);
-                long current = 0L;
-                try (Cursor c = db.rawQuery("SELECT value FROM settings WHERE key=?", new String[]{key})) {
-                    if (c.moveToFirst()) try { current = Long.parseLong(c.getString(0)); } catch (Exception ignored) { }
-                }
-                ContentValues setting = new ContentValues(); setting.put("key", key); setting.put("value", Long.toString(current + 1L));
-                db.insertWithOnConflict("settings", null, setting, SQLiteDatabase.CONFLICT_REPLACE);
-            }
+            if (bumpCredentialEpoch) db.execSQL("UPDATE providers SET credential_epoch=credential_epoch+1 WHERE provider_id=?", new Object[]{p.id});
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
 
+    /** Monotonic per-provider counter, bumped whenever a new API key is stored. */
+    public synchronized long credentialEpoch(String providerId) {
+        if (providerId == null) return 0L;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT credential_epoch FROM providers WHERE provider_id=?", new String[]{providerId})) {
+            return c.moveToFirst() ? c.getLong(0) : 0L;
+        }
+    }
+
+    public synchronized void bumpCredentialEpoch(String providerId) {
+        getWritableDatabase().execSQL("UPDATE providers SET credential_epoch=credential_epoch+1 WHERE provider_id=?", new Object[]{providerId});
+    }
+
     public synchronized Provider getProvider(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,reasoning_wire,model,context_tokens,input_tokens,max_output_tokens FROM providers WHERE provider_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,base_url FROM providers WHERE provider_id=?", new String[]{id})) {
             return c.moveToFirst() ? readProvider(c) : null;
         }
     }
 
     public synchronized List<Provider> listProviders() {
         ArrayList<Provider> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,protocol,base_url,auth_mode,reasoning_wire,model,context_tokens,input_tokens,max_output_tokens FROM providers ORDER BY display_name", null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,base_url FROM providers ORDER BY display_name", null)) {
             while (c.moveToNext()) out.add(readProvider(c));
         }
         return out;
@@ -722,22 +659,19 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized void saveModelProfile(ModelProfile profile) {
         if (profile == null) throw new IllegalArgumentException("model profile required");
-        ContentValues v = modelProfileValues(profile);
-        SQLiteDatabase db = getWritableDatabase();
-        int updated = db.update("model_profiles", v, "profile_id=?", new String[]{profile.id});
-        if (updated == 0) db.insertWithOnConflict("model_profiles", null, v, SQLiteDatabase.CONFLICT_ABORT);
+        upsert(getWritableDatabase(), "model_profiles", "profile_id", profile.id, modelProfileValues(profile));
     }
 
     public synchronized ModelProfile getModelProfile(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,input_modalities,output_modalities,tool_capabilities,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,config_mode,catalog_key,catalog_version,catalog_source,harness_preset,client_tool_calling FROM model_profiles WHERE profile_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROFILE_COLUMNS + " FROM model_profiles WHERE profile_id=?", new String[]{id})) {
             return c.moveToFirst() ? readModelProfile(c) : null;
         }
     }
 
     public synchronized ModelProfile findModelProfile(String providerId, String modelId) {
         if (providerId == null || modelId == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,input_modalities,output_modalities,tool_capabilities,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,config_mode,catalog_key,catalog_version,catalog_source,harness_preset,client_tool_calling FROM model_profiles WHERE provider_id=? AND model_id=?", new String[]{providerId, modelId})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROFILE_COLUMNS + " FROM model_profiles WHERE provider_id=? AND model_id=?", new String[]{providerId, modelId})) {
             return c.moveToFirst() ? readModelProfile(c) : null;
         }
     }
@@ -745,7 +679,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized List<ModelProfile> listModelProfiles(String providerId) {
         ArrayList<ModelProfile> out = new ArrayList<>();
         if (providerId == null) return out;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,default_reasoning,input_modalities,output_modalities,tool_capabilities,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,config_mode,catalog_key,catalog_version,catalog_source,harness_preset,client_tool_calling FROM model_profiles WHERE provider_id=? ORDER BY display_name,model_id", new String[]{providerId})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROFILE_COLUMNS + " FROM model_profiles WHERE provider_id=? ORDER BY display_name,model_id", new String[]{providerId})) {
             while (c.moveToNext()) out.add(readModelProfile(c));
         }
         return out;
@@ -762,8 +696,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             ContentValues s = new ContentValues();
-            s.put("snapshot_id", snapshot.id); s.put("source_type", snapshot.sourceType); s.put("source_id", snapshot.sourceId);
-            s.put("source_title", snapshot.sourceTitle); s.put("source_runtime", snapshot.sourceRuntime); s.put("created_at", snapshot.createdAt);
+            s.put("snapshot_id", snapshot.id); s.put("source_session_id", snapshot.sourceSessionId);
+            s.put("source_title", snapshot.sourceTitle); s.put("created_at", snapshot.createdAt);
             s.put("item_count", items.length()); s.put("source_item_count", Math.max(items.length(), snapshot.sourceItemCount)); s.put("truncated", snapshot.truncated ? 1 : 0); s.put("content_hash", snapshot.contentHash);
             db.insertWithOnConflict("snapshots", null, s, SQLiteDatabase.CONFLICT_ABORT);
             for (int i = 0; i < items.length(); i++) {
@@ -777,7 +711,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized Snapshot getSnapshot(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_type,source_id,source_title,source_runtime,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE snapshot_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT snapshot_id,source_session_id,source_title,created_at,item_count,source_item_count,truncated,content_hash FROM snapshots WHERE snapshot_id=?", new String[]{id})) {
             return c.moveToFirst() ? readSnapshot(c) : null;
         }
     }
@@ -791,12 +725,49 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return out;
     }
 
+    /** updated_at of the session when its lexical index was last rebuilt; '' when stale. Never bumps updated_at. */
+    public synchronized String knowledgeIndexedAt(String sessionId) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT knowledge_indexed_at FROM sessions WHERE local_id=?", new String[]{sessionId})) {
+            return c.moveToFirst() ? c.getString(0) : "";
+        }
+    }
+
+    public synchronized void markKnowledgeIndexed(String sessionId, String marker) {
+        ContentValues v = new ContentValues(); v.put("knowledge_indexed_at", marker == null ? "" : marker);
+        getWritableDatabase().update("sessions", v, "local_id=?", new String[]{sessionId});
+    }
+
+    /** Appends one explicit verifier label and keeps only the newest {@code keep} rows for that calibration key. */
+    public synchronized void addVerifierLabel(String calibrationKey, JSONArray features, int label, int keep) {
+        if (calibrationKey == null || calibrationKey.isEmpty() || features == null) throw new IllegalArgumentException("verifier label requires key and features");
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            ContentValues v = new ContentValues();
+            v.put("calibration_key", calibrationKey); v.put("features", features.toString()); v.put("label", label == 0 ? 0 : 1); v.put("created_at", Instant.now().toString());
+            db.insertOrThrow("verifier_labels", null, v);
+            db.execSQL("DELETE FROM verifier_labels WHERE calibration_key=? AND label_id NOT IN (SELECT label_id FROM verifier_labels WHERE calibration_key=? ORDER BY label_id DESC LIMIT ?)",
+                    new Object[]{calibrationKey, calibrationKey, Math.max(1, keep)});
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    /** Oldest-first {x, y} samples for one calibration key. */
+    public synchronized JSONArray verifierLabels(String calibrationKey) {
+        JSONArray out = new JSONArray();
+        if (calibrationKey == null || calibrationKey.isEmpty()) return out;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT features,label FROM verifier_labels WHERE calibration_key=? ORDER BY label_id", new String[]{calibrationKey})) {
+            while (c.moveToNext()) try { out.put(new JSONObject().put("x", new JSONArray(c.getString(0))).put("y", c.getInt(1))); } catch (Exception ignored) { }
+        }
+        return out;
+    }
+
     public synchronized void putSetting(String key, String value) { ContentValues v = new ContentValues(); v.put("key", key); v.put("value", value); getWritableDatabase().insertWithOnConflict("settings", null, v, SQLiteDatabase.CONFLICT_REPLACE); }
     public synchronized String setting(String key, String fallback) { try (Cursor c = getReadableDatabase().rawQuery("SELECT value FROM settings WHERE key=?", new String[]{key})) { return c.moveToFirst() ? c.getString(0) : fallback; } }
 
     private static ContentValues sessionValues(Session s) {
         ContentValues v = new ContentValues();
-        v.put("local_id", s.id); v.put("title", s.title); v.put("provider_id", s.providerId); v.put("model_profile_id", s.modelProfileId); v.put("model", s.model);
+        v.put("local_id", s.id); v.put("title", s.title); v.put("created_at", s.createdAt == null ? s.updatedAt : s.createdAt); v.put("provider_id", s.providerId); v.put("model_profile_id", s.modelProfileId); v.put("model", s.model);
         v.put("context_tokens", s.contextTokens > 0 ? s.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS);
         v.put("input_tokens", Math.max(0, s.inputTokens));
         v.put("max_output_tokens", s.maxOutputTokens > 0 ? s.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS);
@@ -826,13 +797,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     private static ContentValues providerValues(Provider p) {
         ContentValues v = new ContentValues();
-        v.put("provider_id", p.id); v.put("display_name", p.displayName); v.put("protocol", p.protocol); v.put("base_url", p.baseUrl);
-        v.put("auth_mode", ProviderAuth.normalize(p.authMode, p.protocol));
-        v.put("reasoning_wire", ReasoningPolicy.normalizeWire(p.reasoningWire, p.protocol));
-        v.put("model", p.model == null ? "" : p.model);
-        v.put("context_tokens", p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS);
-        v.put("input_tokens", Math.max(0, p.inputTokens));
-        v.put("max_output_tokens", p.maxOutputTokens > 0 ? p.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS);
+        v.put("provider_id", p.id); v.put("display_name", p.displayName); v.put("base_url", p.baseUrl);
         v.put("updated_at", Instant.now().toString());
         return v;
     }
@@ -847,8 +812,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (input > context) throw new IllegalArgumentException("input tokens out of range");
         if (output < 256 || output >= context) throw new IllegalArgumentException("max output tokens out of range");
         String levels = ReasoningPolicy.normalizeLevels(p.reasoningLevels);
-        // Kept as a schema-compatibility column only; current product semantics keep effort on Session/Turn.
-        String defaultReasoning = ReasoningPolicy.DEFAULT;
         String protocol = normalizeProtocol(p.protocol);
         String authMode = ProviderAuth.normalize(p.authMode, protocol);
         String reasoningWire = ReasoningPolicy.normalizeWire(p.reasoningWire, protocol);
@@ -862,7 +825,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         v.put("profile_id", p.id); v.put("provider_id", p.providerId); v.put("model_id", modelId);
         v.put("display_name", p.displayName == null || p.displayName.trim().isEmpty() ? modelId : p.displayName.trim());
         v.put("context_tokens", context); v.put("input_tokens", input); v.put("max_output_tokens", output);
-        v.put("reasoning_levels", levels); v.put("default_reasoning", defaultReasoning);
+        v.put("reasoning_levels", levels);
         v.put("input_modalities", normalizeModalities(p.inputModalities)); v.put("output_modalities", normalizeModalities(p.outputModalities));
         v.put("tool_capabilities", ChatTurnOptions.normalizeCapabilities(p.toolCapabilities));
         v.put("protocol", protocol); v.put("auth_mode", authMode); v.put("reasoning_wire", reasoningWire);
@@ -878,19 +841,17 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return v;
     }
 
-    private static ModelProfile legacyProfile(Provider provider, String model) {
-        ModelProfile p = new ModelProfile(); p.id = provider.id + ":default"; p.providerId = provider.id;
-        p.modelId = model == null ? "" : model.trim(); p.displayName = p.modelId;
-        p.contextTokens = provider.contextTokens > 0 ? provider.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
-        p.inputTokens = Math.max(0, provider.inputTokens);
-        p.maxOutputTokens = provider.maxOutputTokens > 0 ? provider.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
-        p.reasoningLevels = ""; p.defaultReasoning = ReasoningPolicy.DEFAULT; p.inputModalities = "text"; p.outputModalities = "text";
-        p.protocol = normalizeProtocol(provider.protocol); p.authMode = ProviderAuth.normalize(provider.authMode, p.protocol);
-        p.reasoningWire = ReasoningPolicy.normalizeWire(provider.reasoningWire, p.protocol);
-        p.thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT; p.thinkingBudgetTokens = 0;
-        p.continuationMode = ProviderContinuationPolicy.NONE;
-        p.configMode = ModelCatalog.CONFIG_LEGACY_MANUAL; p.catalogKey = "unknown"; p.catalogVersion = ""; p.catalogSource = "legacy-provider";
-        p.harnessPreset = HarnessProfile.BALANCED; p.clientToolCalling = ClientToolRuntime.NONE; return p;
+    /** Update-or-insert that stamps created_at only on insert. */
+    private static void upsert(SQLiteDatabase db, String table, String keyColumn, String id, ContentValues values) {
+        if (db.update(table, values, keyColumn + "=?", new String[]{id}) > 0) return;
+        values.put("created_at", values.getAsString("updated_at") == null ? Instant.now().toString() : values.getAsString("updated_at"));
+        db.insertWithOnConflict(table, null, values, SQLiteDatabase.CONFLICT_ABORT);
+    }
+
+    /** timeline.kind mirrors body.kind; items without one are messages (the knowledge index reads them the same way). */
+    private static String kindOf(JSONObject body) {
+        String kind = body == null ? "" : body.optString("kind", "").trim();
+        return kind.isEmpty() ? "message" : kind;
     }
 
     static String normalizeProtocol(String raw) {
@@ -956,8 +917,48 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.update("sessions", s, "local_id=?", new String[]{sessionId});
     }
 
-    private static Snapshot readSnapshot(Cursor c) { Snapshot s = new Snapshot(); s.id = c.getString(0); s.sourceType = c.getString(1); s.sourceId = c.getString(2); s.sourceTitle = c.getString(3); s.sourceRuntime = c.isNull(4) ? null : c.getString(4); s.createdAt = c.getString(5); s.itemCount = c.getInt(6); s.sourceItemCount = c.getInt(7); s.truncated = c.getInt(8) != 0; s.contentHash = c.isNull(9) ? null : c.getString(9); return s; }
-    private static Session readSession(Cursor c) { Session s = new Session(); s.id = c.getString(0); s.title = c.getString(1); s.providerId = c.getString(2); s.modelProfileId = c.isNull(3) ? null : c.getString(3); s.model = c.getString(4); s.contextTokens = c.getInt(5); s.inputTokens = c.getInt(6); s.maxOutputTokens = c.getInt(7); s.reasoningEffort = c.getString(8); s.inputModalities = c.getString(9); s.outputModalities = c.getString(10); s.toolCapabilities = c.isNull(11) ? "" : ChatTurnOptions.normalizeCapabilities(c.getString(11)); s.webMode = c.isNull(12) ? ChatTurnOptions.WEB_AUTO : ChatTurnOptions.normalizeWebMode(c.getString(12)); s.state = c.getString(13); s.updatedAt = c.getString(14); s.draft = c.getString(15); s.draftMedia = c.getString(16); s.originSnapshotId = c.isNull(17) ? null : c.getString(17); s.parentSessionId = c.isNull(18) ? null : c.getString(18); s.preview = c.isNull(19) ? null : c.getString(19); s.contextMode = c.isNull(20) ? ContextMode.STANDARD : ContextMode.normalize(c.getString(20)); s.taskProfile = c.isNull(21) ? "" : c.getString(21); s.contextCheckpoint = c.isNull(22) ? "" : c.getString(22); s.checkpointCoveredItems = c.getInt(23); s.protocol = c.isNull(24) ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : normalizeProtocol(c.getString(24)); s.authMode = c.isNull(25) ? ProviderAuth.defaultForProtocol(s.protocol) : ProviderAuth.normalize(c.getString(25), s.protocol); s.reasoningWire = c.isNull(26) ? ReasoningPolicy.WIRE_NONE : ReasoningPolicy.normalizeWire(c.getString(26), s.protocol); s.thinkingMode = c.isNull(27) ? ReasoningPolicy.THINKING_PROVIDER_DEFAULT : ReasoningPolicy.normalizeThinkingMode(c.getString(27)); s.thinkingBudgetTokens = Math.max(0, c.getInt(28)); s.continuationMode = c.isNull(29) ? ProviderContinuationPolicy.NONE : ProviderContinuationPolicy.normalize(c.getString(29)); s.harnessPreset = c.isNull(30) ? HarnessProfile.BALANCED : HarnessProfile.normalize(c.getString(30)); s.clientToolCalling = c.isNull(31) ? ClientToolRuntime.NONE : ClientToolRuntime.normalizeCalling(c.getString(31)); s.subagentMode = c.isNull(32) ? HarnessPolicyResolver.SUBAGENT_OFF : HarnessPolicyResolver.normalizeSubagentMode(c.getString(32)); s.reasoningLevels = c.isNull(33) ? "" : ReasoningPolicy.normalizeLevels(c.getString(33)); return s; }
-    private static Provider readProvider(Cursor c) { Provider p = new Provider(); p.id = c.getString(0); p.displayName = c.getString(1); p.protocol = c.getString(2); p.baseUrl = c.getString(3); p.authMode = c.getString(4); p.reasoningWire = c.getString(5); p.model = c.getString(6); p.contextTokens = c.getInt(7); p.inputTokens = c.getInt(8); p.maxOutputTokens = c.getInt(9); return p; }
-    private static ModelProfile readModelProfile(Cursor c) { ModelProfile p = new ModelProfile(); p.id = c.getString(0); p.providerId = c.getString(1); p.modelId = c.getString(2); p.displayName = c.getString(3); p.contextTokens = c.getInt(4); p.inputTokens = c.getInt(5); p.maxOutputTokens = c.getInt(6); p.reasoningLevels = c.getString(7); p.defaultReasoning = c.getString(8); p.inputModalities = c.getString(9); p.outputModalities = c.getString(10); p.toolCapabilities = c.isNull(11) ? "" : ChatTurnOptions.normalizeCapabilities(c.getString(11)); p.protocol = c.isNull(12) ? OpenAiCompatibleTransport.CHAT_COMPLETIONS : normalizeProtocol(c.getString(12)); p.authMode = c.isNull(13) ? ProviderAuth.defaultForProtocol(p.protocol) : ProviderAuth.normalize(c.getString(13), p.protocol); p.reasoningWire = c.isNull(14) ? ReasoningPolicy.WIRE_NONE : ReasoningPolicy.normalizeWire(c.getString(14), p.protocol); p.thinkingMode = c.isNull(15) ? ReasoningPolicy.THINKING_PROVIDER_DEFAULT : ReasoningPolicy.normalizeThinkingMode(c.getString(15)); p.thinkingBudgetTokens = Math.max(0, c.getInt(16)); p.continuationMode = c.isNull(17) ? ProviderContinuationPolicy.NONE : ProviderContinuationPolicy.normalize(c.getString(17)); p.configMode = c.isNull(18) ? ModelCatalog.CONFIG_LEGACY_MANUAL : ModelCatalog.normalizeConfigMode(c.getString(18)); p.catalogKey = c.isNull(19) ? "unknown" : c.getString(19); p.catalogVersion = c.isNull(20) ? "" : c.getString(20); p.catalogSource = c.isNull(21) ? "neutral-defaults" : c.getString(21); p.harnessPreset = c.isNull(22) ? HarnessProfile.BALANCED : HarnessProfile.normalize(c.getString(22)); p.clientToolCalling = c.isNull(23) ? ClientToolRuntime.NONE : ClientToolRuntime.normalizeCalling(c.getString(23)); return p; }
+
+    private static Snapshot readSnapshot(Cursor c) {
+        Snapshot s = new Snapshot();
+        s.id = c.getString(0); s.sourceSessionId = c.getString(1); s.sourceTitle = c.getString(2); s.createdAt = c.getString(3);
+        s.itemCount = c.getInt(4); s.sourceItemCount = c.getInt(5); s.truncated = c.getInt(6) != 0; s.contentHash = c.getString(7);
+        return s;
+    }
+
+    private static Session readSession(Cursor c) {
+        Session s = new Session();
+        s.id = c.getString(0); s.title = c.getString(1); s.providerId = c.getString(2); s.modelProfileId = c.isNull(3) ? null : c.getString(3); s.model = c.getString(4);
+        s.contextTokens = c.getInt(5); s.inputTokens = c.getInt(6); s.maxOutputTokens = c.getInt(7); s.reasoningEffort = c.getString(8);
+        s.inputModalities = c.getString(9); s.outputModalities = c.getString(10); s.toolCapabilities = ChatTurnOptions.normalizeCapabilities(c.getString(11));
+        s.webMode = ChatTurnOptions.normalizeWebMode(c.getString(12)); s.state = c.getString(13); s.updatedAt = c.getString(14);
+        s.draft = c.getString(15); s.draftMedia = c.getString(16); s.originSnapshotId = c.isNull(17) ? null : c.getString(17);
+        s.parentSessionId = c.isNull(18) ? null : c.getString(18); s.preview = c.isNull(19) ? null : c.getString(19);
+        s.contextMode = ContextMode.normalize(c.getString(20)); s.taskProfile = c.getString(21); s.contextCheckpoint = c.getString(22); s.checkpointCoveredItems = c.getInt(23);
+        s.protocol = normalizeProtocol(c.getString(24)); s.authMode = ProviderAuth.normalize(c.getString(25), s.protocol);
+        s.reasoningWire = ReasoningPolicy.normalizeWire(c.getString(26), s.protocol); s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(c.getString(27));
+        s.thinkingBudgetTokens = Math.max(0, c.getInt(28)); s.continuationMode = ProviderContinuationPolicy.normalize(c.getString(29));
+        s.harnessPreset = HarnessProfile.normalize(c.getString(30)); s.clientToolCalling = ClientToolRuntime.normalizeCalling(c.getString(31));
+        s.subagentMode = HarnessPolicyResolver.normalizeSubagentMode(c.getString(32)); s.reasoningLevels = ReasoningPolicy.normalizeLevels(c.getString(33));
+        s.createdAt = c.getString(34);
+        return s;
+    }
+
+    private static Provider readProvider(Cursor c) {
+        Provider p = new Provider();
+        p.id = c.getString(0); p.displayName = c.getString(1); p.baseUrl = c.getString(2);
+        return p;
+    }
+
+    private static ModelProfile readModelProfile(Cursor c) {
+        ModelProfile p = new ModelProfile();
+        p.id = c.getString(0); p.providerId = c.getString(1); p.modelId = c.getString(2); p.displayName = c.getString(3);
+        p.contextTokens = c.getInt(4); p.inputTokens = c.getInt(5); p.maxOutputTokens = c.getInt(6); p.reasoningLevels = c.getString(7);
+        p.inputModalities = c.getString(8); p.outputModalities = c.getString(9); p.toolCapabilities = ChatTurnOptions.normalizeCapabilities(c.getString(10));
+        p.protocol = normalizeProtocol(c.getString(11)); p.authMode = ProviderAuth.normalize(c.getString(12), p.protocol);
+        p.reasoningWire = ReasoningPolicy.normalizeWire(c.getString(13), p.protocol); p.thinkingMode = ReasoningPolicy.normalizeThinkingMode(c.getString(14));
+        p.thinkingBudgetTokens = Math.max(0, c.getInt(15)); p.continuationMode = ProviderContinuationPolicy.normalize(c.getString(16));
+        p.configMode = ModelCatalog.normalizeConfigMode(c.getString(17)); p.catalogKey = c.getString(18); p.catalogVersion = c.getString(19); p.catalogSource = c.getString(20);
+        p.harnessPreset = HarnessProfile.normalize(c.getString(21)); p.clientToolCalling = ClientToolRuntime.normalizeCalling(c.getString(22));
+        return p;
+    }
 }
