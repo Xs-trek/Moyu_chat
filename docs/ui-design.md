@@ -72,4 +72,5 @@ Moyu Chat 的界面全部由 WebView 绘制，用同一套 token、组件和动�
 | 选择行 `.choice-row`、选择面板 `openChoice` | `src/overlays.js` |
 | 底部面板 `.sheet`、对话框 `.modal-card`、提示条 `.toast` | `src/overlays.js`、`render.js` |
 | 全屏编辑页 `openPanel` / `closePanel`，表单字段 `.text-input` / `.choice-field` / `.chip-toggle` | `src/overlays.js`、`src/editors.js` |
+| 服务商列表 `.preset-row`、路线卡片 `.route-card`（展开协议细节与附加请求头 `.header-row`）、能力列表 `.cap-row`（值 + 来源标签 `.chip.src`）、危险操作区 `.danger-zone` | `src/editors.js` |
 | 折叠区 `.fold` / `.fold-body` | `styles.css` |

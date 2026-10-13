@@ -208,12 +208,13 @@ function messageMenu(target) {
 }
 
 function newChat(view) {
-  const configured = (p) => p?.hasCredential && p.models?.length;
+  const usable = (p) => (p?.models || []).filter((m) => m.enabled !== false);
+  const configured = (p) => p?.hasCredential && usable(p).length;
   const active = view?.activeSession;
   const activeProvider = view?.providers?.find((p) => p.providerId === active?.providerId);
-  const activeModel = activeProvider?.models?.find((m) => m.modelProfileId === active?.modelProfileId);
+  const activeModel = usable(activeProvider).find((m) => m.modelProfileId === active?.modelProfileId);
   const provider = configured(activeProvider) && activeModel ? activeProvider : view?.providers?.find((p) => p.configured) || view?.providers?.find(configured);
-  const model = provider === activeProvider && activeModel ? activeModel : provider?.models?.[0];
+  const model = provider === activeProvider && activeModel ? activeModel : usable(provider)[0];
   if (!provider || !model) return setNotice({ level: 'warning', text: '请先配置 Provider 和 Model' });
   postIntent('chat.session.create', { providerId: provider.providerId, modelProfileId: model.modelProfileId, contextMode: view?.ui?.defaultContextMode || 'standard', webMode: view?.ui?.defaultWebMode || 'auto' });
 }
@@ -304,6 +305,12 @@ document.addEventListener('click', (event) => {
     if (choice) postIntent('chat.session.create', { providerId: choice.providerId, modelProfileId: choice.modelProfileId, contextMode: choice.contextMode, webMode: choice.webMode });
   }
   else if (action === 'provider-key') postIntent('provider.credential.edit', { providerId: target.dataset.providerId });
+  else if (action === 'route-host-confirm') {
+    const routeId = target.dataset.routeId;
+    openConfirmDialog({ title: '确认新的域名', confirmText: '确认发送',
+      message: `这个账号的 API Key 将发往 ${target.dataset.host}。只在你信任这个域名时确认；确认前，这条路线不会发出任何请求。`,
+      onConfirm: () => postIntent('route.host.confirm', { routeId }) });
+  }
   else if (action === 'session-reasoning-set') {
     optimisticSegment(target);
     const reasoningEffort = target.dataset.reasoningEffort;

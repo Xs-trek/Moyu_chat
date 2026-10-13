@@ -24,6 +24,9 @@ import okhttp3.Response;
 final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     static final String CHAT_COMPLETIONS = "openai-chat-completions";
     static final String RESPONSES = "openai-responses";
+    /** Continuation item type for Chat Completions reasoning kept for routes that must replay it. */
+    static final String REASONING_ITEM = "reasoning_content";
+    private static final int MAX_REPLAY_REASONING_CHARS = 200_000;
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
     static final long SEMANTIC_IDLE_SECONDS = 300L;
     static final long READ_TIMEOUT_SECONDS = 360L;
@@ -31,6 +34,10 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     private final OkHttpClient http = new OkHttpClient.Builder()
             .fastFallback(true)
             .retryOnConnectionFailure(false)
+            // Never follow redirects: OkHttp strips only Authorization on a cross-host hop, so x-api-key /
+            // api-key and the whole conversation body would be replayed to wherever a 307/308 points.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -49,21 +56,24 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         String protocol = provider.protocol;
         if (!(CHAT_COMPLETIONS.equals(protocol) || RESPONSES.equals(protocol))) { guarded.onError("unsupported_protocol", "当前 Provider 协议不受支持", false); return () -> {}; }
         try {
-            String base = ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
-            String path = CHAT_COMPLETIONS.equals(protocol) ? "/chat/completions" : "/responses";
+            String url = ProviderEndpoint.requestUrl(provider.baseUrl, protocol);
+            RouteDialect dialect = provider.dialect == null ? RouteDialect.defaults(protocol) : provider.dialect;
             ChatTurnOptions turnOptions = options == null ? ChatTurnOptions.NONE : options;
-            JSONObject body = CHAT_COMPLETIONS.equals(protocol) ? chatBody(model, prompt, provider.maxOutputTokens) : responsesBody(model, prompt, provider.maxOutputTokens);
+            boolean replayReasoning = CHAT_COMPLETIONS.equals(protocol) && dialect.replaysReasoning(turnOptions.clientToolsEnabled(protocol));
+            JSONObject body = CHAT_COMPLETIONS.equals(protocol) ? chatBody(model, prompt, provider, dialect, replayReasoning) : responsesBody(model, prompt, provider, dialect);
             applyHostedTools(body, protocol, turnOptions);
-            applyClientTools(body, protocol, turnOptions);
+            applyClientTools(body, protocol, turnOptions, replayReasoning);
             applyContinuationRequest(body, protocol, prompt, turnOptions);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
-            Request.Builder builder = new Request.Builder().url(base + path)
-                    .header("Accept", "text/event-stream")
+            if (provider.serviceTier != null && !provider.serviceTier.isEmpty()) body.put("service_tier", provider.serviceTier);
+            Request.Builder builder = new Request.Builder().url(url)
                     .post(RequestBody.create(JSON, body.toString()));
+            RouteHeaders.apply(builder, provider.headers);
+            builder.header("Accept", "text/event-stream");
             ProviderAuth.apply(builder, provider.authMode, provider.protocol, apiKey);
             Request request = builder.build();
             Call call = http.newCall(request);
-            guarded.onWire("request", WireCapture.request(base + path, body, apiKey));
+            guarded.onWire("request", WireCapture.request(url, body, apiKey));
             executor.execute(() -> run(call, protocol, guarded, apiKey));
             return call::cancel;
         } catch (Exception error) { guarded.onError("bad_provider_config", safe(error), false); return () -> {}; }
@@ -71,7 +81,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
 
     private void run(Call call, String protocol, ChatTransport.Sink sink, String apiKey) {
         WireCapture.Response wire = new WireCapture.Response();
-        try { runStream(call, protocol, sink, wire); }
+        try { runStream(call, protocol, CHAT_COMPLETIONS.equals(protocol) ? new ChatReasoningSink(sink) : sink, wire); }
         finally { sink.onWire("response", wire.finish(apiKey)); }
     }
 
@@ -88,7 +98,13 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         try (Response response = call.execute()) {
             responseStarted = true;
             wire.status(response.code());
-            if (!response.isSuccessful()) { String summary = httpErrorSummary(response); wire.append(summary); sink.onError("http_" + response.code(), summary, response.code() == 429 || response.code() >= 500); return; }
+            if (!response.isSuccessful()) {
+                String detail = httpErrorDetail(response);
+                String summary = ProviderErrors.httpSummary(response.code(), detail, ProviderErrors.requestId(response));
+                wire.append(summary);
+                sink.onError("http_" + response.code(), summary, ProviderErrors.retryable(response.code(), detail));
+                return;
+            }
             sink.onStage("connected");
             if (response.body() == null) { sink.onError("empty_response", "Provider 返回空响应", false); return; }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream(), StandardCharsets.UTF_8))) {
@@ -130,7 +146,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 if (!responseStarted) sink.onError("response_start_timeout", "Provider did not return HTTP response headers within " + READ_TIMEOUT_SECONDS + " seconds", true);
                 else if (!sawData) sink.onError("stream_first_event_timeout", "Provider returned HTTP headers but no SSE data within " + READ_TIMEOUT_SECONDS + " seconds", true);
                 else sink.onError("stream_timeout", "Provider stream stopped producing bytes for " + READ_TIMEOUT_SECONDS + " seconds", true);
-            } else sink.onError("network_error", safe(error), true);
+            } else sink.onError("network_error", ProviderErrors.networkSummary(error), true);
         }
     }
 
@@ -143,8 +159,12 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         return !event.optString("type", "").isEmpty();
     }
 
-    /** OpenAI-compatible multimodal input: user text + image_url data URLs; assistant history remains text. */
-    private static JSONObject chatBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
+    /**
+     * OpenAI-compatible multimodal input: user text + image_url data URLs; assistant history is text, plus
+     * its reasoning_content when the route requires reasoning to ride along (see RouteDialect).
+     */
+    private static JSONObject chatBody(String model, CanonicalPrompt prompt, ChatDatabase.Provider provider, RouteDialect dialect,
+                                       boolean replayReasoning) throws Exception {
         JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", prompt.instructions));
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
@@ -156,16 +176,36 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 appendChatImages(content, attachments);
                 messages.put(new JSONObject().put("role", role).put("content", content));
             } else {
-                messages.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
+                JSONObject message = new JSONObject().put("role", role).put("content", item.optString("text", ""));
+                if ("assistant".equals(role) && replayReasoning) {
+                    String reasoning = chatReasoning(item.optJSONObject("_providerContinuation"));
+                    if (!reasoning.isEmpty()) message.put("reasoning_content", reasoning);
+                }
+                messages.put(message);
             }
         }
         JSONObject body = new JSONObject().put("model", model).put("messages", messages).put("stream", true);
-        if (maxOutputTokens > 0) body.put("max_tokens", maxOutputTokens);
+        if (dialect.streamUsage) body.put("stream_options", new JSONObject().put("include_usage", true));
+        if (provider.sendOutputCap && provider.maxOutputTokens > 0 && !RouteDialect.CAP_OMIT.equals(dialect.outputCap)) {
+            body.put(dialect.outputCap, provider.maxOutputTokens);
+        }
         return body;
     }
 
+    /** Reasoning text a Chat Completions turn kept for replay ('' when none). */
+    private static String chatReasoning(JSONObject state) {
+        if (state == null || !CHAT_COMPLETIONS.equals(state.optString("protocol", ""))) return "";
+        JSONArray items = state.optJSONArray("items"); if (items == null) return "";
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item != null && REASONING_ITEM.equals(item.optString("type", ""))) out.append(item.optString("text", ""));
+        }
+        return out.toString();
+    }
+
     /** Responses multimodal input uses input_text/input_image content parts. */
-    private static JSONObject responsesBody(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
+    private static JSONObject responsesBody(String model, CanonicalPrompt prompt, ChatDatabase.Provider provider, RouteDialect dialect) throws Exception {
         JSONArray input = new JSONArray();
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
@@ -184,8 +224,12 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 if (!replayedAssistantMessage) input.put(new JSONObject().put("role", role).put("content", item.optString("text", "")));
             }
         }
-        JSONObject body = new JSONObject().put("model", model).put("instructions", prompt.instructions).put("input", input).put("stream", true);
-        if (maxOutputTokens > 0) body.put("max_output_tokens", maxOutputTokens);
+        // store=false unless the route opts in: replay uses encrypted reasoning items, never server-side state.
+        JSONObject body = new JSONObject().put("model", model).put("instructions", prompt.instructions).put("input", input)
+                .put("stream", true).put("store", dialect.store);
+        if (provider.sendOutputCap && provider.maxOutputTokens > 0 && !RouteDialect.CAP_OMIT.equals(dialect.outputCap)) {
+            body.put("max_output_tokens", provider.maxOutputTokens);
+        }
         return body;
     }
 
@@ -213,9 +257,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     /** Add reviewed Moyu client tools and replay only tool-call/result items from prior rounds. */
-    private static void applyClientTools(JSONObject body, String protocol, ChatTurnOptions options) throws Exception {
+    private static void applyClientTools(JSONObject body, String protocol, ChatTurnOptions options, boolean replayReasoning) throws Exception {
         if (options == null) return;
-        appendToolHistory(body, protocol, options.toolHistory, options.providerRoundHistory);
+        appendToolHistory(body, protocol, options.toolHistory, options.providerRoundHistory, replayReasoning);
         if (!options.clientToolsEnabled(protocol)) return;
         JSONArray definitions = options.clientToolDefinitions();
         if (definitions.length() == 0) return;
@@ -239,14 +283,16 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     private static void appendToolHistory(JSONObject body, String protocol, JSONArray history,
-                                          JSONArray providerRoundHistory) throws Exception {
+                                          JSONArray providerRoundHistory, boolean replayReasoning) throws Exception {
         if ((history == null || history.length() == 0)
                 && (providerRoundHistory == null || providerRoundHistory.length() == 0)) return;
         if (CHAT_COMPLETIONS.equals(protocol)) {
             if (history == null || history.length() == 0) return;
             JSONArray messages = body.optJSONArray("messages"); if (messages == null) return;
             java.util.TreeMap<Integer, JSONArray> rounds = groupToolHistory(history);
-            for (JSONArray entries : rounds.values()) {
+            java.util.TreeMap<Integer, JSONArray> reasoningRounds = groupProviderRoundHistory(providerRoundHistory);
+            for (java.util.Map.Entry<Integer, JSONArray> round : rounds.entrySet()) {
+                JSONArray entries = round.getValue();
                 JSONArray calls = new JSONArray();
                 for (int i = 0; i < entries.length(); i++) {
                     JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
@@ -254,7 +300,15 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                             .put("function", new JSONObject().put("name", entry.optString("name"))
                                     .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString())));
                 }
-                if (calls.length() > 0) messages.put(new JSONObject().put("role", "assistant").put("content", JSONObject.NULL).put("tool_calls", calls));
+                if (calls.length() > 0) {
+                    JSONObject assistant = new JSONObject().put("role", "assistant").put("content", JSONObject.NULL).put("tool_calls", calls);
+                    if (replayReasoning) {
+                        String reasoning = chatReasoning(new JSONObject().put("protocol", CHAT_COMPLETIONS)
+                                .put("items", reasoningRounds.getOrDefault(round.getKey(), new JSONArray())));
+                        if (!reasoning.isEmpty()) assistant.put("reasoning_content", reasoning);
+                    }
+                    messages.put(assistant);
+                }
                 for (int i = 0; i < entries.length(); i++) {
                     JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
                     messages.put(new JSONObject().put("role", "tool").put("tool_call_id", entry.optString("id"))
@@ -377,7 +431,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         if (choices != null && choices.length() > 0) {
             JSONObject first = choices.optJSONObject(0); JSONObject delta = first == null ? null : first.optJSONObject("delta");
             if (delta != null) {
+                // DeepSeek / Kimi / GLM use reasoning_content; OpenRouter-style gateways use reasoning.
                 String reasoning = delta.optString("reasoning_content", "");
+                if (reasoning.isEmpty() && delta.opt("reasoning") instanceof String) reasoning = delta.optString("reasoning", "");
                 if (!reasoning.isEmpty()) { sink.onStage("reasoning"); sink.onReasoningDelta(reasoning); }
                 Object content = delta.opt("content");
                 if (content instanceof String) {
@@ -416,6 +472,47 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             return true;
         }
         return choices != null && choices.length() == 0 && (usage != null || event.has("cost"));
+    }
+
+    /**
+     * Collects one Chat Completions round's reasoning and hands it to the round loop as a continuation item
+     * just before the round ends, so routes that require reasoning_content on later requests can replay it.
+     */
+    private static final class ChatReasoningSink implements ChatTransport.Sink {
+        private final ChatTransport.Sink d;
+        private final StringBuilder reasoning = new StringBuilder();
+        private boolean overflow;
+        ChatReasoningSink(ChatTransport.Sink delegate) { d = delegate; }
+        private void flush() {
+            if (reasoning.length() > 0 && !overflow) {
+                try { d.onProviderContinuation(new JSONObject().put("protocol", CHAT_COMPLETIONS)
+                        .put("item", new JSONObject().put("type", REASONING_ITEM).put("text", reasoning.toString()))); }
+                catch (Exception ignored) { }
+            }
+            reasoning.setLength(0); overflow = false;
+        }
+        @Override public void onStage(String stage) { d.onStage(stage); }
+        @Override public void onReasoningDelta(String delta) {
+            if (delta != null && !overflow) {
+                if (reasoning.length() + delta.length() > MAX_REPLAY_REASONING_CHARS) { overflow = true; reasoning.setLength(0); }
+                else reasoning.append(delta);
+            }
+            d.onReasoningDelta(delta);
+        }
+        @Override public void onProviderContinuation(JSONObject state) { d.onProviderContinuation(state); }
+        @Override public void onTextDelta(String delta) { d.onTextDelta(delta); }
+        @Override public void onImage(String mimeType, String base64, String fileName) { d.onImage(mimeType, base64, fileName); }
+        @Override public void onToolActivity(String tool, String state) { d.onToolActivity(tool, state); }
+        @Override public void onWebSource(String url, String title) { d.onWebSource(url, title); }
+        @Override public void onClientToolBatch(JSONArray calls) { flush(); d.onClientToolBatch(calls); }
+        @Override public void onUsage(Integer inputTokens, Integer outputTokens) { d.onUsage(inputTokens, outputTokens); }
+        @Override public void onUsageDetails(Integer inputTokens, Integer outputTokens, Integer cachedInputTokens,
+                                             Integer cacheWriteInputTokens, Integer cacheHitBaseTokens, Integer reasoningTokens) {
+            d.onUsageDetails(inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, cacheHitBaseTokens, reasoningTokens);
+        }
+        @Override public void onCompleted() { flush(); d.onCompleted(); }
+        @Override public void onError(String code, String summary, boolean retryable) { d.onError(code, summary, retryable); }
+        @Override public void onWire(String direction, String text) { d.onWire(direction, text); }
     }
 
     private static final class ChatToolCollector {
@@ -678,8 +775,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         sink.onUsageDetails(input, output, cached, cacheWrite, input, reasoningTokens);
     }
 
-    private static String httpErrorSummary(Response response) {
-        String prefix = "Provider HTTP " + response.code();
+    /** The provider's own error message, if the body carries one. */
+    private static String httpErrorDetail(Response response) {
+        String prefix = "";
         try {
             if (response.body() == null) return prefix;
             String raw = response.body().string();
@@ -692,8 +790,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 else detail = body.optString("message", detail);
             } catch (Exception ignored) { }
             detail = detail.replace('\n', ' ').replace('\r', ' ').trim();
-            if (detail.length() > 512) detail = detail.substring(0, 512);
-            return detail.isEmpty() ? prefix : prefix + ": " + detail;
+            return detail.length() > 512 ? detail.substring(0, 512) : detail;
         } catch (Exception ignored) { return prefix; }
     }
 

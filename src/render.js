@@ -58,11 +58,11 @@ function emptyHero({ title, subtitle, poseOverride, children = [] }) {
 // ---------- Home / providers / settings ----------
 
 function home(view) {
-  const configured = (view.providers || []).some((p) => p.hasCredential && p.models?.length);
+  const configured = (view.providers || []).some((p) => p.hasCredential && (p.models || []).some((m) => m.enabled !== false));
   let body;
   if (!configured) {
-    body = emptyHero({ title: '先接入一个模型', subtitle: '添加 Provider（Base URL 与 API Key），再为它配置 Model Profile。API Key 只保存在 Android 安全存储里。',
-      children: [button('添加 Provider', 'configure-provider', {}, 'btn primary')] });
+    body = emptyHero({ title: '先接入一个模型', subtitle: '选择服务商、填写 API Key，再添加模型。API Key 只保存在 Android 安全存储里。',
+      children: [button('添加账号', 'configure-provider', {}, 'btn primary')] });
   } else if (!(view.sessions || []).length) {
     body = emptyHero({ title: '还没有会话', subtitle: '会话与分支只保存在本机。', children: [button('新会话', 'new-chat', {}, 'btn primary')] });
   } else {
@@ -79,38 +79,70 @@ function reasoningCapability(model) {
 }
 
 
+const PROTOCOL_SHORT = { 'openai-chat-completions': 'Chat', 'openai-responses': 'Responses', 'anthropic-messages': 'Messages' };
+const RETENTION = { none: ['不保留数据', 'good'], '30d': ['保留 30 天', 'quiet'], training: ['可能用于训练', 'warn'] };
+
+function priceText(p) {
+  if (!p || p.input === undefined) return '未知';
+  const cur = p.currency === 'CNY' ? '¥' : '$';
+  return `${cur}${p.input} / ${cur}${p.output}${p.cacheRead !== undefined ? ` · 缓存 ${cur}${p.cacheRead}` : ''}`;
+}
+
 function modelFacts(model) {
+  const sourced = (field, text) => (model.sources?.[field] === 'manual' ? `${text}（手动）` : text);
   const facts = [
-    ['协议', model.protocol || '未配置'], ['认证', model.authMode || '—'], ['Harness', model.harnessPreset || 'balanced'], ['工具调用', model.clientToolCalling || 'none'],
-    ['推理 wire', model.reasoningWire || 'none'], ['上下文', model.contextTokens], ['输入上限', model.inputTokens || 'auto'], ['输出上限', model.maxOutputTokens],
-    ['输入模态', model.inputModalities || 'text'], ['输出模态', model.outputModalities || 'text'], ['来源', model.catalogSource || 'manual'],
+    ['路线', `${model.routeLabel || '—'} · ${PROTOCOL_SHORT[model.protocol] || model.protocol}`],
+    ['上下文', sourced('contextTokens', Number(model.contextTokens).toLocaleString('en-US'))],
+    ['输出上限', sourced('maxOutputTokens', `${Number(model.maxOutputTokens).toLocaleString('en-US')}${model.protocol !== 'anthropic-messages' && (model.sources?.maxOutputTokens || 'default') === 'default' ? '（不发送）' : ''}`)],
+    ['推理参数', model.reasoningWire || 'none'], ['工具调用', model.clientToolCalling || 'none'], ['Harness', model.harnessPreset || 'balanced'],
+    ['输入 / 输出', `${model.inputModalities || 'text'} / ${model.outputModalities || 'text'}`],
+    ['价格（百万 token）', priceText(model.pricing)],
   ];
-  if (model.thinkingMode && model.thinkingMode !== 'provider-default') facts.push(['thinking', `${model.thinkingMode}${model.thinkingBudgetTokens ? `:${model.thinkingBudgetTokens}` : ''}`]);
-  if (model.continuationMode === 'native') facts.push(['续接', 'native']);
-  if (model.toolCapabilities) facts.push(['原生联网', model.toolCapabilities]);
+  if (model.thinkingMode && model.thinkingMode !== 'provider-default') facts.push(['思考模式', `${model.thinkingMode}${model.thinkingBudgetTokens ? `:${model.thinkingBudgetTokens}` : ''}`]);
+  if (model.continuationMode === 'native') facts.push(['跨轮续接', 'native']);
+  if (model.toolCapabilities) facts.push(['厂商联网', model.toolCapabilities]);
+  if (model.serviceTier) facts.push(['服务层级', model.serviceTier]);
   return h('dl', { class: 'facts' }, facts.map(([k, v]) => [h('dt', { text: k }), h('dd', { text: String(v ?? '—') })]));
+}
+
+function routeLine(route) {
+  return h('div', { class: 'route-line', dataset: { key: route.routeId } },
+    h('span', { class: 'chip', text: PROTOCOL_SHORT[route.protocol] || route.protocol }),
+    h('span', { class: 'grow route-text' }, h('strong', { class: 'truncate', text: route.label }), h('small', { class: 'route-host truncate', text: route.host })),
+    route.hostConfirmed === false
+      ? button('确认域名', 'route-host-confirm', { routeId: route.routeId, host: route.host }, 'btn small')
+      : h('span', { class: `chip ${route.reviewed ? 'good' : 'quiet'}`, text: route.reviewed ? '预设' : '自定义' }));
+}
+
+function modelCard(provider, model) {
+  const retention = RETENTION[model.retention];
+  const source = model.catalogKey ? (model.catalogVerified ? ['目录', 'good'] : ['目录 · 未实测', 'quiet']) : ['手动声明', 'quiet'];
+  const enabled = model.enabled !== false;
+  return h('div', { class: `model-card${enabled ? '' : ' disabled'}`, dataset: { key: model.modelProfileId } },
+    h('div', { class: 'row' }, h('strong', { class: 'grow truncate', text: model.displayName || model.modelId }),
+      enabled ? null : h('span', { class: 'chip quiet', text: '已停用' }),
+      h('span', { class: `chip ${source[1]}`, text: source[0] })),
+    h('code', { class: 'model-id', text: `${model.modelId} · ${model.routeLabel || ''}` }),
+    h('div', { class: 'row wrap' }, reasoningCapability(model), retention ? h('span', { class: `chip ${retention[1]}`, text: retention[0] }) : null),
+    h('details', { class: 'facts-wrap' }, h('summary', { text: '部署参数' }), modelFacts(model)),
+    h('div', { class: 'row model-actions' },
+      h('span', { class: 'grow' }), button('编辑', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small ghost'),
+      enabled ? button('新会话', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small primary') : null));
 }
 
 function providers(view) {
   return h('main', { class: 'page' },
-    appHeader('Provider 与模型', null, button('添加', 'configure-provider', {}, 'btn small')),
+    appHeader('账号与模型', null, button('添加', 'configure-provider', {}, 'btn small')),
     h('div', { class: 'page-body' },
-      h('p', { class: 'page-note', text: 'Provider 只保存共享的 Base URL 与 API Key；协议、认证、推理 wire 和模型能力属于具体的 Model Profile。' }),
+      h('p', { class: 'page-note', text: '账号保存一把 API Key 和若干路线（协议 + 地址）；模型挂在某条路线上，每项能力都标明来自目录、默认值还是你的手动声明。' }),
       view.providers.length ? h('div', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card provider-card', dataset: { key: provider.providerId } },
         h('div', { class: 'row' }, h('strong', { class: 'grow truncate', text: provider.displayName }),
+          provider.presetName && provider.presetName !== provider.displayName ? h('span', { class: 'chip quiet', text: provider.presetName }) : null,
           h('button', { type: 'button', class: `chip chip-btn ${provider.hasCredential ? 'good' : 'warn'}`, dataset: { action: 'provider-key', providerId: provider.providerId }, text: provider.hasCredential ? 'API Key 已配置' : '填写 API Key' })),
-        h('code', { class: 'model-id', text: provider.baseUrl || '未配置 Base URL' }),
-        h('div', { class: 'row' }, h('span', { class: 'grow' }), button('编辑', 'configure-provider', { providerId: provider.providerId }, 'btn small ghost'), button('添加模型', 'configure-model', { providerId: provider.providerId }, 'btn small')),
-        (provider.models || []).map((model) => h('div', { class: 'model-card', dataset: { key: model.modelProfileId } },
-          h('div', { class: 'row' }, h('strong', { class: 'grow truncate', text: model.displayName || model.modelId }),
-            h('span', { class: `chip ${model.configMode === 'auto' ? 'good' : 'quiet'}`, text: model.configMode === 'auto' ? '自动配置' : '高级配置' })),
-          h('code', { class: 'model-id', text: model.modelId }),
-          h('div', { class: 'row' }, reasoningCapability(model)),
-          h('details', { class: 'facts-wrap' }, h('summary', { text: '部署参数' }), modelFacts(model)),
-          h('div', { class: 'row model-actions' },
-            h('span', { class: 'grow' }), button('编辑', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small ghost'),
-            button('新会话', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small primary')))),
-      ))) : emptyHero({ title: '暂无 Provider', subtitle: '先添加一个 API endpoint。', children: [button('添加 Provider', 'configure-provider', {}, 'btn primary')] })));
+        h('div', { class: 'route-lines' }, (provider.routes || []).map(routeLine)),
+        h('div', { class: 'row' }, h('span', { class: 'grow' }), button('编辑账号', 'configure-provider', { providerId: provider.providerId }, 'btn small ghost'), button('添加模型', 'configure-model', { providerId: provider.providerId }, 'btn small')),
+        (provider.models || []).map((model) => modelCard(provider, model)),
+      ))) : emptyHero({ title: '还没有账号', subtitle: '选择一个服务商，填好 API Key，再添加模型。', children: [button('添加账号', 'configure-provider', {}, 'btn primary')] })));
 }
 
 function segmentedSetting(label, action, key, values, current) {

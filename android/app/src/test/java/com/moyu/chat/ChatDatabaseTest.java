@@ -93,6 +93,22 @@ public class ChatDatabaseTest {
         assertFalse("removed Remote table must be gone", tableExists("handoffs"));
         assertTrue("timeline carries kind", columns("timeline").contains("kind"));
         assertFalse("providers no longer persist deployment fields", columns("providers").contains("protocol"));
+        assertFalse("accounts no longer own a single Base URL", columns("providers").contains("base_url"));
+        assertTrue("routes carry the endpoint", columns("provider_routes").containsAll(java.util.Arrays.asList("protocol", "base_url", "auth_mode", "dialect", "headers", "confirmed_host")));
+    }
+
+    @Test public void olderLayoutOfSchemaOneIsResetNotGuessed() throws Exception {
+        TestDeployments.save(db, provider("p-layout"));
+        db.getWritableDatabase().execSQL("PRAGMA application_id=1");
+        db.close();
+        db = new ChatDatabase(context);
+        assertTrue("a pre-route v1 file starts over", db.listProviders().isEmpty());
+        assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
+        assertTrue(tableExists("provider_routes"));
+        TestDeployments.save(db, provider("p-after"));
+        db.close();
+        db = new ChatDatabase(context);
+        assertEquals("the current layout is kept across opens", 1, db.listProviders().size());
     }
 
     @Test public void newerDatabaseIsResetInsteadOfGuessed() throws Exception {
@@ -207,12 +223,12 @@ public class ChatDatabaseTest {
 
     @Test public void credentialEpochLivesOnTheProviderRow() {
         ChatDatabase.Provider p = provider("p-epoch");
-        db.saveProviderAndProfiles(p, null, true);
+        db.saveProvider(p); db.bumpCredentialEpoch(p.id);
         assertEquals(1L, db.credentialEpoch(p.id));
         p.displayName = "Renamed";
         db.saveProvider(p);
         assertEquals("saving without a new key keeps the epoch", 1L, db.credentialEpoch(p.id));
-        db.saveProviderAndProfiles(p, null, true);
+        db.bumpCredentialEpoch(p.id);
         assertEquals(2L, db.credentialEpoch(p.id));
         assertEquals("Renamed", db.getProvider(p.id).displayName);
     }
@@ -281,9 +297,11 @@ public class ChatDatabaseTest {
     @Test public void oneProviderCanOwnMultipleModelsAndSessionSnapshotsCapabilities() {
         ChatDatabase.Provider provider = provider("p-models"); provider.model = "model-a"; TestDeployments.save(db, provider);
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
-        second.id = "profile-b"; second.providerId = provider.id; second.modelId = "model-b"; second.displayName = "Model B";
+        provider.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; TestDeployments.ensureRoute(db, provider);
+        second.id = "profile-b"; second.providerId = provider.id; second.routeId = TestDeployments.routeId(provider);
+        second.modelId = "model-b"; second.displayName = "Model B";
         second.contextTokens = 128_000; second.inputTokens = 96_000; second.maxOutputTokens = 8_192;
-        second.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; second.authMode = ProviderAuth.BEARER;
+        second.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
         second.reasoningLevels = "low,high,xhigh";
         second.inputModalities = "text,image"; second.outputModalities = "text,image"; db.saveModelProfile(second);
@@ -295,19 +313,18 @@ public class ChatDatabaseTest {
         assertEquals("low,high,xhigh", session.reasoningLevels);
         assertEquals("text,image", session.inputModalities); assertEquals("text,image", session.outputModalities);
         assertEquals(OpenAiCompatibleTransport.CHAT_COMPLETIONS, session.protocol);
-        assertEquals(ProviderAuth.BEARER, session.authMode);
+        assertEquals(TestDeployments.routeId(provider), session.routeId);
         assertEquals(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, session.reasoningWire);
+        assertFalse("an output limit nobody declared stays off the wire", session.sendOutputCap);
 
         second.contextTokens = 64_000; second.inputTokens = 48_000; second.reasoningLevels = "low"; second.inputModalities = "text";
-        second.protocol = OpenAiCompatibleTransport.RESPONSES; second.authMode = ProviderAuth.API_KEY;
-        second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES; db.saveModelProfile(second);
+        second.reasoningWire = ReasoningPolicy.WIRE_NONE; db.saveModelProfile(second);
         ChatDatabase.Session reloaded = db.getSession(session.id);
         assertEquals("session keeps resolved model limits after profile edits", 128_000, reloaded.contextTokens);
         assertEquals(96_000, reloaded.inputTokens); assertEquals("xhigh", reloaded.reasoningEffort);
         assertEquals("session keeps frozen reasoning capability after profile edits", "low,high,xhigh", reloaded.reasoningLevels);
         assertEquals("session keeps resolved modalities after profile edits", "text,image", reloaded.inputModalities);
         assertEquals("session keeps the accepted transport protocol after profile edits", OpenAiCompatibleTransport.CHAT_COMPLETIONS, reloaded.protocol);
-        assertEquals(ProviderAuth.BEARER, reloaded.authMode);
         assertEquals(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, reloaded.reasoningWire);
     }
 
@@ -315,6 +332,41 @@ public class ChatDatabaseTest {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
         assertEquals(OpenAiCompatibleTransport.CHAT_COMPLETIONS, p.protocol);
         assertEquals(ProviderAuth.BEARER, p.authMode);
+    }
+
+    @Test public void routesFollowLiveWhileSessionsKeepTheirFrozenProtocol() {
+        ChatDatabase.Provider provider = provider("p-live"); TestDeployments.save(db, provider);
+        ChatDatabase.Session session = TestDeployments.session(db, provider.id, "model", null, null);
+        ChatDatabase.Route route = db.getRoute(session.routeId);
+        route.baseUrl = "https://moved.example/v1"; route.dialect = "{\"store\":true}";
+        db.saveProviderRoutes(provider, java.util.Collections.singletonList(route), null);
+        ChatDatabase.Provider view = db.sessionDeployment(db.getSession(session.id));
+        assertEquals("the endpoint is followed live", "https://moved.example/v1", view.baseUrl);
+        assertTrue(view.dialect.store);
+        assertEquals(OpenAiCompatibleTransport.RESPONSES, view.protocol);
+    }
+
+    @Test public void deletingAnAccountRemovesRoutesAndModelsButKeepsChats() {
+        ChatDatabase.Provider provider = provider("p-del"); TestDeployments.save(db, provider);
+        ChatDatabase.Session session = TestDeployments.session(db, provider.id, "model", null, null);
+        db.deleteProvider(provider.id);
+        assertNull(db.getProvider(provider.id));
+        assertTrue(db.listRoutes(provider.id).isEmpty());
+        assertTrue(db.listModelProfiles(provider.id).isEmpty());
+        ChatDatabase.Session kept = db.getSession(session.id);
+        assertNotNull("the Chat stays readable", kept);
+        assertNull("its profile pointer is cleared", kept.modelProfileId);
+        assertNull("and it has no request view until it switches model", db.sessionDeployment(kept));
+    }
+
+    @Test public void routeSetSaveDeletesOmittedRoutesWithTheirModels() {
+        ChatDatabase.Provider provider = provider("p-set"); TestDeployments.save(db, provider);
+        provider.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; TestDeployments.ensureRoute(db, provider);
+        assertEquals(2, db.listRoutes(provider.id).size());
+        ChatDatabase.Route keep = db.getRoute(TestDeployments.routeId(provider));
+        db.saveProviderRoutes(provider, java.util.Collections.singletonList(keep), null);
+        assertEquals(1, db.listRoutes(provider.id).size());
+        assertTrue("the Responses model went with its route", db.listModelProfiles(provider.id).isEmpty());
     }
 
     // ---------- interrupted streaming recovery ----------

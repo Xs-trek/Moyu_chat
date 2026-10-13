@@ -43,7 +43,8 @@ public class ClientToolTransportTest {
 
     private ChatDatabase.Provider provider(String protocol) {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
-        p.id = "p"; p.displayName = "p"; p.protocol = protocol; p.baseUrl = server.url("/v1").toString();
+        p.id = "p"; p.displayName = "p"; p.protocol = protocol;
+        p.baseUrl = AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? server.url("/").toString() : server.url("/v1").toString();
         p.authMode = ProviderAuth.defaultForProtocol(protocol); p.model = "model"; p.contextTokens = 32000; p.maxOutputTokens = 1024;
         return p;
     }

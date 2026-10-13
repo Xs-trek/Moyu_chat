@@ -53,7 +53,8 @@ public class ChatCoordinatorE2eTest {
         volatile boolean runtimeLeaseAllowed = true;
         volatile String appearance = "";
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
-        @Override public void openCredentialEditor(ChatDatabase.Provider provider) { editorProvider = provider; editorOpened = true; }
+        volatile String editorHosts = "";
+        @Override public void openCredentialEditor(ChatDatabase.Provider provider, String hosts) { editorProvider = provider; editorHosts = hosts; editorOpened = true; }
         @Override public boolean setTurnRuntimeActive(String sessionId, boolean active) { return !active || runtimeLeaseAllowed; }
         @Override public void showMessage(String text) { toasts.add(text); }
         @Override public void applyAppearance(String resolvedTheme, String tone) { appearance = resolvedTheme + ":" + tone; }
@@ -63,7 +64,7 @@ public class ChatCoordinatorE2eTest {
     static final class FakeSecretStore extends ChatSecretStore {
         final java.util.Map<String, String> values = new java.util.HashMap<>();
         FakeSecretStore() { super(RuntimeEnvironment.getApplication()); }
-        @Override synchronized void put(String providerId, String value) { values.put(providerId, value); }
+        @Override synchronized void put(String providerId, String value) { if (value == null || value.isEmpty()) values.remove(providerId); else values.put(providerId, value); }
         @Override synchronized String get(String providerId) { return values.get(providerId); }
         @Override boolean has(String providerId) { return values.containsKey(providerId); }
     }
@@ -139,7 +140,8 @@ public class ChatCoordinatorE2eTest {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
         p.id = "mock-provider"; p.displayName = "Mock"; p.protocol = protocol;
         p.authMode = ProviderAuth.defaultForProtocol(protocol);
-        p.baseUrl = server.url("/v1").toString();
+        // OpenAI-style roots carry the version segment; Anthropic-style roots are the SDK root (…/v1/messages is appended).
+        p.baseUrl = AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? server.url("/").toString() : server.url("/v1").toString();
         p.model = "mock-model";
         p.contextTokens = 32_000; p.maxOutputTokens = 4_096;
         return p;
@@ -151,9 +153,9 @@ public class ChatCoordinatorE2eTest {
 
     /** Provider + key through the coordinator (as the UI does), then the single default Model Profile these tests run on. */
     private void saveDeployment(ChatDatabase.Provider provider) throws Exception {
-        coordinator.saveProvider(provider, SECRET);
-        await("provider saved", () -> app.database().getProvider(provider.id) != null);
         TestDeployments.save(app.database(), provider);
+        coordinator.saveCredential(provider.id, SECRET);
+        await("key saved", () -> secrets.has(provider.id));
         post("view.reload", new JSONObject());
         await("provider configured", () -> {
             JSONObject view = latestView();
@@ -481,13 +483,15 @@ public class ChatCoordinatorE2eTest {
         assertEquals("mock-model", new JSONObject(firstRequest.getBody().readUtf8()).optString("model"));
 
         ChatDatabase.ModelProfile second = new ChatDatabase.ModelProfile();
-        second.id = "mock-model-b-profile"; second.providerId = provider.id; second.modelId = "mock-model-b"; second.displayName = "Mock Model B";
+        second.id = "mock-model-b-profile"; second.providerId = provider.id; second.routeId = TestDeployments.routeId(provider);
+        second.modelId = "mock-model-b"; second.displayName = "Mock Model B";
         second.contextTokens = 64_000; second.inputTokens = 0; second.maxOutputTokens = 4_096;
-        second.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; second.authMode = ProviderAuth.BEARER;
+        second.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         second.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
         second.inputModalities = "text,image"; second.outputModalities = "text";
         second.reasoningLevels = "none,low,high";
-        coordinator.saveModelProfile(second);
+        app.database().saveModelProfile(second);
+        post("view.reload", new JSONObject());
         await("second model available", () -> {
             JSONObject view = latestView();
             JSONObject providerView = view == null || view.optJSONArray("providers") == null ? null : view.optJSONArray("providers").optJSONObject(0);
@@ -542,29 +546,25 @@ public class ChatCoordinatorE2eTest {
             }
         });
 
-        ChatDatabase.Provider shared = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
-        shared.model = "";
-        shared.baseUrl = server.url("/v1").toString();
-        coordinator.saveProvider(shared, SECRET);
-        await("shared provider configured", () -> latestView() != null && latestView().optJSONArray("providers").length() == 1);
-
-        ChatDatabase.ModelProfile chat = new ChatDatabase.ModelProfile();
-        chat.id = "go-chat"; chat.providerId = shared.id; chat.modelId = "deepseek-v4-flash-vision-exp"; chat.displayName = "DS V4 Flash Vision";
-        chat.protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS; chat.authMode = ProviderAuth.BEARER; chat.reasoningWire = ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT;
-        chat.reasoningLevels = "low,high,max"; chat.contextTokens = 128_000; chat.maxOutputTokens = 8_192; chat.inputModalities = "text,image"; chat.outputModalities = "text";
-        coordinator.saveModelProfile(chat);
-
-        ChatDatabase.ModelProfile responses = new ChatDatabase.ModelProfile();
-        responses.id = "go-responses"; responses.providerId = shared.id; responses.modelId = "gpt-5.6-luna"; responses.displayName = "Luna";
-        responses.protocol = OpenAiCompatibleTransport.RESPONSES; responses.authMode = ProviderAuth.BEARER; responses.reasoningWire = ReasoningPolicy.WIRE_OPENAI_RESPONSES;
-        responses.reasoningLevels = "high,xhigh"; responses.contextTokens = 128_000; responses.maxOutputTokens = 8_192;
-        coordinator.saveModelProfile(responses);
-
-        ChatDatabase.ModelProfile messages = new ChatDatabase.ModelProfile();
-        messages.id = "go-messages"; messages.providerId = shared.id; messages.modelId = "qwen3.8-max"; messages.displayName = "Qwen";
-        messages.protocol = AnthropicMessagesTransport.PROTOCOL; messages.authMode = ProviderAuth.X_API_KEY; messages.reasoningWire = ReasoningPolicy.WIRE_ANTHROPIC_EFFORT;
-        messages.reasoningLevels = "low,high"; messages.contextTokens = 128_000; messages.maxOutputTokens = 8_192;
-        coordinator.saveModelProfile(messages);
+        JSONObject saved = awaitResult(post("provider.save", new JSONObject().put("presetId", ProviderPresets.CUSTOM_OPENAI).put("displayName", "Shared gateway")
+                .put("routes", new JSONArray()
+                        .put(new JSONObject().put("label", "chat").put("protocol", OpenAiCompatibleTransport.CHAT_COMPLETIONS).put("baseUrl", server.url("/v1").toString()))
+                        .put(new JSONObject().put("label", "responses").put("protocol", OpenAiCompatibleTransport.RESPONSES).put("baseUrl", server.url("/v1").toString()))
+                        .put(new JSONObject().put("label", "messages").put("protocol", AnthropicMessagesTransport.PROTOCOL).put("baseUrl", server.url("/").toString())
+                                .put("authMode", ProviderAuth.X_API_KEY)))));
+        assertTrue("account save must succeed: " + saved, saved.optBoolean("ok"));
+        String sharedId = saved.getJSONObject("data").getString("providerId");
+        coordinator.saveCredential(sharedId, SECRET);
+        await("key stored", () -> secrets.has(sharedId));
+        String chatId = saveModel(sharedId, routeFor(sharedId, OpenAiCompatibleTransport.CHAT_COMPLETIONS), "deepseek-v4-flash-vision-exp", "DS V4 Flash Vision",
+                new JSONObject().put("reasoningWire", ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT).put("reasoningLevels", "low,high,max")
+                        .put("contextTokens", 128_000).put("maxOutputTokens", 8_192).put("inputModalities", "text,image"));
+        String responsesId = saveModel(sharedId, routeFor(sharedId, OpenAiCompatibleTransport.RESPONSES), "gpt-5.6-luna", "Luna",
+                new JSONObject().put("reasoningWire", ReasoningPolicy.WIRE_OPENAI_RESPONSES).put("reasoningLevels", "high,xhigh")
+                        .put("contextTokens", 128_000).put("maxOutputTokens", 8_192));
+        String messagesId = saveModel(sharedId, routeFor(sharedId, AnthropicMessagesTransport.PROTOCOL), "qwen3.8-max", "Qwen",
+                new JSONObject().put("reasoningWire", ReasoningPolicy.WIRE_ANTHROPIC_EFFORT).put("reasoningLevels", "low,high")
+                        .put("contextTokens", 128_000).put("maxOutputTokens", 8_192));
 
         await("three model routes projected", () -> {
             JSONObject view = latestView();
@@ -572,9 +572,9 @@ public class ChatCoordinatorE2eTest {
             return providerView != null && providerView.optJSONArray("models") != null && providerView.optJSONArray("models").length() == 3;
         });
 
-        post("chat.session.create", new JSONObject().put("providerId", shared.id).put("modelProfileId", chat.id)
+        post("chat.session.create", new JSONObject().put("providerId", sharedId).put("modelProfileId", chatId)
                 .put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_OFF));
-        await("chat route session created", () -> activeSession(latestView()) != null && chat.id.equals(activeSession(latestView()).optString("modelProfileId")));
+        await("chat route session created", () -> activeSession(latestView()) != null && chatId.equals(activeSession(latestView()).optString("modelProfileId")));
         String sessionId = latestView().optString("activeLocalSessionId");
         post("chat.session.reasoning.set", new JSONObject().put("localSessionId", sessionId).put("reasoningEffort", "high"));
         await("chat high selected", () -> "high".equals(activeSession(latestView()).optString("reasoningEffort")));
@@ -585,8 +585,8 @@ public class ChatCoordinatorE2eTest {
         assertEquals("high", new JSONObject(chatRequest.getBody().readUtf8()).optString("reasoning_effort"));
         await("chat route completes", () -> "completed".equals(app.database().getSession(sessionId).state));
 
-        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", responses.id));
-        await("responses model selected", () -> responses.id.equals(activeSession(latestView()).optString("modelProfileId")));
+        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", responsesId));
+        await("responses model selected", () -> responsesId.equals(activeSession(latestView()).optString("modelProfileId")));
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "responses"));
         RecordedRequest responsesRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(responsesRequest);
         assertEquals("/v1/responses", responsesRequest.getPath());
@@ -594,14 +594,26 @@ public class ChatCoordinatorE2eTest {
         assertEquals("high", new JSONObject(responsesRequest.getBody().readUtf8()).getJSONObject("reasoning").optString("effort"));
         await("responses route completes", () -> "completed".equals(app.database().getSession(sessionId).state));
 
-        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", messages.id));
-        await("messages model selected", () -> messages.id.equals(activeSession(latestView()).optString("modelProfileId")));
+        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", messagesId));
+        await("messages model selected", () -> messagesId.equals(activeSession(latestView()).optString("modelProfileId")));
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "messages"));
         RecordedRequest messagesRequest = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(messagesRequest);
         assertEquals("/v1/messages", messagesRequest.getPath());
         assertEquals(SECRET, messagesRequest.getHeader("x-api-key"));
         assertEquals("high", new JSONObject(messagesRequest.getBody().readUtf8()).getJSONObject("output_config").optString("effort"));
         await("messages route completes", () -> "completed".equals(app.database().getSession(sessionId).state));
+    }
+
+    private String routeFor(String providerId, String protocol) {
+        for (ChatDatabase.Route route : app.database().listRoutes(providerId)) if (protocol.equals(route.protocol)) return route.id;
+        throw new AssertionError("no route for " + protocol);
+    }
+
+    private String saveModel(String providerId, String routeId, String modelId, String name, JSONObject overrides) throws Exception {
+        JSONObject result = awaitResult(post("model.save", new JSONObject().put("providerId", providerId).put("routeId", routeId)
+                .put("modelId", modelId).put("displayName", name).put("overrides", overrides)));
+        assertTrue("model save must succeed: " + result, result.optBoolean("ok"));
+        return result.getJSONObject("data").getString("modelProfileId");
     }
 
     @Test public void newChatContextModeRemembersLastExplicitSelection() throws Exception {
@@ -779,7 +791,6 @@ public class ChatCoordinatorE2eTest {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
         assertNotNull(profile);
-        profile.configMode = ModelCatalog.CONFIG_MANUAL;
         profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
         app.database().saveModelProfile(profile);
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
@@ -1037,51 +1048,131 @@ public class ChatCoordinatorE2eTest {
         });
     }
 
-    @Test public void webEditorsSaveProviderAndModelWhileTheKeyStaysNative() throws Exception {
-        // New provider: name + endpoint only. The WebView never sends or receives a key.
-        JSONObject saved = awaitResult(post("provider.save", new JSONObject().put("displayName", "Web Provider").put("baseUrl", server.url("/v1").toString())));
-        assertTrue("provider save must succeed: " + saved, saved.optBoolean("ok"));
+    @Test public void webEditorsSaveAccountRoutesAndModelsWhileTheKeyStaysNative() throws Exception {
+        // New account: name + routes only. The WebView never sends or receives a key.
+        JSONObject saved = awaitResult(post("provider.save", new JSONObject().put("presetId", ProviderPresets.CUSTOM_OPENAI).put("displayName", "Web Provider")
+                .put("routes", new JSONArray().put(new JSONObject().put("protocol", OpenAiCompatibleTransport.CHAT_COMPLETIONS).put("baseUrl", server.url("/v1").toString())))));
+        assertTrue("account save must succeed: " + saved, saved.optBoolean("ok"));
         String providerId = saved.getJSONObject("data").getString("providerId");
         assertFalse(saved.getJSONObject("data").getBoolean("hasCredential"));
-        assertNotNull(app.database().getProvider(providerId));
+        String routeId = saved.getJSONObject("data").getJSONArray("routeIds").getString(0);
 
         // Validation errors come back as a failed result for the form, not as a native toast.
-        JSONObject blank = awaitResult(post("provider.save", new JSONObject().put("providerId", providerId).put("displayName", " ").put("baseUrl", "https://x.test/v1")));
-        assertFalse(blank.optBoolean("ok"));
-        assertTrue(blank.getJSONObject("error").getString("summary").contains("显示名称"));
+        JSONObject bad = awaitResult(post("provider.save", new JSONObject().put("providerId", providerId)
+                .put("routes", new JSONArray().put(new JSONObject().put("routeId", routeId).put("baseUrl", "http://evil.example/v1")))));
+        assertFalse(bad.optBoolean("ok"));
+        assertTrue(bad.getJSONObject("error").getString("summary").contains("HTTPS"));
+        JSONObject secretHeader = awaitResult(post("provider.save", new JSONObject().put("providerId", providerId)
+                .put("routes", new JSONArray().put(new JSONObject().put("routeId", routeId).put("headers", new JSONObject().put("X-Api-Token", "sk-leak"))))));
+        assertFalse("credential-shaped headers are refused", secretHeader.optBoolean("ok"));
 
-        // The key is entered natively.
+        // The key is entered natively; the dialog says where it will be sent.
         post("provider.credential.edit", new JSONObject().put("providerId", providerId));
         await("native key editor opened", () -> host.editorOpened);
         assertEquals(providerId, host.editorProvider.id);
-        coordinator.saveProvider(host.editorProvider, "sk-web-editor-secret");
+        assertEquals(java.net.URI.create(server.url("/").toString()).getHost(), host.editorHosts);
+        java.util.concurrent.atomic.AtomicReference<String> pasteError = new java.util.concurrent.atomic.AtomicReference<>();
+        coordinator.saveCredential(providerId, "sk-web editor", error -> pasteError.set(error == null ? "ok" : error));
+        await("bad paste rejected", () -> pasteError.get() != null);
+        assertTrue(pasteError.get().contains("空格"));
+        assertFalse(pasteError.get().contains("sk-web"));
+        coordinator.saveCredential(providerId, "  sk-web-editor-secret\n");
         await("key stored", () -> secrets.has(providerId));
+        assertEquals("surrounding whitespace is trimmed", "sk-web-editor-secret", secrets.get(providerId));
 
-        JSONObject preview = awaitResult(post("model.catalog.preview", new JSONObject().put("providerId", providerId).put("modelId", "mock-model")));
+        JSONObject preview = awaitResult(post("model.preview", new JSONObject().put("providerId", providerId).put("routeId", routeId).put("modelId", "mock-model")));
         assertTrue(preview.optBoolean("ok"));
-        assertTrue(preview.getJSONObject("data").getJSONArray("rows").length() > 0);
+        assertEquals(DeploymentResolver.FIELDS.length, preview.getJSONObject("data").getJSONArray("fields").length());
+        assertEquals("", preview.getJSONObject("data").getString("error"));
 
-        JSONObject manual = new JSONObject().put("providerId", providerId).put("modelId", "mock-model").put("displayName", "Mock")
-                .put("configMode", "manual").put("protocol", OpenAiCompatibleTransport.CHAT_COMPLETIONS).put("authMode", ProviderAuth.BEARER)
-                .put("reasoningWire", ReasoningPolicy.WIRE_NONE).put("inputModalities", "text").put("outputModalities", "text")
-                .put("contextTokens", "32000").put("inputTokens", "0").put("maxOutputTokens", "4096").put("thinkingBudgetTokens", "0")
-                .put("thinkingMode", ReasoningPolicy.THINKING_PROVIDER_DEFAULT).put("continuationMode", ProviderContinuationPolicy.NONE)
-                .put("harnessPreset", HarnessProfile.BALANCED).put("clientToolCalling", ClientToolRuntime.NONE);
+        JSONObject manual = new JSONObject().put("providerId", providerId).put("routeId", routeId).put("modelId", "mock-model").put("displayName", "Mock")
+                .put("overrides", new JSONObject().put("contextTokens", "32000").put("maxOutputTokens", "4096"));
         JSONObject model = awaitResult(post("model.save", manual));
         assertTrue("model save must succeed: " + model, model.optBoolean("ok"));
         String profileId = model.getJSONObject("data").getString("modelProfileId");
-        assertEquals(32000, app.database().getModelProfile(profileId).contextTokens);
+        ChatDatabase.ModelProfile stored = app.database().getModelProfile(profileId);
+        assertEquals(32000, stored.contextTokens);
+        assertEquals(DeploymentResolver.SRC_MANUAL, new JSONObject(stored.sources).getString("contextTokens"));
+        assertEquals("nothing else was declared", DeploymentResolver.SRC_DEFAULT, new JSONObject(stored.sources).getString("clientToolCalling"));
 
-        JSONObject duplicate = awaitResult(post("model.save", new JSONObject(manual.toString()).put("contextTokens", "abc")));
-        assertFalse("bad limits must fail with a readable error", duplicate.optBoolean("ok"));
+        JSONObject badLimits = awaitResult(post("model.save", new JSONObject(manual.toString()).put("overrides", new JSONObject().put("contextTokens", "abc"))));
+        assertFalse("bad limits must fail with a readable error", badLimits.optBoolean("ok"));
 
         JSONObject edited = awaitResult(post("model.save", new JSONObject(manual.toString()).put("modelProfileId", profileId).put("displayName", "Renamed")));
         assertTrue(edited.optBoolean("ok"));
         assertEquals("Renamed", app.database().getModelProfile(profileId).displayName);
 
+        JSONObject disabled = awaitResult(post("model.enabled.set", new JSONObject().put("modelProfileId", profileId).put("enabled", false)));
+        assertTrue(disabled.optBoolean("ok"));
+        assertFalse(app.database().getModelProfile(profileId).enabled);
+
         synchronized (host.envelopes) {
             for (JSONObject e : host.envelopes) assertFalse("the API key must never reach the WebView", e.toString().contains("sk-web-editor-secret"));
         }
+
+        assertTrue(awaitResult(post("provider.delete", new JSONObject().put("providerId", providerId))).optBoolean("ok"));
+        assertNull(app.database().getProvider(providerId));
+        assertFalse("deleting an account deletes its key", secrets.has(providerId));
+    }
+
+    @Test public void presetAccountsResolveFromTheCatalogAndAnEditedEndpointDropsIt() throws Exception {
+        JSONObject saved = awaitResult(post("provider.save", new JSONObject().put("presetId", "openai")));
+        assertTrue("preset account must save: " + saved, saved.optBoolean("ok"));
+        String providerId = saved.getJSONObject("data").getString("providerId");
+        assertEquals("the preset's routes come along", 2, app.database().listRoutes(providerId).size());
+        assertEquals("OpenAI", app.database().getProvider(providerId).displayName);
+        String responsesRoute = routeFor(providerId, OpenAiCompatibleTransport.RESPONSES);
+        coordinator.saveCredential(providerId, SECRET);
+        await("key stored", () -> secrets.has(providerId));
+
+        String profileId = saveModel(providerId, responsesRoute, "gpt-6.1-sol", "", new JSONObject().put("contextTokens", 200_000));
+        ChatDatabase.ModelProfile m = app.database().getModelProfile(profileId);
+        assertEquals("catalog name fills an empty display name", "GPT-6.1 Sol", m.displayName);
+        assertEquals(ClientToolRuntime.OPENAI_RESPONSES, m.clientToolCalling);
+        assertEquals("low,medium,high,xhigh,max", m.reasoningLevels);
+        assertEquals(200_000, m.contextTokens);
+        assertEquals(128_000, m.maxOutputTokens);
+        JSONObject sources = new JSONObject(m.sources);
+        assertEquals(DeploymentResolver.SRC_MANUAL, sources.getString("contextTokens"));
+        assertEquals(DeploymentResolver.SRC_CATALOG, sources.getString("clientToolCalling"));
+        assertEquals(2.0, new JSONObject(m.pricing).getDouble("input"), 0.0001);
+
+        // Moving the route to an unreviewed host drops every catalog claim but keeps what the user set.
+        JSONObject moved = awaitResult(post("provider.save", new JSONObject().put("providerId", providerId).put("routes", new JSONArray()
+                .put(new JSONObject().put("routeId", responsesRoute).put("protocol", OpenAiCompatibleTransport.RESPONSES).put("baseUrl", "https://relay.example/v1")))));
+        assertTrue("route edit must save: " + moved, moved.optBoolean("ok"));
+        assertEquals("the omitted Chat Completions route is removed", 1, app.database().listRoutes(providerId).size());
+        ChatDatabase.ModelProfile after = app.database().getModelProfile(profileId);
+        assertEquals(ClientToolRuntime.NONE, after.clientToolCalling);
+        assertEquals("", after.reasoningLevels);
+        assertEquals(200_000, after.contextTokens);
+        assertEquals(DeploymentResolver.SRC_DEFAULT, new JSONObject(after.sources).getString("clientToolCalling"));
+
+        // The key is not sent to the new host until the user confirms it.
+        post("view.reload", new JSONObject());
+        await("host awaits confirmation", () -> !routeView(providerId, responsesRoute).optBoolean("hostConfirmed", true));
+        post("chat.session.create", new JSONObject().put("providerId", providerId).put("modelProfileId", profileId)
+                .put("contextMode", ContextMode.MINIMAL).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("session on moved route", () -> activeSession(latestView()) != null && profileId.equals(activeSession(latestView()).optString("modelProfileId")));
+        String sessionId = latestView().optString("activeLocalSessionId");
+        JSONObject refused = awaitResult(post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "hi")));
+        assertFalse("an unconfirmed host never receives the key", refused.optBoolean("ok"));
+        assertTrue(refused.getJSONObject("error").getString("summary").contains("确认"));
+        assertEquals("nothing reached the network", 0, server.getRequestCount());
+        assertTrue(awaitResult(post("route.host.confirm", new JSONObject().put("routeId", responsesRoute))).optBoolean("ok"));
+        await("host confirmed", () -> routeView(providerId, responsesRoute).optBoolean("hostConfirmed", false));
+    }
+
+    private JSONObject routeView(String providerId, String routeId) {
+        JSONObject view = latestView();
+        JSONArray providers = view == null ? null : view.optJSONArray("providers");
+        if (providers != null) for (int i = 0; i < providers.length(); i++) {
+            JSONObject p = providers.optJSONObject(i);
+            if (p == null || !providerId.equals(p.optString("providerId"))) continue;
+            JSONArray routes = p.optJSONArray("routes");
+            for (int j = 0; routes != null && j < routes.length(); j++) if (routeId.equals(routes.optJSONObject(j).optString("routeId"))) return routes.optJSONObject(j);
+        }
+        return new JSONObject();
     }
 
     @Test public void rejectedForegroundLeaseDoesNotAcceptTurnAndRestoresExactDraft() throws Exception {
@@ -1352,16 +1443,16 @@ public class ChatCoordinatorE2eTest {
         await("native session created", () -> latestView() != null && latestView().optString("activeLocalSessionId", "").length() > 0);
         String sessionId = latestView().optString("activeLocalSessionId");
         ChatDatabase.Session sessionBefore = app.database().getSession(sessionId);
-        ChatDatabase.Provider providerBefore = app.database().getProvider("mock-provider");
-        String requestFingerprint = ProviderContinuationIdentity.fingerprint(app.database(), providerBefore, sessionBefore);
+        String requestFingerprint = ProviderContinuationIdentity.fingerprint(app.database(), app.database().sessionDeployment(sessionBefore), sessionBefore);
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
         RecordedRequest firstRequest = server.takeRequest(5, TimeUnit.SECONDS);
         assertNotNull("first request must start before credential rotation", firstRequest);
 
-        coordinator.saveProvider(mockProvider(OpenAiCompatibleTransport.RESPONSES), rotatedSecret);
+        coordinator.saveCredential("mock-provider", rotatedSecret);
         await("credential rotation applied", () -> rotatedSecret.equals(secrets.get("mock-provider")));
-        String currentFingerprint = ProviderContinuationIdentity.fingerprint(app.database(), app.database().getProvider("mock-provider"), app.database().getSession(sessionId));
+        ChatDatabase.Session sessionNow = app.database().getSession(sessionId);
+        String currentFingerprint = ProviderContinuationIdentity.fingerprint(app.database(), app.database().sessionDeployment(sessionNow), sessionNow);
         assertNotEquals("credential epoch must change deployment identity", requestFingerprint, currentFingerprint);
 
         await("old request completes after rotation", () -> "completed".equals(app.database().getSession(sessionId).state));
@@ -1514,7 +1605,6 @@ public class ChatCoordinatorE2eTest {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
         assertNotNull(profile);
-        profile.configMode = ModelCatalog.CONFIG_MANUAL;
         profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
         profile.harnessPreset = HarnessProfile.BALANCED;
         app.database().saveModelProfile(profile);
@@ -1552,48 +1642,6 @@ public class ChatCoordinatorE2eTest {
         assertEquals(4, usage.optInt("outputTokens"));
         assertEquals(23, usage.optInt("totalInputTokens"));
         assertEquals(6, usage.optInt("totalOutputTokens"));
-    }
-
-    @Test public void autoProviderEndpointChangeToUnreviewedDeploymentIsRejectedAtomically() throws Exception {
-        ChatDatabase.Provider provider = new ChatDatabase.Provider();
-        provider.id = "auto-provider"; provider.displayName = "Auto"; provider.baseUrl = "https://api.openai.com/v1";
-        provider.model = "";
-        coordinator.saveProvider(provider, SECRET);
-        await("auto provider saved", () -> app.database().getProvider("auto-provider") != null);
-
-        ChatDatabase.ModelProfile profile = new ChatDatabase.ModelProfile();
-        profile.id = "auto-gpt"; profile.providerId = provider.id; profile.modelId = "gpt-5.6"; profile.displayName = "GPT";
-        profile.configMode = ModelCatalog.CONFIG_AUTO;
-        profile.contextTokens = 77_777; profile.inputTokens = 55_555; profile.maxOutputTokens = 7_777;
-        coordinator.saveModelProfile(profile);
-        await("auto profile resolved", () -> {
-            ChatDatabase.ModelProfile stored = app.database().getModelProfile("auto-gpt");
-            return stored != null && OpenAiCompatibleTransport.RESPONSES.equals(stored.protocol);
-        });
-        ChatDatabase.ModelProfile before = app.database().getModelProfile("auto-gpt");
-        assertEquals(ClientToolRuntime.OPENAI_RESPONSES, before.clientToolCalling);
-        assertEquals(77_777, before.contextTokens);
-        assertEquals(55_555, before.inputTokens);
-        assertEquals(7_777, before.maxOutputTokens);
-        assertEquals(SECRET, secrets.get("auto-provider"));
-
-        ChatDatabase.Provider changed = app.database().getProvider("auto-provider");
-        changed.baseUrl = "https://third-party.example/v1";
-        host.toasts.clear();
-        coordinator.saveProvider(changed, "");
-        await("unreviewed Auto endpoint rejected", () -> !host.toasts.isEmpty());
-
-        ChatDatabase.Provider afterProvider = app.database().getProvider("auto-provider");
-        ChatDatabase.ModelProfile afterProfile = app.database().getModelProfile("auto-gpt");
-        assertEquals("https://api.openai.com/v1", afterProvider.baseUrl);
-        assertEquals(OpenAiCompatibleTransport.RESPONSES, afterProfile.protocol);
-        assertEquals(ClientToolRuntime.OPENAI_RESPONSES, afterProfile.clientToolCalling);
-        assertEquals(77_777, afterProfile.contextTokens);
-        assertEquals(55_555, afterProfile.inputTokens);
-        assertEquals(7_777, afterProfile.maxOutputTokens);
-        assertEquals("failed Provider save must not alter credential", SECRET, secrets.get("auto-provider"));
-        assertTrue(host.toasts.get(host.toasts.size() - 1).contains("高级配置"));
-        assertTrue(host.toasts.get(host.toasts.size() - 1).contains("不会根据模型名猜测"));
     }
 
     @Test public void anthropicProtocolEndToEnd() throws Exception {

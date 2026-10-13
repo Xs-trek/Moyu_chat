@@ -26,6 +26,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     static final String FILE_NAME = "moyu-beta.db";
     static final String LEGACY_FILE_NAME = "moyu-chat.db";
     static final int VERSION = 1;
+    /**
+     * Pre-release layout of schema 1, stamped in PRAGMA application_id. While the beta schema is still
+     * folded into v1, a file with a different stamp is an older v1 layout and is reset (dropped and
+     * recreated); real migrations start once v1 is frozen. 2 = accounts with routes (provider_routes).
+     */
+    static final int LAYOUT_REVISION = 2;
 
     public static final class Session {
         public String id, title, providerId, modelProfileId, model, reasoningEffort, reasoningLevels, inputModalities, outputModalities, state, createdAt, updatedAt, draft, draftMedia, originSnapshotId, parentSessionId, preview;
@@ -35,10 +41,16 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public String harnessPreset = HarnessProfile.BALANCED;
         public String clientToolCalling = ClientToolRuntime.NONE;
         public String subagentMode = HarnessPolicyResolver.SUBAGENT_OFF;
-        /** Session-frozen deployment capabilities; editing a ModelProfile affects new/model-switched turns only. */
+        /**
+         * Session-frozen deployment capabilities; editing a ModelProfile affects new/model-switched turns only.
+         * The route (Base URL, auth, dialect, headers) is followed live: it describes the endpoint, not the Chat.
+         */
+        public String routeId;
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
-        public String authMode = ProviderAuth.BEARER;
         public String reasoningWire = ReasoningPolicy.WIRE_NONE;
+        public String serviceTier = "";
+        /** False when the output limit was only a local default: then the request leaves the cap to the server. */
+        public boolean sendOutputCap;
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
         public String continuationMode = ProviderContinuationPolicy.NONE;
         public int thinkingBudgetTokens;
@@ -47,44 +59,62 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     /**
-     * Shared account/endpoint. Only id, display name and base URL are persisted; the remaining fields
-     * are a request-local deployment view filled by {@link #deploymentProvider} from a ModelProfile or
-     * Session, so transports read one object.
+     * Account: one API Key (native secure store) shared by its routes. Persisted: id, display name, preset,
+     * key status and budget. The remaining fields are a request-local deployment view filled by
+     * {@link #deploymentProvider} from a Route plus a ModelProfile or Session, so transports read one object.
      */
     public static final class Provider {
-        public String id, displayName, baseUrl;
+        public String id, displayName;
+        public String presetId = ProviderPresets.CUSTOM_OPENAI;
+        public String keyStatus = "unknown", keyCheckedAt = "", budget = "{}";
         /** Request-local deployment fields; not persisted in providers. */
-        public String model;
+        public String model, routeId;
+        public String baseUrl;
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         public String authMode = ProviderAuth.BEARER;
+        public RouteDialect dialect;
+        public org.json.JSONObject headers;
         public String reasoningWire = ReasoningPolicy.WIRE_NONE;
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
+        public String serviceTier = "";
         public int thinkingBudgetTokens = 0;
         public int contextTokens = ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
         public int inputTokens = 0;
         public int maxOutputTokens = ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
+        /** Whether maxOutputTokens goes on the wire (Messages always sends it; the protocol requires one). */
+        public boolean sendOutputCap = true;
     }
 
-    /** Model capabilities are scoped to one concrete provider deployment, not a global model name. */
+    /** One endpoint of an account: protocol + Base URL + auth + wire dialect + extra headers. Protocol never changes after creation. */
+    public static final class Route {
+        public String id, providerId, label, protocol, baseUrl, authMode;
+        /** Copied from the account on read; presetRouteId names the preset route this was created from ('' = custom). */
+        public String presetId = ProviderPresets.CUSTOM_OPENAI, presetRouteId = "";
+        public String dialect = "{}", headers = "{}";
+    }
+
+    /** Model capabilities are scoped to one concrete deployment (account + route + model id), not a global model name. */
     public static final class ModelProfile {
-        public String id, providerId, modelId, displayName, reasoningLevels;
-        /** Wire behavior belongs to the concrete model deployment, not the shared account/endpoint. */
+        public String id, providerId, routeId, modelId, displayName, reasoningLevels;
+        public boolean enabled = true;
+        /** Read-only mirror of the route's protocol (filled on read); wire identity belongs to the route. */
         public String protocol = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
-        public String authMode = ProviderAuth.BEARER;
         public String reasoningWire = ReasoningPolicy.WIRE_NONE;
         public String inputModalities = "text", outputModalities = "text", toolCapabilities = "";
         /** Explicit thinking capability; provider-default avoids model-name guessing. */
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
         public String continuationMode = ProviderContinuationPolicy.NONE;
-        /** Catalog + adaptive harness metadata. */
-        // Programmatic callers are explicit/manual by default. The New Model UI opts into Auto
-        // deliberately, so setting protocol/capability fields can never be silently overwritten.
-        public String configMode = ModelCatalog.CONFIG_MANUAL;
-        public String catalogKey = "unknown", catalogVersion = "", catalogSource = "manual";
         public String harnessPreset = HarnessProfile.BALANCED;
         public String clientToolCalling = ClientToolRuntime.NONE;
+        public String serviceTier = "";
         public int thinkingBudgetTokens = 0;
         public int contextTokens, inputTokens, maxOutputTokens;
+        /**
+         * Resolution bookkeeping (see DeploymentResolver): overrides are the user's explicit values,
+         * sources name where each resolved field came from; discovered/probe hold endpoint evidence.
+         */
+        public String overrides = "{}", sources = "{}", discovered = "{}", probe = "{}", pricing = "{}";
+        public String catalogKey = "", catalogVersion = "", retention = "";
     }
 
     /** Immutable copy of a local session's transcript prefix; the origin of a branch. */
@@ -94,8 +124,14 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public boolean truncated;
     }
 
-    private static final String SESSION_COLUMNS = "local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,tool_capabilities,web_mode,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,context_mode,task_profile,context_checkpoint,checkpoint_covered_items,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,harness_preset,client_tool_calling,subagent_mode,reasoning_levels,created_at";
-    private static final String PROFILE_COLUMNS = "profile_id,provider_id,model_id,display_name,context_tokens,input_tokens,max_output_tokens,reasoning_levels,input_modalities,output_modalities,tool_capabilities,protocol,auth_mode,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,config_mode,catalog_key,catalog_version,catalog_source,harness_preset,client_tool_calling";
+    private static final String SESSION_COLUMNS = "local_id,title,provider_id,model_profile_id,model,context_tokens,input_tokens,max_output_tokens,reasoning_effort,input_modalities,output_modalities,tool_capabilities,web_mode,state,updated_at,draft,draft_media,origin_snapshot_id,parent_session_id,preview,context_mode,task_profile,context_checkpoint,checkpoint_covered_items,protocol,route_id,reasoning_wire,thinking_mode,thinking_budget_tokens,continuation_mode,harness_preset,client_tool_calling,subagent_mode,reasoning_levels,created_at,send_output_cap,service_tier";
+    private static final String PROVIDER_COLUMNS = "provider_id,display_name,preset_id,key_status,key_checked_at,budget";
+    private static final String ROUTE_COLUMNS = "r.route_id,r.provider_id,r.preset_route,r.label,r.protocol,r.base_url,r.auth_mode,r.dialect,r.headers,p.preset_id";
+    /** Profiles are always read with their route so the protocol mirror is filled. */
+    private static final String PROFILE_SELECT = "SELECT m.profile_id,m.provider_id,m.route_id,m.model_id,m.display_name,m.enabled,m.context_tokens,m.input_tokens,m.max_output_tokens,"
+            + "m.reasoning_levels,m.input_modalities,m.output_modalities,m.tool_capabilities,r.protocol,m.reasoning_wire,m.thinking_mode,m.thinking_budget_tokens,"
+            + "m.continuation_mode,m.harness_preset,m.client_tool_calling,m.service_tier,m.pricing,m.retention,m.overrides,m.sources,m.discovered,m.probe,"
+            + "m.catalog_key,m.catalog_version FROM model_profiles m JOIN provider_routes r ON r.route_id=m.route_id";
 
     ChatDatabase(Context context) {
         super(context, FILE_NAME, null, VERSION);
@@ -107,33 +143,60 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.enableWriteAheadLogging();
     }
 
+    /** Resets an older pre-release v1 layout (see {@link #LAYOUT_REVISION}); API keys of vanished accounts are dropped at startup. */
+    @Override public void onOpen(SQLiteDatabase db) {
+        if (db.isReadOnly()) return;
+        long stamp = android.database.DatabaseUtils.longForQuery(db, "PRAGMA application_id", null);
+        if (stamp == LAYOUT_REVISION) return;
+        db.setForeignKeyConstraintsEnabled(false);
+        db.beginTransaction();
+        try { dropAll(db); onCreate(db); db.setTransactionSuccessful(); }
+        finally { db.endTransaction(); db.setForeignKeyConstraintsEnabled(true); }
+    }
+
     @Override public void onCreate(SQLiteDatabase db) {
-        // Provider: shared account/endpoint. credential_epoch changes the deployment identity whenever
-        // the API key is replaced, so verifier calibration and provider continuation never cross keys.
-        db.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,base_url TEXT NOT NULL,"
-                + "credential_epoch INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)");
-        // Model Profile: one concrete deployment. Wire protocol and every capability are declared here, never inferred.
+        db.execSQL("PRAGMA application_id=" + LAYOUT_REVISION);
+        // Provider (account): one API Key in the native secure store. credential_epoch changes the deployment
+        // identity whenever the key is replaced, so verifier calibration and continuation never cross keys.
+        // preset_id is fixed at creation; key_status / budget are maintained by the key checks and spend guard.
+        db.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,preset_id TEXT NOT NULL,"
+                + "credential_epoch INTEGER NOT NULL DEFAULT 0,key_status TEXT NOT NULL DEFAULT 'unknown',key_checked_at TEXT NOT NULL DEFAULT '',"
+                + "budget TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)");
+        // Route: one endpoint of an account. dialect / headers are validated JSON (RouteDialect / RouteHeaders).
+        // confirmed_host is the host the stored key was last confirmed for.
+        db.execSQL("CREATE TABLE provider_routes(route_id TEXT PRIMARY KEY,"
+                + "provider_id TEXT NOT NULL REFERENCES providers(provider_id) ON DELETE CASCADE,"
+                + "preset_route TEXT NOT NULL DEFAULT '',label TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,auth_mode TEXT NOT NULL,"
+                + "dialect TEXT NOT NULL DEFAULT '{}',headers TEXT NOT NULL DEFAULT '{}',confirmed_host TEXT NOT NULL DEFAULT '',"
+                + "created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(provider_id,protocol,base_url))");
+        // Model Profile: one concrete deployment (account + route + model id). Every capability column is the
+        // resolved value; overrides / sources record which values the user set and where the rest came from.
         db.execSQL("CREATE TABLE model_profiles(profile_id TEXT PRIMARY KEY,"
                 + "provider_id TEXT NOT NULL REFERENCES providers(provider_id) ON DELETE CASCADE,"
-                + "model_id TEXT NOT NULL,display_name TEXT NOT NULL,"
-                + "protocol TEXT NOT NULL,auth_mode TEXT NOT NULL,reasoning_wire TEXT NOT NULL,"
+                + "route_id TEXT NOT NULL REFERENCES provider_routes(route_id) ON DELETE CASCADE,"
+                + "model_id TEXT NOT NULL,display_name TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,"
+                + "reasoning_wire TEXT NOT NULL,"
                 + "context_tokens INTEGER NOT NULL,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL,"
                 + "reasoning_levels TEXT NOT NULL DEFAULT '',thinking_mode TEXT NOT NULL,thinking_budget_tokens INTEGER NOT NULL DEFAULT 0,"
                 + "continuation_mode TEXT NOT NULL,input_modalities TEXT NOT NULL,output_modalities TEXT NOT NULL,"
                 + "tool_capabilities TEXT NOT NULL DEFAULT '',client_tool_calling TEXT NOT NULL,harness_preset TEXT NOT NULL,"
-                + "config_mode TEXT NOT NULL,catalog_key TEXT NOT NULL,catalog_version TEXT NOT NULL DEFAULT '',catalog_source TEXT NOT NULL,"
-                + "created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(provider_id,model_id))");
+                + "service_tier TEXT NOT NULL DEFAULT '',pricing TEXT NOT NULL DEFAULT '{}',retention TEXT NOT NULL DEFAULT '',"
+                + "overrides TEXT NOT NULL DEFAULT '{}',sources TEXT NOT NULL DEFAULT '{}',discovered TEXT NOT NULL DEFAULT '{}',probe TEXT NOT NULL DEFAULT '{}',"
+                + "catalog_key TEXT NOT NULL DEFAULT '',catalog_version TEXT NOT NULL DEFAULT '',"
+                + "created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(route_id,model_id))");
         // Session: identity, lineage, the deployment frozen at create/model switch, per-session choices,
-        // and derived context state. Profile edits never relabel an existing Chat.
+        // and derived context state. Profile edits never relabel an existing Chat. provider_id / route_id
+        // are plain references: deleting an account leaves its Chats readable (they must switch model to continue).
         db.execSQL("CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,state TEXT NOT NULL,"
                 + "created_at TEXT NOT NULL,updated_at TEXT NOT NULL,preview TEXT,"
                 + "draft TEXT NOT NULL DEFAULT '',draft_media TEXT NOT NULL DEFAULT '[]',"
-                + "provider_id TEXT NOT NULL REFERENCES providers(provider_id),"
+                + "provider_id TEXT NOT NULL,route_id TEXT NOT NULL,"
                 + "model_profile_id TEXT REFERENCES model_profiles(profile_id) ON DELETE SET NULL,"
                 + "parent_session_id TEXT REFERENCES sessions(local_id) ON DELETE SET NULL,"
                 + "origin_snapshot_id TEXT REFERENCES snapshots(snapshot_id),"
-                + "model TEXT NOT NULL,protocol TEXT NOT NULL,auth_mode TEXT NOT NULL,reasoning_wire TEXT NOT NULL,"
+                + "model TEXT NOT NULL,protocol TEXT NOT NULL,reasoning_wire TEXT NOT NULL,"
                 + "context_tokens INTEGER NOT NULL,input_tokens INTEGER NOT NULL DEFAULT 0,max_output_tokens INTEGER NOT NULL,"
+                + "send_output_cap INTEGER NOT NULL DEFAULT 1,service_tier TEXT NOT NULL DEFAULT '',"
                 + "reasoning_levels TEXT NOT NULL DEFAULT '',thinking_mode TEXT NOT NULL,thinking_budget_tokens INTEGER NOT NULL DEFAULT 0,"
                 + "continuation_mode TEXT NOT NULL,input_modalities TEXT NOT NULL,output_modalities TEXT NOT NULL,"
                 + "tool_capabilities TEXT NOT NULL DEFAULT '',client_tool_calling TEXT NOT NULL,harness_preset TEXT NOT NULL,"
@@ -193,7 +256,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** Child tables first so foreign keys never block the drop (PRAGMA foreign_keys cannot change inside the upgrade transaction). */
     private static void dropAll(SQLiteDatabase db) {
         for (String table : new String[]{"knowledge_fts", "snapshot_items", "turn_payloads", "turn_spans", "turns", "timeline", "handoffs", "sessions", "snapshots",
-                "model_profiles", "providers", "verifier_labels", "settings"}) {
+                "model_profiles", "provider_routes", "providers", "verifier_labels", "settings"}) {
             db.execSQL("DROP TABLE IF EXISTS " + table);
         }
         ArrayList<String> rest = new ArrayList<>();
@@ -226,8 +289,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.maxOutputTokens = profile.maxOutputTokens;
         s.inputModalities = normalizeModalities(profile.inputModalities); s.outputModalities = normalizeModalities(profile.outputModalities);
         s.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
-        s.protocol = normalizeProtocol(profile.protocol); s.authMode = ProviderAuth.normalize(profile.authMode, s.protocol);
-        s.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, s.protocol);
+        freezeDeployment(s, profile);
         s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); s.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
         s.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
         s.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
@@ -263,8 +325,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.contextTokens = source.contextTokens; s.inputTokens = source.inputTokens; s.maxOutputTokens = source.maxOutputTokens;
         s.inputModalities = normalizeModalities(source.inputModalities); s.outputModalities = normalizeModalities(source.outputModalities);
         s.toolCapabilities = ChatTurnOptions.normalizeCapabilities(source.toolCapabilities); s.webMode = ChatTurnOptions.normalizeWebMode(source.webMode);
-        s.protocol = normalizeProtocol(source.protocol); s.authMode = ProviderAuth.normalize(source.authMode, s.protocol);
+        s.routeId = source.routeId; s.protocol = normalizeProtocol(source.protocol);
         s.reasoningWire = ReasoningPolicy.normalizeWire(source.reasoningWire, s.protocol);
+        s.serviceTier = source.serviceTier == null ? "" : source.serviceTier; s.sendOutputCap = source.sendOutputCap;
         s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(source.thinkingMode); s.thinkingBudgetTokens = Math.max(0, source.thinkingBudgetTokens);
         s.continuationMode = ProviderContinuationPolicy.normalize(source.continuationMode);
         s.harnessPreset = HarnessProfile.normalize(source.harnessPreset);
@@ -877,24 +940,49 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return out;
     }
 
-    /** Saves the shared provider row only (no model profiles, no credential change). */
-    public synchronized void saveProvider(Provider p) { saveProviderAndProfiles(p, null, false); }
+    /** Saves the account row only (routes and models untouched). */
+    public synchronized void saveProvider(Provider p) {
+        if (p == null || p.id == null || p.id.trim().isEmpty()) throw new IllegalArgumentException("provider required");
+        upsert(getWritableDatabase(), "providers", "provider_id", p.id, providerValues(p));
+    }
 
-    /** Atomically save one shared Provider plus every deployment profile affected by its endpoint change. */
-    public synchronized void saveProviderAndProfiles(Provider p, List<ModelProfile> profiles, boolean bumpCredentialEpoch) {
+    /**
+     * Atomically saves an account, its complete route set and the profiles re-resolved for it. Routes
+     * missing from {@code routes} are deleted together with their models (ON DELETE CASCADE).
+     */
+    public synchronized void saveProviderRoutes(Provider p, List<Route> routes, List<ModelProfile> profiles) {
         if (p == null || p.id == null || p.id.trim().isEmpty()) throw new IllegalArgumentException("provider required");
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             upsert(db, "providers", "provider_id", p.id, providerValues(p));
+            java.util.HashSet<String> keep = new java.util.HashSet<>();
+            if (routes != null) for (Route route : routes) {
+                if (!p.id.equals(route.providerId)) throw new IllegalArgumentException("route belongs to another provider");
+                upsert(db, "provider_routes", "route_id", route.id, routeValues(route));
+                keep.add(route.id);
+            }
+            if (routes != null) for (Route existing : listRoutes(db, p.id)) {
+                if (!keep.contains(existing.id)) db.delete("provider_routes", "route_id=?", new String[]{existing.id});
+            }
             if (profiles != null) for (ModelProfile profile : profiles) {
-                if (profile == null) continue;
+                if (profile == null || !keep.contains(profile.routeId)) continue;
                 if (!p.id.equals(profile.providerId)) throw new IllegalArgumentException("model profile belongs to another provider");
                 upsert(db, "model_profiles", "profile_id", profile.id, modelProfileValues(profile));
             }
-            if (bumpCredentialEpoch) db.execSQL("UPDATE providers SET credential_epoch=credential_epoch+1 WHERE provider_id=?", new Object[]{p.id});
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+    }
+
+    /** Deletes an account with its routes and models. Chats stay (readable; they switch model to continue). */
+    public synchronized void deleteProvider(String providerId) {
+        if (providerId == null) return;
+        getWritableDatabase().delete("providers", "provider_id=?", new String[]{providerId});
+    }
+
+    public synchronized void deleteModelProfile(String profileId) {
+        if (profileId == null) return;
+        getWritableDatabase().delete("model_profiles", "profile_id=?", new String[]{profileId});
     }
 
     /** Monotonic per-provider counter, bumped whenever a new API key is stored. */
@@ -911,17 +999,47 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized Provider getProvider(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,base_url FROM providers WHERE provider_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROVIDER_COLUMNS + " FROM providers WHERE provider_id=?", new String[]{id})) {
             return c.moveToFirst() ? readProvider(c) : null;
         }
     }
 
     public synchronized List<Provider> listProviders() {
         ArrayList<Provider> out = new ArrayList<>();
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT provider_id,display_name,base_url FROM providers ORDER BY display_name", null)) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROVIDER_COLUMNS + " FROM providers ORDER BY created_at,display_name", null)) {
             while (c.moveToNext()) out.add(readProvider(c));
         }
         return out;
+    }
+
+    public synchronized Route getRoute(String routeId) {
+        if (routeId == null) return null;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + ROUTE_COLUMNS + " FROM provider_routes r JOIN providers p ON p.provider_id=r.provider_id WHERE r.route_id=?", new String[]{routeId})) {
+            return c.moveToFirst() ? readRoute(c) : null;
+        }
+    }
+
+    public synchronized List<Route> listRoutes(String providerId) { return listRoutes(getReadableDatabase(), providerId); }
+
+    private static List<Route> listRoutes(SQLiteDatabase db, String providerId) {
+        ArrayList<Route> out = new ArrayList<>();
+        if (providerId == null) return out;
+        try (Cursor c = db.rawQuery("SELECT " + ROUTE_COLUMNS + " FROM provider_routes r JOIN providers p ON p.provider_id=r.provider_id WHERE r.provider_id=? ORDER BY r.created_at,r.label", new String[]{providerId})) {
+            while (c.moveToNext()) out.add(readRoute(c));
+        }
+        return out;
+    }
+
+    /** Records the host the account's key was confirmed for on this route. */
+    public synchronized void confirmRouteHost(String routeId, String host) {
+        ContentValues v = new ContentValues(); v.put("confirmed_host", host == null ? "" : host);
+        getWritableDatabase().update("provider_routes", v, "route_id=?", new String[]{routeId});
+    }
+
+    public synchronized String confirmedHost(String routeId) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT confirmed_host FROM provider_routes WHERE route_id=?", new String[]{routeId})) {
+            return c.moveToFirst() ? c.getString(0) : "";
+        }
     }
 
     public synchronized void saveModelProfile(ModelProfile profile) {
@@ -931,14 +1049,22 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     public synchronized ModelProfile getModelProfile(String id) {
         if (id == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROFILE_COLUMNS + " FROM model_profiles WHERE profile_id=?", new String[]{id})) {
+        try (Cursor c = getReadableDatabase().rawQuery(PROFILE_SELECT + " WHERE m.profile_id=?", new String[]{id})) {
             return c.moveToFirst() ? readModelProfile(c) : null;
         }
     }
 
+    /** The profile for {@code modelId} on the account's first route that serves it. */
     public synchronized ModelProfile findModelProfile(String providerId, String modelId) {
         if (providerId == null || modelId == null) return null;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROFILE_COLUMNS + " FROM model_profiles WHERE provider_id=? AND model_id=?", new String[]{providerId, modelId})) {
+        try (Cursor c = getReadableDatabase().rawQuery(PROFILE_SELECT + " WHERE m.provider_id=? AND m.model_id=? ORDER BY r.created_at", new String[]{providerId, modelId})) {
+            return c.moveToFirst() ? readModelProfile(c) : null;
+        }
+    }
+
+    public synchronized ModelProfile findModelProfileOnRoute(String routeId, String modelId) {
+        if (routeId == null || modelId == null) return null;
+        try (Cursor c = getReadableDatabase().rawQuery(PROFILE_SELECT + " WHERE m.route_id=? AND m.model_id=?", new String[]{routeId, modelId})) {
             return c.moveToFirst() ? readModelProfile(c) : null;
         }
     }
@@ -946,15 +1072,24 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized List<ModelProfile> listModelProfiles(String providerId) {
         ArrayList<ModelProfile> out = new ArrayList<>();
         if (providerId == null) return out;
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT " + PROFILE_COLUMNS + " FROM model_profiles WHERE provider_id=? ORDER BY display_name,model_id", new String[]{providerId})) {
+        try (Cursor c = getReadableDatabase().rawQuery(PROFILE_SELECT + " WHERE m.provider_id=? ORDER BY m.display_name,m.model_id", new String[]{providerId})) {
             while (c.moveToNext()) out.add(readModelProfile(c));
         }
         return out;
     }
 
+    public synchronized List<ModelProfile> listAllModelProfiles() {
+        ArrayList<ModelProfile> out = new ArrayList<>();
+        try (Cursor c = getReadableDatabase().rawQuery(PROFILE_SELECT + " ORDER BY m.provider_id,m.display_name", null)) {
+            while (c.moveToNext()) out.add(readModelProfile(c));
+        }
+        return out;
+    }
+
+    /** First enabled profile of the account (the default when a Chat is created without a model). */
     public synchronized ModelProfile firstModelProfile(String providerId) {
-        List<ModelProfile> profiles = listModelProfiles(providerId);
-        return profiles.isEmpty() ? null : profiles.get(0);
+        for (ModelProfile profile : listModelProfiles(providerId)) if (profile.enabled) return profile;
+        return null;
     }
 
     public synchronized void saveSnapshot(Snapshot snapshot, JSONArray items) {
@@ -1035,15 +1170,19 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     private static ContentValues sessionValues(Session s) {
         ContentValues v = new ContentValues();
         v.put("local_id", s.id); v.put("title", s.title); v.put("created_at", s.createdAt == null ? s.updatedAt : s.createdAt); v.put("provider_id", s.providerId); v.put("model_profile_id", s.modelProfileId); v.put("model", s.model);
+        if (s.routeId == null || s.routeId.trim().isEmpty()) throw new IllegalArgumentException("session route required");
+        v.put("route_id", s.routeId);
         v.put("context_tokens", s.contextTokens > 0 ? s.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS);
         v.put("input_tokens", Math.max(0, s.inputTokens));
         v.put("max_output_tokens", s.maxOutputTokens > 0 ? s.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS);
+        v.put("send_output_cap", s.sendOutputCap ? 1 : 0);
+        v.put("service_tier", s.serviceTier == null ? "" : s.serviceTier);
         v.put("reasoning_effort", ReasoningPolicy.normalizeEffort(s.reasoningEffort));
         v.put("reasoning_levels", ReasoningPolicy.normalizeLevels(s.reasoningLevels));
         v.put("input_modalities", normalizeModalities(s.inputModalities)); v.put("output_modalities", normalizeModalities(s.outputModalities));
         v.put("tool_capabilities", ChatTurnOptions.normalizeCapabilities(s.toolCapabilities));
         String protocol = normalizeProtocol(s.protocol);
-        v.put("protocol", protocol); v.put("auth_mode", ProviderAuth.normalize(s.authMode, protocol));
+        v.put("protocol", protocol);
         v.put("reasoning_wire", ReasoningPolicy.normalizeWire(s.reasoningWire, protocol));
         v.put("thinking_mode", ReasoningPolicy.normalizeThinkingMode(s.thinkingMode));
         v.put("thinking_budget_tokens", Math.max(0, s.thinkingBudgetTokens));
@@ -1064,13 +1203,34 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     private static ContentValues providerValues(Provider p) {
         ContentValues v = new ContentValues();
-        v.put("provider_id", p.id); v.put("display_name", p.displayName); v.put("base_url", p.baseUrl);
+        v.put("provider_id", p.id); v.put("display_name", p.displayName);
+        v.put("preset_id", p.presetId == null || p.presetId.trim().isEmpty() ? ProviderPresets.CUSTOM_OPENAI : p.presetId.trim());
+        v.put("key_status", p.keyStatus == null ? "unknown" : p.keyStatus);
+        v.put("key_checked_at", p.keyCheckedAt == null ? "" : p.keyCheckedAt);
+        v.put("budget", p.budget == null || p.budget.trim().isEmpty() ? "{}" : p.budget);
+        v.put("updated_at", Instant.now().toString());
+        return v;
+    }
+
+    private static ContentValues routeValues(Route r) {
+        if (r.id == null || r.id.trim().isEmpty() || r.providerId == null) throw new IllegalArgumentException("route id/provider required");
+        String protocol = normalizeProtocol(r.protocol);
+        ContentValues v = new ContentValues();
+        v.put("route_id", r.id); v.put("provider_id", r.providerId);
+        v.put("preset_route", r.presetRouteId == null ? "" : r.presetRouteId);
+        v.put("label", r.label == null || r.label.trim().isEmpty() ? protocol : r.label.trim());
+        v.put("protocol", protocol);
+        v.put("base_url", ProviderEndpoint.normalize(r.baseUrl, protocol));
+        v.put("auth_mode", ProviderAuth.normalize(r.authMode, protocol));
+        v.put("dialect", RouteDialect.parse(protocol, r.dialect).toJson(protocol).toString());
+        v.put("headers", RouteHeaders.parse(r.headers).toString());
         v.put("updated_at", Instant.now().toString());
         return v;
     }
 
     private static ContentValues modelProfileValues(ModelProfile p) {
         if (p.id == null || p.id.trim().isEmpty() || p.providerId == null || p.providerId.trim().isEmpty()) throw new IllegalArgumentException("model profile id/provider required");
+        if (p.routeId == null || p.routeId.trim().isEmpty()) throw new IllegalArgumentException("model profile route required");
         String modelId = p.modelId == null ? "" : p.modelId.trim(); if (modelId.isEmpty()) throw new IllegalArgumentException("model id required");
         int context = p.contextTokens > 0 ? p.contextTokens : ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
         int input = Math.max(0, p.inputTokens);
@@ -1080,7 +1240,6 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (output < 256 || output >= context) throw new IllegalArgumentException("max output tokens out of range");
         String levels = ReasoningPolicy.normalizeLevels(p.reasoningLevels);
         String protocol = normalizeProtocol(p.protocol);
-        String authMode = ProviderAuth.normalize(p.authMode, protocol);
         String reasoningWire = ReasoningPolicy.normalizeWire(p.reasoningWire, protocol);
         String thinkingMode = ReasoningPolicy.normalizeThinkingMode(p.thinkingMode);
         String continuationMode = ProviderContinuationPolicy.normalize(p.continuationMode);
@@ -1089,23 +1248,33 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             if (thinkingBudget < 1024 || thinkingBudget >= output) throw new IllegalArgumentException("manual thinking budget must be >=1024 and < max output tokens");
         } else thinkingBudget = 0;
         ContentValues v = new ContentValues();
-        v.put("profile_id", p.id); v.put("provider_id", p.providerId); v.put("model_id", modelId);
+        v.put("profile_id", p.id); v.put("provider_id", p.providerId); v.put("route_id", p.routeId); v.put("model_id", modelId);
         v.put("display_name", p.displayName == null || p.displayName.trim().isEmpty() ? modelId : p.displayName.trim());
+        v.put("enabled", p.enabled ? 1 : 0);
         v.put("context_tokens", context); v.put("input_tokens", input); v.put("max_output_tokens", output);
         v.put("reasoning_levels", levels);
         v.put("input_modalities", normalizeModalities(p.inputModalities)); v.put("output_modalities", normalizeModalities(p.outputModalities));
         v.put("tool_capabilities", ChatTurnOptions.normalizeCapabilities(p.toolCapabilities));
-        v.put("protocol", protocol); v.put("auth_mode", authMode); v.put("reasoning_wire", reasoningWire);
+        v.put("reasoning_wire", reasoningWire);
         v.put("thinking_mode", thinkingMode); v.put("thinking_budget_tokens", thinkingBudget);
         v.put("continuation_mode", continuationMode);
-        v.put("config_mode", ModelCatalog.normalizeConfigMode(p.configMode));
-        v.put("catalog_key", p.catalogKey == null || p.catalogKey.trim().isEmpty() ? "unknown" : p.catalogKey.trim());
-        v.put("catalog_version", p.catalogVersion == null ? "" : p.catalogVersion.trim());
-        v.put("catalog_source", p.catalogSource == null || p.catalogSource.trim().isEmpty() ? "neutral-defaults" : p.catalogSource.trim());
         v.put("harness_preset", HarnessProfile.normalize(p.harnessPreset));
         v.put("client_tool_calling", ClientToolRuntime.normalizeCalling(p.clientToolCalling));
+        v.put("service_tier", p.serviceTier == null ? "" : p.serviceTier.trim());
+        v.put("pricing", jsonText(p.pricing)); v.put("retention", p.retention == null ? "" : p.retention.trim());
+        v.put("overrides", jsonText(p.overrides)); v.put("sources", jsonText(p.sources));
+        v.put("discovered", jsonText(p.discovered)); v.put("probe", jsonText(p.probe));
+        v.put("catalog_key", p.catalogKey == null ? "" : p.catalogKey.trim());
+        v.put("catalog_version", p.catalogVersion == null ? "" : p.catalogVersion.trim());
         v.put("updated_at", Instant.now().toString());
         return v;
+    }
+
+    /** JSON object columns: stored canonical, never free text. */
+    private static String jsonText(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "{}";
+        try { return new JSONObject(raw).toString(); }
+        catch (org.json.JSONException error) { throw new IllegalArgumentException("invalid JSON column"); }
     }
 
     /** Update-or-insert that stamps created_at only on insert. */
@@ -1129,30 +1298,65 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         throw new IllegalArgumentException("unsupported protocol");
     }
 
-    /** Resolve one request-local deployment snapshot from shared account data plus model capabilities. */
-    static Provider deploymentProvider(Provider shared, ModelProfile profile) {
-        if (shared == null || profile == null) throw new IllegalArgumentException("provider/model profile required");
-        Provider out = new Provider();
-        out.id = shared.id; out.displayName = shared.displayName; out.baseUrl = shared.baseUrl; out.model = profile.modelId;
-        out.protocol = normalizeProtocol(profile.protocol);
-        out.authMode = ProviderAuth.normalize(profile.authMode, out.protocol);
+    /** Resolve one request-local deployment snapshot from the account, its route and a model profile. */
+    static Provider deploymentProvider(Provider shared, Route route, ModelProfile profile) {
+        if (shared == null || route == null || profile == null) throw new IllegalArgumentException("provider/route/model profile required");
+        if (!route.id.equals(profile.routeId)) throw new IllegalArgumentException("model profile belongs to another route");
+        Provider out = routeView(shared, route);
+        out.model = profile.modelId;
         out.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, out.protocol);
         out.contextTokens = profile.contextTokens; out.inputTokens = profile.inputTokens; out.maxOutputTokens = profile.maxOutputTokens;
         out.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); out.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
+        out.serviceTier = profile.serviceTier == null ? "" : profile.serviceTier;
+        out.sendOutputCap = DeploymentResolver.sendsOutputCap(out.protocol, profile.sources);
         return out;
     }
 
-    /** Session form is authoritative after creation/model switch so later ModelProfile edits cannot relabel an old Chat. */
-    static Provider deploymentProvider(Provider shared, Session session) {
-        if (shared == null || session == null) throw new IllegalArgumentException("provider/session required");
-        Provider out = new Provider();
-        out.id = shared.id; out.displayName = shared.displayName; out.baseUrl = shared.baseUrl; out.model = session.model;
-        out.protocol = normalizeProtocol(session.protocol);
-        out.authMode = ProviderAuth.normalize(session.authMode, out.protocol);
+    /**
+     * Session form is authoritative after creation/model switch so later ModelProfile edits cannot relabel
+     * an old Chat; the route (endpoint) is read live. A route whose protocol no longer matches is refused.
+     */
+    static Provider deploymentProvider(Provider shared, Route route, Session session) {
+        if (shared == null || route == null || session == null) throw new IllegalArgumentException("provider/route/session required");
+        if (!normalizeProtocol(session.protocol).equals(normalizeProtocol(route.protocol))) throw new IllegalStateException("route protocol changed");
+        Provider out = routeView(shared, route);
+        out.model = session.model;
         out.reasoningWire = ReasoningPolicy.normalizeWire(session.reasoningWire, out.protocol);
         out.contextTokens = session.contextTokens; out.inputTokens = session.inputTokens; out.maxOutputTokens = session.maxOutputTokens;
         out.thinkingMode = ReasoningPolicy.normalizeThinkingMode(session.thinkingMode); out.thinkingBudgetTokens = Math.max(0, session.thinkingBudgetTokens);
+        out.serviceTier = session.serviceTier == null ? "" : session.serviceTier;
+        out.sendOutputCap = session.sendOutputCap || AnthropicMessagesTransport.PROTOCOL.equals(out.protocol);
         return out;
+    }
+
+    private static Provider routeView(Provider shared, Route route) {
+        Provider out = new Provider();
+        out.id = shared.id; out.displayName = shared.displayName; out.presetId = shared.presetId;
+        out.routeId = route.id; out.baseUrl = route.baseUrl;
+        out.protocol = normalizeProtocol(route.protocol);
+        out.authMode = ProviderAuth.normalize(route.authMode, out.protocol);
+        out.dialect = RouteDialect.parse(out.protocol, route.dialect);
+        out.headers = RouteHeaders.parse(route.headers);
+        return out;
+    }
+
+    /** The session's request view (account + live route + frozen deployment), or null when the account or route is gone. */
+    synchronized Provider sessionDeployment(Session session) {
+        if (session == null) return null;
+        Provider shared = getProvider(session.providerId);
+        Route route = getRoute(session.routeId);
+        if (shared == null || route == null) return null;
+        try { return deploymentProvider(shared, route, session); }
+        catch (RuntimeException invalid) { return null; }
+    }
+
+    /** Copies the deployment fields a Chat freezes from its profile (create and model switch). */
+    static void freezeDeployment(Session s, ModelProfile profile) {
+        s.routeId = profile.routeId;
+        s.protocol = normalizeProtocol(profile.protocol);
+        s.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, s.protocol);
+        s.serviceTier = profile.serviceTier == null ? "" : profile.serviceTier;
+        s.sendOutputCap = DeploymentResolver.sendsOutputCap(s.protocol, profile.sources);
     }
 
     static String normalizeModalities(String raw) {
@@ -1201,31 +1405,43 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.draft = c.getString(15); s.draftMedia = c.getString(16); s.originSnapshotId = c.isNull(17) ? null : c.getString(17);
         s.parentSessionId = c.isNull(18) ? null : c.getString(18); s.preview = c.isNull(19) ? null : c.getString(19);
         s.contextMode = ContextMode.normalize(c.getString(20)); s.taskProfile = c.getString(21); s.contextCheckpoint = c.getString(22); s.checkpointCoveredItems = c.getInt(23);
-        s.protocol = normalizeProtocol(c.getString(24)); s.authMode = ProviderAuth.normalize(c.getString(25), s.protocol);
+        s.protocol = normalizeProtocol(c.getString(24)); s.routeId = c.getString(25);
         s.reasoningWire = ReasoningPolicy.normalizeWire(c.getString(26), s.protocol); s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(c.getString(27));
         s.thinkingBudgetTokens = Math.max(0, c.getInt(28)); s.continuationMode = ProviderContinuationPolicy.normalize(c.getString(29));
         s.harnessPreset = HarnessProfile.normalize(c.getString(30)); s.clientToolCalling = ClientToolRuntime.normalizeCalling(c.getString(31));
         s.subagentMode = HarnessPolicyResolver.normalizeSubagentMode(c.getString(32)); s.reasoningLevels = ReasoningPolicy.normalizeLevels(c.getString(33));
-        s.createdAt = c.getString(34);
+        s.createdAt = c.getString(34); s.sendOutputCap = c.getInt(35) != 0; s.serviceTier = c.getString(36);
         return s;
     }
 
     private static Provider readProvider(Cursor c) {
         Provider p = new Provider();
-        p.id = c.getString(0); p.displayName = c.getString(1); p.baseUrl = c.getString(2);
+        p.id = c.getString(0); p.displayName = c.getString(1); p.presetId = c.getString(2);
+        p.keyStatus = c.getString(3); p.keyCheckedAt = c.getString(4); p.budget = c.getString(5);
         return p;
+    }
+
+    private static Route readRoute(Cursor c) {
+        Route r = new Route();
+        r.id = c.getString(0); r.providerId = c.getString(1); r.presetRouteId = c.getString(2); r.label = c.getString(3);
+        r.protocol = normalizeProtocol(c.getString(4)); r.baseUrl = c.getString(5); r.authMode = ProviderAuth.normalize(c.getString(6), r.protocol);
+        r.dialect = c.getString(7); r.headers = c.getString(8); r.presetId = c.getString(9);
+        return r;
     }
 
     private static ModelProfile readModelProfile(Cursor c) {
         ModelProfile p = new ModelProfile();
-        p.id = c.getString(0); p.providerId = c.getString(1); p.modelId = c.getString(2); p.displayName = c.getString(3);
-        p.contextTokens = c.getInt(4); p.inputTokens = c.getInt(5); p.maxOutputTokens = c.getInt(6); p.reasoningLevels = c.getString(7);
-        p.inputModalities = c.getString(8); p.outputModalities = c.getString(9); p.toolCapabilities = ChatTurnOptions.normalizeCapabilities(c.getString(10));
-        p.protocol = normalizeProtocol(c.getString(11)); p.authMode = ProviderAuth.normalize(c.getString(12), p.protocol);
-        p.reasoningWire = ReasoningPolicy.normalizeWire(c.getString(13), p.protocol); p.thinkingMode = ReasoningPolicy.normalizeThinkingMode(c.getString(14));
-        p.thinkingBudgetTokens = Math.max(0, c.getInt(15)); p.continuationMode = ProviderContinuationPolicy.normalize(c.getString(16));
-        p.configMode = ModelCatalog.normalizeConfigMode(c.getString(17)); p.catalogKey = c.getString(18); p.catalogVersion = c.getString(19); p.catalogSource = c.getString(20);
-        p.harnessPreset = HarnessProfile.normalize(c.getString(21)); p.clientToolCalling = ClientToolRuntime.normalizeCalling(c.getString(22));
+        p.id = c.getString(0); p.providerId = c.getString(1); p.routeId = c.getString(2); p.modelId = c.getString(3); p.displayName = c.getString(4);
+        p.enabled = c.getInt(5) != 0;
+        p.contextTokens = c.getInt(6); p.inputTokens = c.getInt(7); p.maxOutputTokens = c.getInt(8); p.reasoningLevels = c.getString(9);
+        p.inputModalities = c.getString(10); p.outputModalities = c.getString(11); p.toolCapabilities = ChatTurnOptions.normalizeCapabilities(c.getString(12));
+        p.protocol = normalizeProtocol(c.getString(13));
+        p.reasoningWire = ReasoningPolicy.normalizeWire(c.getString(14), p.protocol); p.thinkingMode = ReasoningPolicy.normalizeThinkingMode(c.getString(15));
+        p.thinkingBudgetTokens = Math.max(0, c.getInt(16)); p.continuationMode = ProviderContinuationPolicy.normalize(c.getString(17));
+        p.harnessPreset = HarnessProfile.normalize(c.getString(18)); p.clientToolCalling = ClientToolRuntime.normalizeCalling(c.getString(19));
+        p.serviceTier = c.getString(20); p.pricing = c.getString(21); p.retention = c.getString(22);
+        p.overrides = c.getString(23); p.sources = c.getString(24); p.discovered = c.getString(25); p.probe = c.getString(26);
+        p.catalogKey = c.getString(27); p.catalogVersion = c.getString(28);
         return p;
     }
 }

@@ -11,6 +11,13 @@ const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 
 createServer(async (req, res) => {
   const path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  // The reviewed presets/catalog the app ships, as an ES module, so the mock editors use the real data.
+  if (path === '/dev/provider-presets.js') {
+    const json = await readFile(join(root, 'android/app/src/main/resources/com/moyu/chat/provider-presets.json'), 'utf8');
+    res.writeHead(200, { 'content-type': types['.js'], 'cache-control': 'no-store' });
+    res.end(`export default ${json};\n`);
+    return;
+  }
   const relative = path === '/' ? 'dev/preview.html' : normalize(path.slice(1)).replace(/\\/g, '/');
   if (!/^(src|dev)\//.test(relative) || relative.includes('..')) { res.writeHead(404).end(); return; }
   try {

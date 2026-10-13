@@ -69,7 +69,7 @@ public class TransportMockServerTest {
         ChatDatabase.Provider p = new ChatDatabase.Provider();
         p.id = "test"; p.displayName = "test"; p.protocol = protocol;
         p.authMode = ProviderAuth.defaultForProtocol(protocol);
-        p.baseUrl = server.url("/v1").toString();
+        p.baseUrl = AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? server.url("/").toString() : server.url("/v1").toString();
         p.model = "test-model";
         p.contextTokens = 32_000; p.maxOutputTokens = 1_024;
         return p;
@@ -820,7 +820,7 @@ public class TransportMockServerTest {
         assertFalse("credential must never enter request JSON", request.getBody().readUtf8().contains("test-key"));
     }
 
-    @Test public void anthropicUsesSharedV1BasePlusMessagesPath() throws Exception {
+    @Test public void anthropicAppendsV1MessagesToTheSdkRoot() throws Exception {
         server.enqueue(new MockResponse().setBody("data: {\"type\":\"message_stop\"}\n\n"));
         RecordingSink sink = new RecordingSink();
         anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "test-key", "claude-test", prompt("user", "hi"), sink);

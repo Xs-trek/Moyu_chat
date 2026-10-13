@@ -9,8 +9,8 @@ import java.util.Collections;
 
 /** Conservative tokenizer-free budget. It affects only derived prompt state, never stored history. */
 final class ContextBudgetManager {
-    static final int DEFAULT_CONTEXT_TOKENS = 32_000;
-    static final int DEFAULT_OUTPUT_TOKENS = 4_096;
+    static final int DEFAULT_CONTEXT_TOKENS = 128_000;
+    static final int DEFAULT_OUTPUT_TOKENS = 16_384;
     static final int PROACTIVE_COMPACT_TRIGGER_PERCENT = 50;
     static final int POST_COMPACT_TARGET_PERCENT = 30;
     private static final int MAX_SAFETY_TOKENS = 1_024;

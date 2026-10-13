@@ -46,7 +46,7 @@ public class SmartContextV002Test {
     static final class SecretStore extends ChatSecretStore {
         final java.util.Map<String, String> values = new java.util.HashMap<>();
         SecretStore() { super(RuntimeEnvironment.getApplication()); }
-        @Override synchronized void put(String providerId, String value) { values.put(providerId, value); }
+        @Override synchronized void put(String providerId, String value) { if (value == null || value.isEmpty()) values.remove(providerId); else values.put(providerId, value); }
         @Override synchronized String get(String providerId) { return values.get(providerId); }
         @Override boolean has(String providerId) { return values.containsKey(providerId); }
     }

@@ -182,7 +182,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
      * about Providers and Model Profiles is edited in the WebView.
      */
     @SuppressLint("SetTextI18n")
-    @Override public void openCredentialEditor(ChatDatabase.Provider provider) {
+    @Override public void openCredentialEditor(ChatDatabase.Provider provider, String hosts) {
         runOnUiThread(() -> {
             if (provider == null || isFinishing()) return;
             AlertDialog current = activeConfigDialog;
@@ -191,7 +191,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             int pad = Math.round(20 * getResources().getDisplayMetrics().density);
             LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(pad, pad / 2, pad, 0);
             TextView help = new TextView(this);
-            help.setText("同一 Provider 下的模型共享这个密钥。它只保存在 Android 安全存储里，不进入界面、数据库或日志。");
+            help.setText("这个账号下的所有路线和模型共享这个密钥，只会发往：" + (hosts == null || hosts.isEmpty() ? "（尚无路线）" : hosts) + "。它只保存在 Android 安全存储里，不进入界面、数据库或日志。");
             help.setTextSize(13); help.setAlpha(0.75f);
             form.addView(help, new LinearLayout.LayoutParams(-1, -2));
             EditText key = new EditText(this);
@@ -212,7 +212,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
                 ChatCoordinator c = coordinator;
                 if (c == null) { dialog.dismiss(); return; }
-                c.saveProvider(provider, value, failure -> runOnUiThread(() -> {
+                c.saveCredential(provider.id, value, failure -> runOnUiThread(() -> {
                     if (!dialog.isShowing()) return;
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                     if (failure == null) { dialog.dismiss(); showMessage("API Key 已保存"); }

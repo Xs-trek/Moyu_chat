@@ -19,11 +19,11 @@ Moyu Chat 的开发依据。项目事实以当前源码为准；`docs/history/` 
 
 ## 必须保持的约束
 
-1. **API Key** 只存在原生安全存储（`ChatSecretStore`）中，不进 WebView、不进 SQLite、不进日志或观察视图。
+1. **API Key** 只存在原生安全存储（`ChatSecretStore`）中，不进 WebView、不进 SQLite、不进日志或观察视图；只发往账号已确认的域名，传输层不跟随重定向（`docs/provider-config.md` §5）。
 2. **严格 CSP**（`index.html`）：前端不加载远程资源。第三方库只能以本地文件引入，引入前先说明理由。
 3. **界面风格统一**（`docs/ui-design.md`）：界面全部在 WebView 里实现，不用 `<select>` 和系统 Toast；原生只保留 API Key 输入框、系统图片选择器和外部浏览器。动效按规范的 token 和交互表实现。
 4. **协议 ≠ 能力**：不从模型名或协议推断推理、thinking、图片、联网、续接、工具调用等能力；能力必须由具体部署（Model Profile）显式声明。
-5. 改动 **Provider / Model Profile / Session** 三层结构或**数据库 schema** 前，必须先和用户讨论。
+5. 改动 **账号（Provider）/ 路线（Route）/ Model Profile / Session** 结构或**数据库 schema** 前，必须先和用户讨论。服务商预设和模型目录是数据（`provider-presets.json`），目录声明只对原样的预设路线和完全一致的 Model ID 生效。
 6. 前端源码只改根目录的 `src/` 和 `index.html`（浏览器预览的 `dev/preview.html` 要保持同样的容器结构）。`android/app/src/main/assets/ui/` 是 `syncMoyuChatUi` 任务在构建时生成的副本（Git 忽略），不要手改。
 
 ## 架构概要
@@ -38,8 +38,8 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 进程与宿主 | `MoyuChatApplication`、`ChatRuntime`（进程级，Activity 只是挂载点）、`MainActivity`（WebView、API Key 原生输入框、图片选择）、`ChatTurnService`（回合期间前台服务） |
 | 编排中枢 | `ChatCoordinator`：intent 分发、会话生命周期、分支、视图投影；通过 `TurnPipeline.Env` 向回合提供执行器、忙碌标记和视图推送 |
 | 回合管线 | `TurnPipeline`：接收 → 上下文 → 路由 → 压缩检查点 → 联网规划 → 工具选择 → 联网检索 → 生成 → 校验/修正 → 收尾；`ProviderRoundLoop`（生成阶段：多轮主调用、客户端工具轮次、20 fps 流式投影）；`TurnRun`（回合内状态）、`TurnConfig`（冻结配置）、`TurnControl`（取消、用量、调用链） |
-| 协议适配 | `ChatTransport`、`ChatTransportRegistry`、`OpenAiCompatibleTransport`（Chat Completions + Responses）、`AnthropicMessagesTransport`、`ProviderEndpoint`、`ProviderAuth` |
-| 能力与配置 | `ModelCatalog`、`ModelProfileValidator`、`ModelPreflight`、`ConfigurationValidator`、`ReasoningPolicy`、`ProviderContinuationPolicy/Identity` |
+| 协议适配 | `ChatTransport`、`ChatTransportRegistry`、`OpenAiCompatibleTransport`（Chat Completions + Responses）、`AnthropicMessagesTransport`、`ProviderEndpoint`（SDK 根地址约定）、`ProviderAuth`、`RouteDialect`（路线的协议细节）、`RouteHeaders`（非机密附加请求头）、`ProviderErrors`（失败分类与请求 ID） |
+| 账号与能力配置 | `ProviderConfigService`（账号 / 路线 / 模型的保存、校验、视图投影、密钥域名确认）、`ProviderPresets` + `resources/com/moyu/chat/provider-presets.json`（服务商预设与模型目录）、`DeploymentResolver`（默认 < 端点 < 目录 < 实测 < 手动，逐项记录来源）、`ModelPricing`、`ModelProfileValidator`、`ModelPreflight`、`ConfigurationValidator`、`ReasoningPolicy`、`ProviderContinuationPolicy/Identity`；说明见 `docs/provider-config.md` |
 | 上下文 | `ContextMode`（minimal/standard/smart）、`ContextBuilder`、`ContextBudgetManager`、`ContextCheckpoint(Service)`、`CanonicalPrompt`、`PromptPolicy`、`PromptModules`、`LocalKnowledgeStore` + `KnowledgeLexicon`（FTS 记忆/检索）、`SnapshotService`（本地分支快照） |
 | Harness | `HarnessProfile`、`HarnessPolicyResolver`、`TaskRouter`、`TaskProfile`、`ReliabilityModules`、`SmartVerifierService`、`SmartVerifierCalibration`、`FocusedSubagentService` |
 | 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask）、`WebOrchestrator`（规划）、`MoyuWebService`（检索/抓取） |
@@ -90,4 +90,5 @@ npm run dev
 - Moyu Remote 跨 APK 桥接（RemoteDataBridge、Snapshot 导入、Handoff 回传）。
 - ChatGPT / Claude 官方导出文件导入。以后最多考虑导入本应用自身、同协议版本的会话导出。
 - 原版的 v1→v16 迁移链。beta 线 schema 从 1 重新计数，库文件改为 `moyu-beta.db`；原版库文件 `moyu-chat.db` 直接删除，不迁移；版本号比当前构建新的文件删除重建。启动时清掉没有对应 Provider 的密钥和没有引用的图片。阶段 2 结束、装上真机之前，新表直接并入 v1；之后的 schema 变更从 v1 往后写 `onUpgrade` 步骤，并在 `static-check.mjs` 补断言。
-- `providers` 表上的 protocol / model / 上下文上限等旧列，以及“只填 Provider 就自动生成模型”的一步式创建；Model Profile 的 `defaultReasoning` 和 `legacy-manual` 配置模式；`context.intelligence.set` intent。
+- `providers` 表上的 protocol / model / 上下文上限 / base_url 等旧列，以及“只填 Provider 就自动生成模型”的一步式创建；Model Profile 的 `defaultReasoning` 和 `legacy-manual` 配置模式；`context.intelligence.set` intent。
+- 模型配置的“自动 / 高级”二选一（`ModelCatalog`、`configMode`、`model.catalog.preview`）：改为逐项合成并标明来源，手动值单独保存。

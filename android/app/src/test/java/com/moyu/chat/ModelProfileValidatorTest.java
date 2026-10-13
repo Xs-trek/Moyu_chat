@@ -6,17 +6,18 @@ import org.junit.Test;
 
 /** User-editable deployment fields must fail loudly instead of silently degrading at runtime. */
 public class ModelProfileValidatorTest {
-    private static ChatDatabase.Provider provider() {
-        ChatDatabase.Provider p = new ChatDatabase.Provider();
-        p.id = "p"; p.displayName = "P"; p.baseUrl = "https://example.com/v1";
-        return p;
+    private static ChatDatabase.Route route(String protocol, String dialect) {
+        ChatDatabase.Route r = new ChatDatabase.Route();
+        r.id = "r"; r.providerId = "p"; r.label = "R"; r.protocol = protocol;
+        r.baseUrl = AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? "https://example.com" : "https://example.com/v1";
+        r.authMode = ProviderAuth.defaultForProtocol(protocol); r.dialect = dialect;
+        return r;
     }
 
     private static ChatDatabase.ModelProfile profile(String protocol) {
         ChatDatabase.ModelProfile p = new ChatDatabase.ModelProfile();
         p.id = "m"; p.providerId = "p"; p.modelId = "model"; p.displayName = "Model";
-        p.protocol = protocol;
-        p.authMode = ProviderAuth.defaultForProtocol(protocol);
+        p.protocol = protocol; p.routeId = "r";
         p.reasoningWire = ReasoningPolicy.WIRE_NONE;
         p.reasoningLevels = "";
         p.contextTokens = 32_000; p.inputTokens = 0; p.maxOutputTokens = 4_096;
@@ -54,10 +55,18 @@ public class ModelProfileValidatorTest {
     }
 
     @Test public void thinkingAndContinuationAreRejectedWhenProtocolCannotUseThem() {
+        String chat = OpenAiCompatibleTransport.CHAT_COMPLETIONS;
         assertRejected(() -> ModelProfileValidator.requireThinkingMode(
-                OpenAiCompatibleTransport.CHAT_COMPLETIONS, "manual", 1024, 4096), "仅适用于 anthropic-messages");
+                chat, RouteDialect.defaults(chat), "manual", 1024, 4096), "provider-default");
         assertRejected(() -> ModelProfileValidator.requireThinkingMode(
-                OpenAiCompatibleTransport.RESPONSES, ReasoningPolicy.THINKING_PROVIDER_DEFAULT, 1024, 4096), "budget=0");
+                chat, RouteDialect.defaults(chat), ReasoningPolicy.THINKING_ENABLED, 0, 4096), "thinking-type");
+        RouteDialect thinkingSwitch = RouteDialect.parse(chat, "{\"thinkingParam\":\"thinking-type\"}");
+        assertEquals(ReasoningPolicy.THINKING_ENABLED, ModelProfileValidator.requireThinkingMode(
+                chat, thinkingSwitch, ReasoningPolicy.THINKING_ENABLED, 0, 4096));
+        assertRejected(() -> ModelProfileValidator.requireThinkingMode(
+                OpenAiCompatibleTransport.RESPONSES, null, ReasoningPolicy.THINKING_PROVIDER_DEFAULT, 1024, 4096), "必须为 0");
+        assertRejected(() -> ModelProfileValidator.requireThinkingMode(
+                AnthropicMessagesTransport.PROTOCOL, null, ReasoningPolicy.THINKING_ENABLED, 0, 4096), "Messages");
         assertRejected(() -> ModelProfileValidator.requireContinuationMode(
                 OpenAiCompatibleTransport.CHAT_COMPLETIONS, ProviderContinuationPolicy.NATIVE), "请选择 none");
         assertEquals(ProviderContinuationPolicy.NATIVE, ModelProfileValidator.requireContinuationMode(
@@ -80,10 +89,35 @@ public class ModelProfileValidatorTest {
         p.toolCapabilities = "web_search";
         p.continuationMode = ProviderContinuationPolicy.NATIVE;
         p.clientToolCalling = ClientToolRuntime.OPENAI_RESPONSES;
-        ModelProfileValidator.validateResolvedProfile(provider(), p);
+        ModelProfileValidator.validateResolvedProfile(route(OpenAiCompatibleTransport.RESPONSES, "{}"), p);
         assertEquals("text,image", p.inputModalities);
         assertEquals("web_search", p.toolCapabilities);
         assertEquals(HarnessProfile.BALANCED, p.harnessPreset);
+    }
+
+    @Test public void serviceTierVocabularyIsProtocolSpecific() {
+        assertEquals("flex", ModelProfileValidator.requireServiceTier(OpenAiCompatibleTransport.RESPONSES, "Flex"));
+        assertEquals("", ModelProfileValidator.requireServiceTier(AnthropicMessagesTransport.PROTOCOL, " "));
+        assertEquals("standard_only", ModelProfileValidator.requireServiceTier(AnthropicMessagesTransport.PROTOCOL, "standard_only"));
+        assertRejected(() -> ModelProfileValidator.requireServiceTier(AnthropicMessagesTransport.PROTOCOL, "flex"), "auto / standard_only");
+        assertRejected(() -> ModelProfileValidator.requireServiceTier(OpenAiCompatibleTransport.CHAT_COMPLETIONS, "turbo"), "priority");
+    }
+
+    @Test public void anthropicRoutesTakeTheSdkRootWithoutV1() {
+        ChatDatabase.Route r = route(AnthropicMessagesTransport.PROTOCOL, "{}");
+        r.baseUrl = "https://example.com/v1";
+        assertRejected(() -> ModelProfileValidator.validateRoute(r), "不含末尾的 /v1");
+        r.baseUrl = "https://example.com/anthropic/";
+        ModelProfileValidator.validateRoute(r);
+        assertEquals("https://example.com/anthropic", r.baseUrl);
+        assertEquals("https://example.com/anthropic/v1/messages", ProviderEndpoint.requestUrl(r.baseUrl, r.protocol));
+    }
+
+    @Test public void routeDialectRejectsKeysOfAnotherProtocol() {
+        ChatDatabase.Route r = route(OpenAiCompatibleTransport.RESPONSES, "{\"streamUsage\":true}");
+        assertRejected(() -> ModelProfileValidator.validateRoute(r), "streamUsage");
+        ChatDatabase.Route chat = route(OpenAiCompatibleTransport.CHAT_COMPLETIONS, "{\"outputCap\":\"max_output_tokens\"}");
+        assertRejected(() -> ModelProfileValidator.validateRoute(chat), "max_completion_tokens");
     }
 
     private static void assertRejected(Runnable action, String messagePart) {

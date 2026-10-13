@@ -70,29 +70,43 @@ final class ModelProfileValidator {
         return normalized;
     }
 
-    static String requireThinkingMode(String protocol, String raw, int budget, int maxOutput) {
+    /** Thinking modes a route can carry: Messages has its own field; Chat only through a declared dialect switch. */
+    static String requireThinkingMode(String protocol, RouteDialect dialect, String raw, int budget, int maxOutput) {
         String mode;
         try { mode = ReasoningPolicy.normalizeThinkingMode(raw); }
         catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("Messages thinking mode 无效：" + safe(raw)
-                    + "。可选值：provider-default / adaptive / disabled / manual");
+            throw new IllegalArgumentException("思考模式无效：" + safe(raw) + "。可选值：provider-default / enabled / adaptive / disabled / manual");
         }
-        if (!AnthropicMessagesTransport.PROTOCOL.equals(protocol)) {
-            if (!ReasoningPolicy.THINKING_PROVIDER_DEFAULT.equals(mode) || budget != 0) {
-                throw new IllegalArgumentException("Messages thinking 仅适用于 anthropic-messages；当前 protocol=" + protocol
-                        + "，请使用 provider-default 且 Manual thinking budget=0");
+        RouteDialect d = dialect == null ? RouteDialect.defaults(protocol) : dialect;
+        if (!d.carriesThinking(protocol, mode)) {
+            if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) {
+                throw new IllegalArgumentException("Messages 的思考模式只能是 provider-default / adaptive / disabled / manual；当前：" + mode);
             }
-            return mode;
+            if (OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(protocol)) {
+                throw new IllegalArgumentException("这条路线没有声明思考开关（thinking-type），思考模式只能是 provider-default；当前：" + mode);
+            }
+            throw new IllegalArgumentException(protocol + " 没有思考开关，思考模式只能是 provider-default；推理强度用推理档位控制");
         }
         if (ReasoningPolicy.THINKING_MANUAL.equals(mode)) {
             if (budget < 1024 || budget >= maxOutput) {
-                throw new IllegalArgumentException("Manual thinking budget 必须 >=1024 且小于 Max Output；当前 budget="
-                        + budget + "，Max Output=" + maxOutput);
+                throw new IllegalArgumentException("手动思考预算必须 >=1024 且小于输出上限；当前预算=" + budget + "，输出上限=" + maxOutput);
             }
         } else if (budget != 0) {
-            throw new IllegalArgumentException("Manual thinking budget 仅在 thinkingMode=manual 时填写；其它模式必须为 0");
+            throw new IllegalArgumentException("手动思考预算只在思考模式为 manual 时填写；其它模式必须为 0");
         }
         return mode;
+    }
+
+    /** Service tier vocabulary per protocol family; '' = do not send. */
+    static String requireServiceTier(String protocol, String raw) {
+        String value = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
+        if (value.isEmpty()) return "";
+        if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) {
+            if ("auto".equals(value) || "standard_only".equals(value)) return value;
+            throw new IllegalArgumentException("Messages 的服务层级只能是 auto / standard_only；当前：" + value);
+        }
+        if ("auto".equals(value) || "default".equals(value) || "flex".equals(value) || "priority".equals(value)) return value;
+        throw new IllegalArgumentException("服务层级只能是 auto / default / flex / priority；当前：" + value);
     }
 
     static String requireContinuationMode(String protocol, String raw) {
@@ -106,38 +120,55 @@ final class ModelProfileValidator {
         return mode;
     }
 
-    static void validateResolvedProfile(ChatDatabase.Provider provider, ChatDatabase.ModelProfile profile) {
-        if (provider == null || profile == null) throw new IllegalArgumentException("Provider / Model Profile 不存在");
+    /** A route on its own: protocol, endpoint convention, auth, dialect and headers. Normalizes in place. */
+    static void validateRoute(ChatDatabase.Route route) {
+        if (route == null) throw new IllegalArgumentException("路线不存在");
         String protocol;
-        try { protocol = ChatDatabase.normalizeProtocol(profile.protocol); }
+        try { protocol = ChatDatabase.normalizeProtocol(route.protocol); }
         catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("Protocol 无效：" + safe(profile.protocol)
-                    + "。可选值：openai-chat-completions / openai-responses / anthropic-messages");
+            throw new IllegalArgumentException("协议无效：" + safe(route.protocol) + "。可选值：openai-chat-completions / openai-responses / anthropic-messages");
         }
-        try { ProviderEndpoint.normalize(provider.baseUrl, protocol); }
-        catch (IllegalArgumentException error) { throw new IllegalArgumentException("Base URL 与当前协议不兼容：" + error.getMessage()); }
-        try { profile.authMode = ProviderAuth.normalize(profile.authMode, protocol); }
+        route.protocol = protocol;
+        route.baseUrl = ProviderEndpoint.normalize(route.baseUrl, protocol);
+        try { route.authMode = ProviderAuth.normalize(route.authMode, protocol); }
         catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("Auth mode 无效：" + safe(profile.authMode) + "。可选值：bearer / x-api-key / api-key");
+            throw new IllegalArgumentException("鉴权方式无效：" + safe(route.authMode) + "。可选值：bearer / x-api-key / api-key");
         }
+        route.dialect = RouteDialect.parse(protocol, route.dialect).toJson(protocol).toString();
+        route.headers = RouteHeaders.parse(route.headers).toString();
+    }
+
+    /** A resolved profile against its route. Normalizes in place; messages are user-facing. */
+    static void validateResolvedProfile(ChatDatabase.Route route, ChatDatabase.ModelProfile profile) {
+        if (route == null || profile == null) throw new IllegalArgumentException("路线或模型不存在");
+        validateRoute(route);
+        String protocol = route.protocol;
+        RouteDialect dialect = RouteDialect.parse(protocol, route.dialect);
         try { profile.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, protocol); }
         catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("Reasoning wire 与协议不兼容：protocol=" + protocol + "，reasoningWire=" + safe(profile.reasoningWire));
+            throw new IllegalArgumentException("推理参数与协议不匹配：协议=" + protocol + "，推理参数=" + safe(profile.reasoningWire));
         }
         try { profile.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels); }
-        catch (IllegalArgumentException error) { throw new IllegalArgumentException("Reasoning levels 包含不支持的档位：" + safe(profile.reasoningLevels)); }
-        try { ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, profile), profile.reasoningLevels); }
-        catch (IllegalArgumentException error) { throw new IllegalArgumentException("Reasoning levels 配置无效：" + error.getMessage()); }
+        catch (IllegalArgumentException error) { throw new IllegalArgumentException("推理档位包含不支持的值：" + safe(profile.reasoningLevels)); }
+        ChatDatabase.Provider view = new ChatDatabase.Provider();
+        view.protocol = protocol; view.reasoningWire = profile.reasoningWire;
+        try { ReasoningPolicy.validateLevelsForProvider(view, profile.reasoningLevels); }
+        catch (IllegalArgumentException error) {
+            throw new IllegalArgumentException(profile.reasoningLevels.isEmpty() ? error.getMessage()
+                    : "推理档位需要先设置推理参数（reasoning wire）；Messages 的档位只能是 low 到 max");
+        }
 
         validateLimits(profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
-        profile.inputModalities = requireTextModality("Input modalities", profile.inputModalities);
-        profile.outputModalities = requireTextModality("Output modalities", profile.outputModalities);
+        profile.inputModalities = requireTextModality("输入模态", profile.inputModalities);
+        profile.outputModalities = requireTextModality("输出模态", profile.outputModalities);
         profile.toolCapabilities = requireNativeWebCapabilities(protocol, profile.toolCapabilities);
         profile.harnessPreset = requireHarnessPreset(profile.harnessPreset);
         profile.clientToolCalling = requireClientToolCalling(profile.clientToolCalling, protocol);
-        profile.thinkingMode = requireThinkingMode(protocol, profile.thinkingMode, profile.thinkingBudgetTokens, profile.maxOutputTokens);
+        profile.thinkingMode = requireThinkingMode(protocol, dialect, profile.thinkingMode, profile.thinkingBudgetTokens, profile.maxOutputTokens);
         if (!ReasoningPolicy.THINKING_MANUAL.equals(profile.thinkingMode)) profile.thinkingBudgetTokens = 0;
         profile.continuationMode = requireContinuationMode(protocol, profile.continuationMode);
+        profile.serviceTier = requireServiceTier(protocol, profile.serviceTier);
+        profile.pricing = ModelPricing.normalize(DeploymentResolver.json(profile.pricing)).toString();
         profile.protocol = protocol;
     }
 

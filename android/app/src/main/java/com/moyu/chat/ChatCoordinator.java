@@ -17,7 +17,7 @@ import java.util.concurrent.ScheduledExecutorService;
 final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_ITEMS = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
-    interface Host { void dispatch(JSONObject envelope); /** Native secure entry for a Provider's API Key: the key goes straight to ChatSecretStore, never through the WebView. */ default void openCredentialEditor(ChatDatabase.Provider provider) { } default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } }
+    interface Host { void dispatch(JSONObject envelope); /** Native secure entry for a Provider's API Key: the key goes straight to ChatSecretStore, never through the WebView. */ default void openCredentialEditor(ChatDatabase.Provider provider, String hosts) { } default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } }
 
     private final ChatDatabase db;
     private final ChatSecretStore secrets;
@@ -33,6 +33,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final ChatTransportRegistry transports = new ChatTransportRegistry();
     private final ContextBuilder contexts;
     private final SnapshotService snapshots;
+    private final ProviderConfigService config;
     /** Turn stages (Router, checkpoint, Web, generation, verification) live in the pipeline; this class owns intents and views. */
     private final TurnPipeline pipeline;
     private final Map<String, ChatTransport.Turn> activeTurns = new ConcurrentHashMap<>();
@@ -70,9 +71,10 @@ final class ChatCoordinator implements AutoCloseable {
         this.db = app.database(); this.secrets = secrets; this.mediaStore = app.mediaStore(); this.host = host;
         this.systemDark = () -> (app.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES;
         this.contexts = new ContextBuilder(db, mediaStore); this.snapshots = new SnapshotService(db);
+        this.config = new ProviderConfigService(db, secrets, transports);
         this.pipeline = new TurnPipeline(new PipelineEnv(), db, contexts, mediaStore, transports);
         // Recovery runs on the same single worker as every intent, so it is ordered before any send.
-        worker.execute(() -> { db.recoverInterruptedSessions(); pruneOrphans(); emitView(); });
+        worker.execute(() -> { db.recoverInterruptedSessions(); pruneOrphans(); config.refreshCatalog(); emitView(); });
         this.route = validRoute(db.setting("route", "home"));
         this.activeSessionId = empty(db.setting("activeSessionId", ""));
         this.theme = validTheme(db.setting("theme", "system"));
@@ -101,12 +103,14 @@ final class ChatCoordinator implements AutoCloseable {
 
     interface SaveCallback { void complete(String error); }
 
-    void saveProvider(ChatDatabase.Provider provider, String apiKey) { saveProvider(provider, apiKey, null); }
+    /** Native API Key entry (the secure field in MainActivity). The key goes straight to the secure store. */
+    void saveCredential(String providerId, String apiKey) { saveCredential(providerId, apiKey, null); }
 
-    void saveProvider(ChatDatabase.Provider provider, String apiKey, SaveCallback completion) {
+    void saveCredential(String providerId, String apiKey, SaveCallback completion) {
         worker.execute(() -> {
             try {
-                persistProvider(provider, apiKey);
+                config.saveCredential(providerId, apiKey);
+                emitView();
                 if (completion != null) completion.complete(null);
             } catch (Exception error) {
                 String message = safe(error);
@@ -115,159 +119,6 @@ final class ChatCoordinator implements AutoCloseable {
         });
     }
 
-    /** Validates and stores a Provider (and, when given, its API Key) on the calling worker thread. */
-    private void persistProvider(ChatDatabase.Provider provider, String apiKey) throws Exception {
-        String previousSecret = null;
-        boolean secretWritten = false;
-        if (provider == null || provider.id == null || provider.id.trim().isEmpty()) throw new IllegalArgumentException("provider id required");
-        provider.id = bounded(provider.id, 128, "provider id");
-        provider.displayName = bounded(provider.displayName, 128, "display name");
-        // Provider is the shared account/connection boundary. Protocol/auth/reasoning wire are
-        // model-deployment capabilities and are validated per Model Profile below.
-        provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
-
-        java.util.List<ChatDatabase.ModelProfile> affectedProfiles = db.listModelProfiles(provider.id);
-        for (ChatDatabase.ModelProfile profile : affectedProfiles) {
-            try {
-                if (ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(profile.configMode))) {
-                    // Endpoint identity is part of deployment authority. Re-resolve Auto whenever the
-                    // shared endpoint changes so stale official/native capabilities cannot follow it.
-                    ModelCatalog.applyAuto(provider, profile,
-                            profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
-                }
-                ModelProfileValidator.validateResolvedProfile(provider, profile);
-                if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
-            } catch (IllegalArgumentException profileError) {
-                throw new IllegalArgumentException("Model “" + profile.modelId + "” 配置无效：" + profileError.getMessage());
-            }
-        }
-
-        String nextSecret = apiKey == null ? "" : apiKey.trim();
-        boolean credentialChanged = !nextSecret.isEmpty();
-        if (credentialChanged) {
-            previousSecret = secrets.get(provider.id);
-            secrets.put(provider.id, nextSecret);
-            secretWritten = true;
-        }
-        try {
-            db.saveProviderAndProfiles(provider, affectedProfiles, credentialChanged);
-        } catch (Exception databaseError) {
-            if (secretWritten) {
-                try { secrets.put(provider.id, previousSecret == null ? "" : previousSecret); }
-                catch (Exception restoreError) { throw new IllegalStateException("provider save failed and previous credential could not be restored", databaseError); }
-            }
-            throw databaseError;
-        }
-        emitView();
-    }
-
-    void saveModelProfile(ChatDatabase.ModelProfile profile) { saveModelProfile(profile, null); }
-
-    void saveModelProfile(ChatDatabase.ModelProfile profile, SaveCallback completion) {
-        worker.execute(() -> {
-            try {
-                persistModelProfile(profile);
-                if (completion != null) completion.complete(null);
-            } catch (Exception error) {
-                String message = safe(error);
-                if (completion != null) completion.complete(message); else host.showMessage(message);
-            }
-        });
-    }
-
-    /** Validates and stores a Model Profile on the calling worker thread. */
-    private void persistModelProfile(ChatDatabase.ModelProfile profile) throws Exception {
-        ChatDatabase.Provider provider = profile == null ? null : db.getProvider(profile.providerId);
-        if (profile == null || provider == null) throw new IllegalArgumentException("provider not found");
-        profile.id = bounded(profile.id, 160, "model profile id");
-        profile.providerId = bounded(profile.providerId, 128, "provider id");
-        profile.modelId = bounded(profile.modelId, 256, "model id");
-        profile.displayName = bounded(profile.displayName == null || profile.displayName.trim().isEmpty() ? profile.modelId : profile.displayName, 128, "model display name");
-        profile.configMode = ModelCatalog.normalizeConfigMode(profile.configMode);
-        if (ModelCatalog.CONFIG_AUTO.equals(profile.configMode)) {
-            // Auto is catalog-owned as one coherent deployment profile. Per-field overrides
-            // belong to Advanced/manual mode; mixing stale manual values into Auto would make
-            // catalog updates appear applied while silently retaining old limits/capabilities.
-            ModelCatalog.applyAuto(provider, profile,
-                    profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
-        }
-        ChatDatabase.ModelProfile duplicate = db.findModelProfile(profile.providerId, profile.modelId);
-        if (duplicate != null && !profile.id.equals(duplicate.id)) {
-            throw new IllegalArgumentException("此 Provider 已存在 Model ID “" + profile.modelId + "”。请编辑已有模型，或填写不同的 Model ID。");
-        }
-        ModelProfileValidator.validateResolvedProfile(provider, profile);
-        if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
-        db.saveModelProfile(profile); emitView();
-    }
-
-    private static JSONObject option(String value, String hint) throws Exception { return new JSONObject().put("value", value).put("hint", hint); }
-
-    /** The deployment vocabulary the validators accept, so the WebView editor never hard-codes it. */
-    static JSONObject modelEditorOptions() throws Exception {
-        return new JSONObject()
-                .put("protocol", new JSONArray()
-                        .put(option(OpenAiCompatibleTransport.CHAT_COMPLETIONS, "追加 /chat/completions"))
-                        .put(option(OpenAiCompatibleTransport.RESPONSES, "追加 /responses"))
-                        .put(option(AnthropicMessagesTransport.PROTOCOL, "追加 /messages")))
-                .put("authMode", new JSONArray()
-                        .put(option(ProviderAuth.BEARER, "Authorization: Bearer 请求头"))
-                        .put(option(ProviderAuth.X_API_KEY, "x-api-key 请求头"))
-                        .put(option(ProviderAuth.API_KEY, "api-key 请求头")))
-                .put("reasoningWire", new JSONArray()
-                        .put(option(ReasoningPolicy.WIRE_NONE, "不发送推理档位"))
-                        .put(option(ReasoningPolicy.WIRE_OPENAI_RESPONSES, "Responses 的 reasoning.effort"))
-                        .put(option(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, "Chat Completions 的 reasoning_effort"))
-                        .put(option(ReasoningPolicy.WIRE_ANTHROPIC_EFFORT, "Messages 的 effort")))
-                .put("thinkingMode", new JSONArray()
-                        .put(option(ReasoningPolicy.THINKING_PROVIDER_DEFAULT, "不猜第三方模型能力"))
-                        .put(option(ReasoningPolicy.THINKING_ADAPTIVE, ""))
-                        .put(option(ReasoningPolicy.THINKING_DISABLED, ""))
-                        .put(option(ReasoningPolicy.THINKING_MANUAL, "需要填写 Manual thinking budget")))
-                .put("clientToolCalling", new JSONArray()
-                        .put(option(ClientToolRuntime.NONE, ""))
-                        .put(option(ClientToolRuntime.OPENAI_CHAT, ""))
-                        .put(option(ClientToolRuntime.OPENAI_RESPONSES, ""))
-                        .put(option(ClientToolRuntime.ANTHROPIC_TOOLS, "")))
-                .put("reasoningLevels", new JSONArray().put(ReasoningPolicy.NONE_LEVEL).put(ReasoningPolicy.MINIMAL).put(ReasoningPolicy.LOW)
-                        .put(ReasoningPolicy.MEDIUM).put(ReasoningPolicy.HIGH).put(ReasoningPolicy.XHIGH).put(ReasoningPolicy.MAX))
-                .put("continuationMode", new JSONArray().put(ProviderContinuationPolicy.NONE).put(ProviderContinuationPolicy.NATIVE))
-                .put("harnessPreset", new JSONArray().put(HarnessProfile.LEAN).put(HarnessProfile.BALANCED).put(HarnessProfile.REINFORCED));
-    }
-
-    /**
-     * Builds a Model Profile from the WebView editor's fields. Limits are explicit deployment inputs in
-     * both modes; Auto leaves wire / capability / Harness metadata to the Model Catalog.
-     */
-    static ChatDatabase.ModelProfile modelProfileFrom(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing, JSONObject p) {
-        ChatDatabase.ModelProfile m = existing != null ? existing : new ChatDatabase.ModelProfile();
-        if (m.id == null || m.id.trim().isEmpty()) m.id = "model-" + java.util.UUID.randomUUID();
-        m.providerId = provider.id;
-        m.modelId = p.optString("modelId", "").trim();
-        m.displayName = p.optString("displayName", "").trim();
-        if (m.modelId.isEmpty()) throw new IllegalArgumentException("Model ID 不能为空");
-        m.contextTokens = ModelProfileValidator.parseInteger("Context Window", p.optString("contextTokens", ""));
-        m.inputTokens = ModelProfileValidator.parseInteger("Max Input", p.optString("inputTokens", "0"));
-        m.maxOutputTokens = ModelProfileValidator.parseInteger("Max Output", p.optString("maxOutputTokens", ""));
-        ModelProfileValidator.validateLimits(m.contextTokens, m.inputTokens, m.maxOutputTokens);
-        boolean auto = ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(p.optString("configMode", ModelCatalog.CONFIG_AUTO)));
-        m.configMode = auto ? ModelCatalog.CONFIG_AUTO : ModelCatalog.CONFIG_MANUAL;
-        if (auto) {
-            // persistModelProfile resolves reviewed wire/capability/Harness metadata while preserving the limits above.
-            m.catalogVersion = ModelCatalog.CATALOG_VERSION;
-        } else {
-            m.protocol = p.optString("protocol", "").trim(); m.authMode = p.optString("authMode", "").trim(); m.reasoningWire = p.optString("reasoningWire", "").trim();
-            m.inputModalities = p.optString("inputModalities", "text").trim(); m.outputModalities = p.optString("outputModalities", "text").trim();
-            m.toolCapabilities = p.optString("toolCapabilities", "").trim();
-            m.reasoningLevels = p.optString("reasoningLevels", "").trim();
-            m.thinkingMode = p.optString("thinkingMode", "").trim();
-            m.thinkingBudgetTokens = ModelProfileValidator.parseInteger("Manual thinking budget", p.optString("thinkingBudgetTokens", "0"));
-            m.continuationMode = p.optString("continuationMode", "").trim();
-            m.harnessPreset = p.optString("harnessPreset", "").trim();
-            m.clientToolCalling = p.optString("clientToolCalling", "").trim();
-            m.catalogKey = "unknown"; m.catalogVersion = ""; m.catalogSource = "manual";
-        }
-        return m;
-    }
 
     private void handle(String raw) {
         String requestId = "";
@@ -377,44 +228,21 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.message.edit": editMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
                 case "chat.message.rollback": rollbackMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
                 // Configuration editors live in the WebView; only the API Key has a native entry.
-                // Absent providerId means "a new provider"; never bind null into the DB layer.
-                case "provider.save": {
-                    String providerId = p.optString("providerId", "").trim();
-                    ChatDatabase.Provider existing = providerId.isEmpty() ? null : db.getProvider(providerId);
-                    ChatDatabase.Provider provider = existing != null ? existing : new ChatDatabase.Provider();
-                    if (provider.id == null || provider.id.trim().isEmpty()) provider.id = "provider-" + java.util.UUID.randomUUID();
-                    provider.displayName = p.optString("displayName", "").trim();
-                    if (provider.displayName.isEmpty()) throw new IllegalArgumentException("显示名称不能为空");
-                    provider.baseUrl = p.optString("baseUrl", "");
-                    persistProvider(provider, "");
-                    result(requestId, true, null, new JSONObject().put("providerId", provider.id).put("hasCredential", secrets.has(provider.id)));
-                    return;
-                }
+                case "provider.save": result(requestId, true, null, config.saveAccount(p)); emitView(); return;
+                case "provider.delete": config.deleteAccount(required(p, "providerId")); break;
                 case "provider.credential.edit": {
                     ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
                     if (provider == null) throw new IllegalArgumentException("provider not found");
-                    host.openCredentialEditor(provider);
+                    host.openCredentialEditor(provider, config.hostsOf(provider.id));
                     break;
                 }
-                case "model.save": {
-                    ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
-                    if (provider == null) throw new IllegalArgumentException("provider not found");
-                    String profileId = p.optString("modelProfileId", "").trim();
-                    ChatDatabase.ModelProfile profile = modelProfileFrom(provider, profileId.isEmpty() ? null : db.getModelProfile(profileId), p);
-                    persistModelProfile(profile);
-                    result(requestId, true, null, new JSONObject().put("modelProfileId", profile.id));
-                    return;
-                }
-                case "model.editor.options": {
-                    result(requestId, true, null, modelEditorOptions());
-                    return; // read-only: no view change
-                }
-                case "model.catalog.preview": {
-                    ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
-                    if (provider == null) throw new IllegalArgumentException("provider not found");
-                    result(requestId, true, null, ModelCatalog.preview(provider, p.optString("modelId", "").trim()));
-                    return; // read-only: no view change
-                }
+                case "route.host.confirm": config.confirmHost(required(p, "routeId")); break;
+                case "model.save": result(requestId, true, null, config.saveModel(p)); emitView(); return;
+                case "model.delete": config.deleteModel(required(p, "modelProfileId")); break;
+                case "model.enabled.set": config.setModelEnabled(required(p, "modelProfileId"), p.optBoolean("enabled", true)); break;
+                case "model.editor.options": result(requestId, true, null, ProviderConfigService.editorOptions()); return; // read-only
+                case "model.preview": result(requestId, true, null, config.preview(p)); return; // read-only
+                case "route.catalog": result(requestId, true, null, config.routeCatalog(required(p, "routeId"))); return; // read-only
                 case "verification.feedback": recordVerificationFeedback(required(p, "localSessionId"), requiredSeq(p), required(p, "label")); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
                 case "turn.rate": {
@@ -489,10 +317,13 @@ final class ChatCoordinator implements AutoCloseable {
             profile = requestedModel.isEmpty() ? db.firstModelProfile(providerId) : db.findModelProfile(providerId, requestedModel);
         }
         if (profile == null || !providerId.equals(profile.providerId)) throw new IllegalStateException("model profile not configured");
+        if (!profile.enabled) throw new IllegalStateException("model is disabled");
+        ChatDatabase.Route route = db.getRoute(profile.routeId);
+        if (route == null) throw new IllegalStateException("model route not found");
         String requestedTitle = p.optString("title", "").trim();
         String title = requestedTitle.isEmpty() ? null : bounded(requestedTitle, 200, "title");
         String effort = p.has("reasoningEffort") ? ReasoningPolicy.normalizeEffort(p.optString("reasoningEffort", ReasoningPolicy.DEFAULT)) : ReasoningPolicy.DEFAULT;
-        ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, profile), profile.reasoningLevels, effort);
+        ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, route, profile), profile.reasoningLevels, effort);
         String contextMode = ContextMode.normalize(p.optString("contextMode", defaultContextMode));
         if (p.has("contextMode")) { defaultContextMode = contextMode; db.putSetting("defaultContextMode", defaultContextMode); }
         String webMode = ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode));
@@ -511,6 +342,7 @@ final class ChatCoordinator implements AutoCloseable {
         }
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
         ChatDatabase.ModelProfile profile = db.getModelProfile(modelProfileId); if (profile == null) throw new IllegalArgumentException("model profile not found");
+        if (!profile.enabled) throw new IllegalStateException("model is disabled");
         ChatDatabase.Provider provider = db.getProvider(profile.providerId);
         if (provider == null || !secrets.has(profile.providerId)) throw new IllegalStateException("target provider credential missing");
         if (db.draftMedia(sessionId).length() > 0 && !ChatDatabase.supportsModality(profile.inputModalities, "image")) {
@@ -525,9 +357,7 @@ final class ChatCoordinator implements AutoCloseable {
         session.inputModalities = ChatDatabase.normalizeModalities(profile.inputModalities);
         session.outputModalities = ChatDatabase.normalizeModalities(profile.outputModalities);
         session.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
-        session.protocol = ChatDatabase.normalizeProtocol(profile.protocol);
-        session.authMode = ProviderAuth.normalize(profile.authMode, session.protocol);
-        session.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, session.protocol);
+        ChatDatabase.freezeDeployment(session, profile);
         session.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode);
         session.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
         session.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
@@ -537,7 +367,9 @@ final class ChatCoordinator implements AutoCloseable {
         session.subagentMode = ContextMode.MINIMAL.equals(ContextMode.normalize(session.contextMode)) ? HarnessPolicyResolver.SUBAGENT_OFF
                 : ContextMode.SMART.equals(ContextMode.normalize(session.contextMode)) ? HarnessPolicyResolver.SUBAGENT_AUTO
                 : standardSubagentMode;
-        ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, session), session.reasoningLevels);
+        ChatDatabase.Route route = db.getRoute(profile.routeId);
+        if (route == null) throw new IllegalStateException("model route not found");
+        ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, route, session), session.reasoningLevels);
         String previousEffort = ReasoningPolicy.normalizeEffort(session.reasoningEffort);
         session.reasoningEffort = ReasoningPolicy.allows(session.reasoningLevels, previousEffort) ? previousEffort : ReasoningPolicy.DEFAULT;
         session.updatedAt = Instant.now().toString();
@@ -548,10 +380,10 @@ final class ChatCoordinator implements AutoCloseable {
     private void setSessionReasoning(String sessionId, String effort) {
         if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before changing reasoning effort");
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
-        ChatDatabase.Provider provider = db.getProvider(session.providerId);
-        if (provider == null) throw new IllegalStateException("provider not found");
+        ChatDatabase.Provider deployment = db.sessionDeployment(session);
+        if (deployment == null) throw new IllegalStateException("provider not found");
         String normalized = ReasoningPolicy.normalizeEffort(effort);
-        ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, session), session.reasoningLevels, normalized);
+        ReasoningPolicy.validateEffortForProvider(deployment, session.reasoningLevels, normalized);
         session.reasoningEffort = normalized;
         session.updatedAt = Instant.now().toString();
         db.saveSession(session);
@@ -585,7 +417,10 @@ final class ChatCoordinator implements AutoCloseable {
         if (sharedProvider == null || key == null) throw new IllegalStateException("provider credential missing");
         ChatDatabase.ModelProfile profile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
         if (profile == null) throw new IllegalStateException("model profile not found");
-        ChatDatabase.Provider provider = ChatDatabase.deploymentProvider(sharedProvider, session);
+        ChatDatabase.Route route = db.getRoute(session.routeId);
+        if (route == null) throw new IllegalStateException("这个 Chat 使用的路线已删除，请切换模型");
+        config.requireConfirmedHost(route);
+        ChatDatabase.Provider provider = ChatDatabase.deploymentProvider(sharedProvider, route, session);
         if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("provider protocol unsupported");
         ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
         ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort);
@@ -798,32 +633,7 @@ final class ChatCoordinator implements AutoCloseable {
             host.applyAppearance(resolvedTheme, tone);
             JSONObject view = new JSONObject().put("route", route).put("now", Instant.now().toString())
                     .put("appearance", new JSONObject().put("theme", theme).put("resolvedTheme", resolvedTheme).put("tone", tone).put("delight", delight));
-            JSONArray providers = new JSONArray();
-            for (ChatDatabase.Provider p : db.listProviders()) {
-                JSONArray models = new JSONArray();
-                for (ChatDatabase.ModelProfile m : db.listModelProfiles(p.id)) models.put(new JSONObject()
-                        .put("modelProfileId", m.id).put("modelId", m.modelId).put("displayName", m.displayName)
-                        .put("protocol", ChatDatabase.normalizeProtocol(m.protocol))
-                        .put("authMode", ProviderAuth.normalize(m.authMode, m.protocol))
-                        .put("reasoningWire", ReasoningPolicy.normalizeWire(m.reasoningWire, m.protocol))
-                        .put("contextTokens", m.contextTokens).put("inputTokens", m.inputTokens).put("maxOutputTokens", m.maxOutputTokens)
-                        .put("reasoningLevels", m.reasoningLevels)
-                        .put("thinkingMode", ReasoningPolicy.normalizeThinkingMode(m.thinkingMode)).put("thinkingBudgetTokens", Math.max(0, m.thinkingBudgetTokens))
-                        .put("continuationMode", ProviderContinuationPolicy.normalize(m.continuationMode))
-                        .put("configMode", ModelCatalog.normalizeConfigMode(m.configMode))
-                        .put("catalogKey", m.catalogKey == null ? "unknown" : m.catalogKey)
-                        .put("catalogVersion", m.catalogVersion == null ? "" : m.catalogVersion)
-                        .put("catalogSource", m.catalogSource == null ? "" : m.catalogSource)
-                        .put("harnessPreset", HarnessProfile.normalize(m.harnessPreset))
-                        .put("clientToolCalling", ClientToolRuntime.normalizeCalling(m.clientToolCalling))
-                        .put("inputModalities", m.inputModalities).put("outputModalities", m.outputModalities)
-                        .put("toolCapabilities", ChatTurnOptions.normalizeCapabilities(m.toolCapabilities)));
-                String defaultModel = models.length() > 0 ? models.optJSONObject(0).optString("modelId", "") : "";
-                providers.put(new JSONObject().put("providerId", p.id).put("displayName", p.displayName).put("baseUrl", p.baseUrl)
-                        .put("model", defaultModel).put("hasCredential", secrets.has(p.id))
-                        .put("configured", secrets.has(p.id) && models.length() > 0).put("models", models));
-            }
-            view.put("providers", providers);
+            view.put("providers", config.providersView());
             java.util.List<ChatDatabase.Session> sessionRows = db.listSessions();
             JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : sessionRows) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
             view.put("usageToday", usageToday(sessionRows));
@@ -944,7 +754,7 @@ final class ChatCoordinator implements AutoCloseable {
     private JSONObject sessionJson(ChatDatabase.Session s, boolean detail) throws Exception {
         ChatDatabase.Provider p = db.getProvider(s.providerId);
         ChatDatabase.ModelProfile modelProfile = s.modelProfileId == null ? null : db.getModelProfile(s.modelProfileId);
-        ChatDatabase.Provider deployment = p == null ? null : ChatDatabase.deploymentProvider(p, s);
+        ChatDatabase.Provider deployment = p == null ? null : db.sessionDeployment(s);
         ChatDatabase.Snapshot originSnap = s.originSnapshotId == null ? null : db.getSnapshot(s.originSnapshotId);
         boolean starting = startingSessions.contains(s.id);
         boolean preparing = preparingSessions.contains(s.id);

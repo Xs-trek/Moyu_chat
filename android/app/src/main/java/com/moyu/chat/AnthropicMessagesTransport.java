@@ -92,6 +92,10 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
     private final OkHttpClient http = new OkHttpClient.Builder()
             .fastFallback(true)
             .retryOnConnectionFailure(false)
+            // Never follow redirects: x-api-key survives a cross-host hop in OkHttp (only Authorization is
+            // stripped), and a 307/308 would replay the conversation body to the new host.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -108,15 +112,19 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         TerminalSink guarded = new TerminalSink(sink);
         if (provider == null || apiKey == null || apiKey.isEmpty()) { guarded.onError("provider_not_configured", "Provider 或 API Key 未配置", false); return () -> {}; }
         try {
-            String base = ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
+            String url = ProviderEndpoint.requestUrl(provider.baseUrl, provider.protocol);
+            RouteDialect dialect = provider.dialect == null ? RouteDialect.defaults(PROTOCOL) : provider.dialect;
             ChatTurnOptions turnOptions = options == null ? ChatTurnOptions.NONE : options;
             JSONObject body = body(model, prompt, provider.maxOutputTokens);
             applyHostedTools(body, turnOptions);
             applyClientTools(body, turnOptions);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
+            // Automatic prompt caching: one top-level marker; the server moves the breakpoint as the Chat grows.
+            if (dialect.autoCache) body.put("cache_control", new JSONObject().put("type", "ephemeral"));
+            if (provider.serviceTier != null && !provider.serviceTier.isEmpty()) body.put("service_tier", provider.serviceTier);
             MultiCallTurn turn = new MultiCallTurn();
             JSONObject requestBody = new JSONObject(body.toString());
-            executor.execute(() -> run(base + "/messages", provider, apiKey, requestBody, guarded, turn));
+            executor.execute(() -> run(url, provider, apiKey, requestBody, guarded, turn));
             return turn;
         } catch (Exception error) { guarded.onError("bad_provider_config", safe(error), false); return () -> {}; }
     }
@@ -298,9 +306,9 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             try {
                 usageSink.startRound();
                 Request.Builder builder = new Request.Builder().url(endpoint)
-                        .header("anthropic-version", "2023-06-01")
-                        .header("Accept", "text/event-stream")
                         .post(RequestBody.create(JSON, body.toString()));
+                RouteHeaders.apply(builder, provider.headers);
+                builder.header("anthropic-version", "2023-06-01").header("Accept", "text/event-stream");
                 ProviderAuth.apply(builder, provider.authMode, provider.protocol, apiKey);
                 call = http.newCall(builder.build());
                 turn.bind(call);
@@ -353,7 +361,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 return;
             } catch (Exception error) {
                 if (turn.isCancelled()) sink.onError("cancelled", "已中断", false);
-                else sink.onError("network_error", safe(error), true);
+                else sink.onError("network_error", error instanceof IOException ? ProviderErrors.networkSummary((IOException) error) : safe(error), true);
                 return;
             } finally {
                 turn.clear(call);
@@ -374,8 +382,12 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             responseStarted = true;
             wire.status(response.code());
             if (!response.isSuccessful()) {
-                try { wire.append(response.body() == null ? "" : response.body().string()); } catch (Exception ignored) { }
-                sink.onError("http_" + response.code(), "Provider HTTP " + response.code(), response.code() == 429 || response.code() >= 500);
+                String raw = "";
+                try { raw = response.body() == null ? "" : response.body().string(); } catch (Exception ignored) { }
+                wire.append(raw);
+                String detail = errorMessage(raw);
+                sink.onError("http_" + response.code(), ProviderErrors.httpSummary(response.code(), detail, ProviderErrors.requestId(response)),
+                        ProviderErrors.retryable(response.code(), detail));
                 return null;
             }
             sink.onStage("connected");
@@ -429,9 +441,22 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 if (!responseStarted) sink.onError("response_start_timeout", "Provider did not return HTTP response headers within " + READ_TIMEOUT_SECONDS + " seconds", true);
                 else if (!sawData) sink.onError("stream_first_event_timeout", "Provider returned HTTP headers but no SSE data within " + READ_TIMEOUT_SECONDS + " seconds", true);
                 else sink.onError("stream_timeout", "Provider stream stopped producing bytes for " + READ_TIMEOUT_SECONDS + " seconds", true);
-            } else sink.onError("network_error", safe(error), true);
+            } else sink.onError("network_error", ProviderErrors.networkSummary(error), true);
         }
         return null;
+    }
+
+    /** Anthropic error envelope: {"type":"error","error":{"type":...,"message":...}}; falls back to the raw text. */
+    private static String errorMessage(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "";
+        try {
+            JSONObject body = new JSONObject(raw.trim());
+            JSONObject error = body.optJSONObject("error");
+            String message = error != null ? error.optString("message", "") : body.optString("message", "");
+            if (!message.isEmpty()) return message;
+        } catch (Exception ignored) { }
+        String text = raw.trim();
+        return text.length() > 512 ? text.substring(0, 512) : text;
     }
 
     private static void emitContinuationBlocks(JSONArray blocks, ChatTransport.Sink sink) {

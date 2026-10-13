@@ -15,4 +15,16 @@ final class ProviderContinuationPolicy {
     }
 
     static boolean enabled(String raw) { return NATIVE.equals(normalize(raw)); }
+
+    /**
+     * Whether assistant turns keep and replay provider state. Native continuation is an optional,
+     * mode-gated optimization; Chat Completions reasoning replay is different: a route that requires
+     * reasoning_content on later requests (RouteDialect) gets it in every mode, or the request fails.
+     */
+    static boolean replayAllowed(ContextMode.Policy mode, ChatDatabase.Session session, ChatDatabase.Provider view) {
+        if (session == null) return false;
+        if (mode != null && mode.providerContinuationEnabled && enabled(session.continuationMode)) return true;
+        return view != null && OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(view.protocol) && view.dialect != null
+                && view.dialect.replaysReasoning(!ClientToolRuntime.NONE.equals(ClientToolRuntime.normalizeCalling(session.clientToolCalling)));
+    }
 }

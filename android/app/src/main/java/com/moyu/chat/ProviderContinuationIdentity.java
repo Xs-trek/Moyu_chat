@@ -16,11 +16,12 @@ final class ProviderContinuationIdentity {
         catch (Exception ignored) { endpoint = provider.baseUrl == null ? "" : provider.baseUrl.trim(); }
         String credentialEpoch = Long.toString(db.credentialEpoch(provider.id));
         String profile = session.modelProfileId == null ? "" : session.modelProfileId;
-        // Wire identity comes from the session's frozen deployment, so a shared Provider row (which
-        // carries no protocol/auth) and the request-local deployment view yield the same fingerprint.
+        // Protocol is frozen on the session; endpoint and auth come from the live route in the request view,
+        // so editing a route's Base URL or auth retires replay state and calibration made against the old one.
         String protocol = session.protocol == null ? "" : session.protocol.trim();
-        String authMode = session.authMode == null ? "" : session.authMode.trim();
-        return digest(protocol + "\n" + endpoint + "\n" + authMode + "\n" + provider.id + "\n"
+        String authMode = provider.authMode == null ? "" : provider.authMode.trim();
+        String route = session.routeId == null ? "" : session.routeId;
+        return digest(protocol + "\n" + endpoint + "\n" + authMode + "\n" + provider.id + "\n" + route + "\n"
                 + profile + "\n" + session.model + "\n" + credentialEpoch);
     }
 

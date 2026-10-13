@@ -43,16 +43,26 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.delete', { localSessionId: string }>
   | UiIntent<'chat.message.edit', { localSessionId: string; localSeq: number }>
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
-  /** WebView editor: name + shared endpoint only; result `data: { providerId, hasCredential }`. Never carries a key. */
-  | UiIntent<'provider.save', { providerId?: string; displayName: string; baseUrl: string }>
-  /** Opens the native password dialog; the key goes straight to ChatSecretStore and never reaches the WebView. */
+  /**
+   * Account editor: name, preset (creation only) and, when present, the complete route set (omitted routes are
+   * deleted with their models). Result `data: { providerId, hasCredential, routeIds }`. Never carries a key.
+   */
+  | UiIntent<'provider.save', AccountForm>
+  | UiIntent<'provider.delete', { providerId: string }>
+  /** Opens the native password dialog (it lists the hosts the key will go to); the key never reaches the WebView. */
   | UiIntent<'provider.credential.edit', { providerId: string }>
-  /** WebView editor; result `data: { modelProfileId }`, or a failed result carrying the validation message. */
-  | UiIntent<'model.save', ModelProfileForm>
-  /** Read-only; result `data: ModelEditorOptions` (the validators' own vocabulary). */
+  /** The user allows the account's key to be sent to this route's current host (after a Base URL change). */
+  | UiIntent<'route.host.confirm', { routeId: string }>
+  /** Model editor; result `data: { modelProfileId }`, or a failed result carrying the validation message. */
+  | UiIntent<'model.save', ModelForm>
+  | UiIntent<'model.delete', { modelProfileId: string }>
+  | UiIntent<'model.enabled.set', { modelProfileId: string; enabled: boolean }>
+  /** Read-only; result `data: ModelEditorOptions` (presets and the validators' own vocabulary). */
   | UiIntent<'model.editor.options', {}>
-  /** Read-only; result `data: { resolved: boolean; rows: [string, string][] }`: what Auto would resolve. */
-  | UiIntent<'model.catalog.preview', { providerId: string; modelId: string }>
+  /** Read-only; result `data: ModelPreview`: what saving would resolve, field by field, with sources. */
+  | UiIntent<'model.preview', { providerId: string; routeId: string; modelId: string; modelProfileId?: string; overrides?: ModelOverrides }>
+  /** Read-only; result `data: { routeId, version, models: CatalogModelView[] }`: reviewed models for a pristine preset route. */
+  | UiIntent<'route.catalog', { routeId: string }>
   | UiIntent<'verification.feedback', { localSessionId: string; localSeq: number; label: 'accurate' | 'false_alarm' | 'missed_error' }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
   /** Read-only; the intent.result carries `data: TurnTraceView`. Traces are never pushed with the view. */
@@ -83,43 +93,98 @@ export interface MediaView {
   url: string;
 }
 
+/** Where a resolved model value came from: default < discovered (endpoint) < catalog < probe < manual. */
+export type ValueSource = 'default' | 'discovered' | 'catalog' | 'probe' | 'manual';
+export type ModelField = 'contextTokens' | 'inputTokens' | 'maxOutputTokens' | 'inputModalities' | 'outputModalities'
+  | 'reasoningWire' | 'reasoningLevels' | 'thinkingMode' | 'thinkingBudgetTokens' | 'toolCapabilities'
+  | 'clientToolCalling' | 'continuationMode' | 'harnessPreset' | 'serviceTier' | 'pricing';
+
+/** Per-million-token prices in the vendor's billing currency (never converted). */
+export interface PricingView {
+  currency?: 'USD' | 'CNY';
+  input?: number; output?: number; cacheRead?: number; cacheWrite?: number;
+  tiers?: { above: number; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }[];
+  offPeak?: { multiplier: number; peakUtc: string[]; weekdaysOnly: boolean };
+}
+
 export interface ModelProfileView {
   modelProfileId: string;
+  routeId: string;
+  routeLabel: string;
   modelId: string;
   displayName: string;
+  /** Disabled models stay configured but are hidden from pickers. */
+  enabled: boolean;
+  /** Mirror of the route's protocol. */
   protocol: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | string;
-  authMode: 'bearer' | 'x-api-key' | 'api-key' | string;
   reasoningWire: 'none' | 'openai-responses' | 'openai-chat-effort' | 'anthropic-effort' | string;
   contextTokens: number;
   inputTokens: number;
   maxOutputTokens: number;
   reasoningLevels: string;
-  thinkingMode: 'provider-default' | 'adaptive' | 'disabled' | 'manual';
+  thinkingMode: 'provider-default' | 'enabled' | 'adaptive' | 'disabled' | 'manual';
   thinkingBudgetTokens: number;
   continuationMode: 'none' | 'native';
-  configMode: 'auto' | 'manual';
-  catalogKey: string;
-  catalogVersion: string;
-  catalogSource: string;
   harnessPreset: 'lean' | 'balanced' | 'reinforced';
   clientToolCalling: 'none' | 'openai-chat-tools' | 'openai-responses-tools' | 'anthropic-tools';
   inputModalities: string;
   outputModalities: string;
   toolCapabilities: string;
+  serviceTier: string;
+  pricing: PricingView;
+  /** Data retention of this deployment per the catalog: none / 30d / training / '' (unknown). */
+  retention: '' | 'none' | '30d' | 'training';
+  sources: Partial<Record<ModelField, ValueSource>>;
+  overrides: ModelOverrides;
+  /** '<preset>/<route>/<model>' when a reviewed catalog entry applies, else ''. */
+  catalogKey: string;
+  catalogVerified: boolean;
 }
 
+/** One endpoint of an account. Protocol is fixed after creation. */
+export interface RouteView {
+  routeId: string;
+  /** Preset route this was created from ('' = custom). */
+  presetRouteId: string;
+  label: string;
+  protocol: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | string;
+  baseUrl: string;
+  authMode: 'bearer' | 'x-api-key' | 'api-key' | string;
+  host: string;
+  /** Still exactly the reviewed preset endpoint (catalog applies). */
+  reviewed: boolean;
+  /** False when a key exists but was never confirmed for this host: nothing is sent until the user confirms. */
+  hostConfirmed: boolean;
+  dialect: RouteDialectView;
+  headers: Record<string, string>;
+}
+
+export interface RouteDialectView {
+  outputCap?: 'max_tokens' | 'max_completion_tokens' | 'max_output_tokens' | 'omit';
+  streamUsage?: boolean;
+  thinkingParam?: 'none' | 'thinking-type';
+  reasoningReplay?: 'never' | 'with-tools' | 'always';
+  store?: boolean;
+  autoCache?: boolean;
+}
+
+/** An account: one API Key (native secure store) shared by its routes. */
 export interface ProviderView {
   providerId: string;
   displayName: string;
-  baseUrl: string;
-  /** modelId of the first Model Profile, or '' when none is configured. */
+  presetId: string;
+  presetName: string;
+  presetKind: 'vendor' | 'gateway' | 'custom';
+  /** modelId of the first enabled Model Profile, or '' when none is configured. */
   model: string;
+  routes: RouteView[];
   models: ModelProfileView[];
   hasCredential: boolean;
+  keyStatus: 'unknown' | 'valid' | 'invalid' | 'billing' | 'forbidden' | string;
   configured: boolean;
 }
 
-export interface OriginView {
+
   snapshotId: string;
   /** Local session the branch was cut from; it may have been deleted since. */
   sourceSessionId: string;
@@ -343,41 +408,73 @@ declare global {
   interface WindowEventMap { 'moyu:view': CustomEvent<{ version: 1; type: string; revision?: number; view?: AppViewModel; patch?: ConversationStreamPatch; requestId?: string; ok?: boolean; error?: { summary?: string }; data?: unknown }> }
 }
 
-/** Fields of the WebView Model Profile editor. Numbers travel as strings and are parsed natively. */
-export interface ModelProfileForm {
-  providerId: string;
-  modelProfileId?: string;
-  displayName: string;
-  modelId: string;
-  configMode: 'auto' | 'manual';
-  contextTokens: string;
-  inputTokens: string;
-  maxOutputTokens: string;
-  /** Manual (advanced) mode only; Auto lets the Model Catalog resolve these. */
-  protocol?: string;
-  authMode?: string;
-  reasoningWire?: string;
-  reasoningLevels?: string;
-  inputModalities?: string;
-  outputModalities?: string;
-  toolCapabilities?: string;
-  thinkingMode?: string;
-  thinkingBudgetTokens?: string;
-  continuationMode?: string;
-  harnessPreset?: string;
-  clientToolCalling?: string;
+/** Account editor payload. `routes`, when present, is the complete set. */
+export interface AccountForm {
+  providerId?: string;
+  /** Creation only; fixed afterwards. */
+  presetId?: string;
+  displayName?: string;
+  routes?: {
+    routeId?: string;
+    presetRouteId?: string;
+    label?: string;
+    /** Required for a new route; must match an existing one. */
+    protocol?: string;
+    baseUrl?: string;
+    authMode?: string;
+    dialect?: RouteDialectView;
+    /** Non-secret extra headers; credential-shaped names are refused natively. */
+    headers?: Record<string, string>;
+  }[];
 }
 
-export interface ModelEditorOption { value: string; hint: string }
+/** Values the user set explicitly; numbers may travel as strings and are parsed natively. */
+export type ModelOverrides = Partial<Record<ModelField, string | number | PricingView>>;
+
+export interface ModelForm {
+  providerId: string;
+  routeId: string;
+  modelProfileId?: string;
+  modelId: string;
+  displayName?: string;
+  enabled?: boolean;
+  /** The complete override set (replaces the stored one). */
+  overrides?: ModelOverrides;
+}
+
+export interface ModelEditorOption { value: string; hint: string; protocols?: string[] }
+export interface PresetView {
+  id: string; name: string; kind: 'vendor' | 'gateway' | 'custom'; note: string; console: string; pricingUrl: string;
+  suggestedHeaders: string[];
+  routes: { id: string; label: string; protocol: string; baseUrl: string; authMode: string; dialect: RouteDialectView }[];
+}
 export interface ModelEditorOptions {
+  catalogVersion: string;
+  presets: PresetView[];
   protocol: ModelEditorOption[];
   authMode: ModelEditorOption[];
+  outputCap: ModelEditorOption[];
+  thinkingParam: ModelEditorOption[];
+  reasoningReplay: ModelEditorOption[];
   reasoningWire: ModelEditorOption[];
   thinkingMode: ModelEditorOption[];
   clientToolCalling: ModelEditorOption[];
+  continuationMode: ModelEditorOption[];
+  serviceTier: ModelEditorOption[];
+  harnessPreset: ModelEditorOption[];
   reasoningLevels: string[];
-  continuationMode: string[];
-  harnessPreset: string[];
+  /** Display names of value sources. */
+  sources: Record<ValueSource, string>;
+}
+
+export interface CatalogModelView { modelId: string; name: string; verified: boolean; retention: string; pricing?: PricingView; added?: boolean }
+export interface ModelPreview {
+  fields: { field: ModelField; label: string; value: unknown; source: ValueSource }[];
+  /** '' when saving would succeed. */
+  error: string;
+  catalog: CatalogModelView | null;
+  /** Whether the output limit goes on the wire (undeclared limits are left to the server, except on Messages). */
+  sendsOutputCap: boolean;
 }
 
 /** Native → WebView message shown in the page's toast (replaces Android Toasts). */

@@ -112,8 +112,7 @@ final class TurnPipeline {
         // Request behavior comes from the immutable TurnConfig, not mutable UI/session/profile state.
         provider.thinkingMode = turnConfig.thinkingMode;
         provider.thinkingBudgetTokens = turnConfig.thinkingBudgetTokens;
-        r.allowProviderContinuation = r.contextPolicy.providerContinuationEnabled
-                && ProviderContinuationPolicy.enabled(turnConfig.continuationMode);
+        r.allowProviderContinuation = ProviderContinuationPolicy.replayAllowed(r.contextPolicy, session, provider);
         JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", input).put("createdAt", Instant.now().toString());
         if (pendingMedia.length() > 0) user.put("attachments", new JSONArray(pendingMedia.toString()));
         r.streamKey = "assistant:live:" + id + ":" + UUID.randomUUID();

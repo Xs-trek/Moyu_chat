@@ -39,18 +39,18 @@ public class ProviderContinuationReplayTest {
         provider.model = "";
         provider.contextTokens = 32_000;
         provider.maxOutputTokens = 4_096;
-        db.saveProvider(provider);
+        TestDeployments.ensureRoute(db, provider);
 
         ChatDatabase.ModelProfile profile = new ChatDatabase.ModelProfile();
         profile.id = "continuation-profile";
         profile.providerId = provider.id;
+        profile.routeId = TestDeployments.routeId(provider);
         profile.modelId = "model-a";
         profile.displayName = "Model A";
         profile.contextTokens = 32_000;
         profile.maxOutputTokens = 4_096;
         profile.reasoningLevels = "";
         profile.protocol = OpenAiCompatibleTransport.RESPONSES;
-        profile.authMode = ProviderAuth.BEARER;
         profile.reasoningWire = ReasoningPolicy.WIRE_NONE;
         profile.inputModalities = "text";
         profile.outputModalities = "text";
@@ -93,13 +93,13 @@ public class ProviderContinuationReplayTest {
                 .optJSONObject("_providerContinuation"));
 
         provider.baseUrl = "https://two.example/v1";
-        db.saveProvider(provider);
+        TestDeployments.ensureRoute(db, provider);
         assertNull("endpoint change must invalidate old private replay state",
                 assistant(contexts.buildCommitted(db.getSession(session.id), 32_000, 0, 4_096, ""))
                         .optJSONObject("_providerContinuation"));
 
         provider.baseUrl = "https://one.example/v1";
-        db.saveProvider(provider);
+        TestDeployments.ensureRoute(db, provider);
         assertNotNull("restoring deployment identity before credential rotation should match the stored epoch",
                 assistant(contexts.buildCommitted(db.getSession(session.id), 32_000, 0, 4_096, ""))
                         .optJSONObject("_providerContinuation"));
@@ -123,7 +123,7 @@ public class ProviderContinuationReplayTest {
     private void seedPersistedContinuation() throws Exception {
         db.appendTimeline(session.id, "u1", message("user", "first"));
         ChatDatabase.Session current = db.getSession(session.id);
-        ChatDatabase.Provider deployment = ChatDatabase.deploymentProvider(db.getProvider(provider.id), current);
+        ChatDatabase.Provider deployment = db.sessionDeployment(current);
         JSONArray nativeItems = new JSONArray()
                 .put(new JSONObject().put("id", "rs_1").put("type", "reasoning").put("encrypted_content", "cipher"))
                 .put(new JSONObject().put("id", "ws_1").put("type", "web_search_call"))

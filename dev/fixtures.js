@@ -1,37 +1,44 @@
 // Preview fixtures shaped like contract/moyu-chat-contract.d.ts. All data is fictional.
+import { projectProviders } from './mock-config.js';
 const MIN = 60_000;
 const BASE = Date.parse('2026-10-12T09:00:00+08:00');
 const at = (minutes) => new Date(BASE + minutes * MIN).toISOString();
 
-export const providers = [
+/** Raw accounts (routes + models with overrides); mock-config projects them like native does. */
+export const accounts = [
   {
-    providerId: 'p-anthropic', displayName: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-5-5', hasCredential: true, configured: true,
-    models: [model('m-sonnet', 'claude-sonnet-5-5', 'Claude Sonnet 5.5', 'anthropic-messages', { authMode: 'x-api-key', reasoningWire: 'anthropic-effort', reasoningLevels: 'low,medium,high', thinkingMode: 'adaptive', continuationMode: 'native', clientToolCalling: 'anthropic-tools', harnessPreset: 'balanced', inputModalities: 'text,image', toolCapabilities: 'web_search,web_fetch' })],
+    providerId: 'p-anthropic', displayName: 'Anthropic', presetId: 'anthropic', hasCredential: true,
+    routes: [{ routeId: 'r-anthropic', presetRouteId: 'messages', label: 'Messages', protocol: 'anthropic-messages', baseUrl: 'https://api.anthropic.com', authMode: 'x-api-key', dialect: { autoCache: true }, headers: {} }],
+    models: [{ modelProfileId: 'm-sonnet', routeId: 'r-anthropic', modelId: 'claude-sonnet-5-5', displayName: 'Claude Sonnet 5.5', overrides: { continuationMode: 'native' } }],
   },
   {
-    providerId: 'p-openai', displayName: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.2', hasCredential: true, configured: true,
+    providerId: 'p-openai', displayName: 'OpenAI', presetId: 'openai', hasCredential: true,
+    routes: [{ routeId: 'r-openai', presetRouteId: 'responses', label: 'Responses', protocol: 'openai-responses', baseUrl: 'https://api.openai.com/v1', authMode: 'bearer', dialect: { store: false, outputCap: 'max_output_tokens' }, headers: { 'OpenAI-Project': 'proj_demo' } }],
     models: [
-      model('m-gpt', 'gpt-5.2', 'GPT-5.2', 'openai-responses', { reasoningWire: 'openai-responses', reasoningLevels: 'none,low,medium,high,xhigh', clientToolCalling: 'openai-responses-tools', inputModalities: 'text,image', continuationMode: 'native' }),
-      model('m-gpt-mini', 'gpt-5.2-mini', 'GPT-5.2 mini', 'openai-responses', { reasoningWire: 'openai-responses', reasoningLevels: 'low,medium,high', harnessPreset: 'lean' }),
+      { modelProfileId: 'm-gpt', routeId: 'r-openai', modelId: 'gpt-6.1-sol', displayName: 'GPT-6.1 Sol' },
+      { modelProfileId: 'm-gpt-mini', routeId: 'r-openai', modelId: 'gpt-6-luna', displayName: 'GPT-6 Luna', overrides: { harnessPreset: 'lean' } },
     ],
   },
   {
-    providerId: 'p-compat', displayName: '兼容端点 · DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', hasCredential: true, configured: true,
-    models: [model('m-ds', 'deepseek-chat', 'DeepSeek Chat', 'openai-chat-completions', { configMode: 'manual', harnessPreset: 'reinforced' })],
+    providerId: 'p-go', displayName: 'OpenCode Go', presetId: 'opencode-go', hasCredential: true,
+    routes: [
+      { routeId: 'r-go-chat', presetRouteId: 'chat', label: 'Chat Completions', protocol: 'openai-chat-completions', baseUrl: 'https://opencode.ai/inference/go/v1', authMode: 'bearer', dialect: { outputCap: 'max_tokens', streamUsage: true, thinkingParam: 'thinking-type', reasoningReplay: 'always' }, headers: {} },
+      { routeId: 'r-go-messages', presetRouteId: 'messages', label: 'Messages', protocol: 'anthropic-messages', baseUrl: 'https://relay.example.net', authMode: 'x-api-key', dialect: { autoCache: false }, headers: {}, confirmedHost: 'opencode.ai' },
+    ],
+    models: [
+      { modelProfileId: 'm-ds', routeId: 'r-go-chat', modelId: 'deepseek-v4-flash-vision-exp', displayName: 'DeepSeek V4 Flash Vision' },
+      { modelProfileId: 'm-glm', routeId: 'r-go-chat', modelId: 'glm-5.3-flash', displayName: '', overrides: { contextTokens: 200000, harnessPreset: 'reinforced' } },
+      { modelProfileId: 'm-muse', routeId: 'r-go-chat', modelId: 'muse-spark-1.3-contributor', displayName: 'Muse Spark（停用）', enabled: false },
+    ],
   },
   {
-    providerId: 'p-empty', displayName: '未配置凭据的端点', baseUrl: 'https://example.invalid/v1', model: '', hasCredential: false, configured: false, models: [],
+    providerId: 'p-empty', displayName: '未配置凭据的自定义端点', presetId: 'custom-openai', hasCredential: false,
+    routes: [{ routeId: 'r-empty', presetRouteId: '', label: 'Chat Completions', protocol: 'openai-chat-completions', baseUrl: 'https://example.invalid/v1', authMode: 'bearer', dialect: {}, headers: {} }],
+    models: [],
   },
 ];
 
-function model(modelProfileId, modelId, displayName, protocol, extra = {}) {
-  return {
-    modelProfileId, modelId, displayName, protocol, authMode: 'bearer', reasoningWire: 'none', contextTokens: 200000, inputTokens: 0, maxOutputTokens: 32000,
-    reasoningLevels: '', thinkingMode: 'provider-default', thinkingBudgetTokens: 0, continuationMode: 'none', configMode: 'auto', catalogKey: modelId,
-    catalogVersion: '2026-09', catalogSource: 'catalog', harnessPreset: 'balanced', clientToolCalling: 'none', inputModalities: 'text', outputModalities: 'text', toolCapabilities: '',
-    ...extra,
-  };
-}
+export const providers = projectProviders(accounts);
 
 function profileOf(id) {
   for (const provider of providers) for (const m of provider.models) if (m.modelProfileId === id) return { provider, model: m };
@@ -190,18 +197,18 @@ const baseUi = { pendingRequestIds: [], showReasoning: true, crossChatMemoryEnab
 
 /** Each fixture returns a fresh mutable world for the mock host. */
 export const fixtures = {
-  home: { label: '会话列表', build: () => ({ route: 'home', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  empty: { label: '空状态（无会话）', build: () => ({ route: 'home', providers, sessions: [], ui: { ...baseUi } }) },
+  home: { label: '会话列表', build: () => ({ route: 'home', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  empty: { label: '空状态（无会话）', build: () => ({ route: 'home', accounts: structuredClone(accounts), sessions: [], ui: { ...baseUi } }) },
   'new-session': { label: '空会话', build: () => {
     const fresh = session('s-new', '新会话', 'm-sonnet', { state: 'idle', preview: '' });
-    return { route: 'conversation', activeSessionId: 's-new', providers, sessions: [fresh, ...mainSessions()], ui: { ...baseUi } };
+    return { route: 'conversation', activeSessionId: 's-new', accounts: structuredClone(accounts), sessions: [fresh, ...mainSessions()], ui: { ...baseUi } };
   } },
-  reading: { label: '长文 + 推理 + 来源 + 校验', build: () => ({ route: 'conversation', activeSessionId: 's-reading', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  long: { label: '长会话（30 轮）', build: () => ({ route: 'conversation', activeSessionId: 's-long', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  streaming: { label: '流式回复（自动开始）', autoplay: 'stream', build: () => ({ route: 'conversation', activeSessionId: 's-reading', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  errors: { label: '错误与中断', build: () => ({ route: 'conversation', activeSessionId: 's-errors', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  branch: { label: '分支会话', build: () => ({ route: 'conversation', activeSessionId: 's-branch', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  providers: { label: 'Provider 页', build: () => ({ route: 'providers', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  settings: { label: '设置页', build: () => ({ route: 'settings', providers, sessions: mainSessions(), ui: { ...baseUi } }) },
-  unconfigured: { label: '首次使用（无 Provider）', build: () => ({ route: 'home', providers: [], sessions: [], ui: { ...baseUi } }) },
+  reading: { label: '长文 + 推理 + 来源 + 校验', build: () => ({ route: 'conversation', activeSessionId: 's-reading', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  long: { label: '长会话（30 轮）', build: () => ({ route: 'conversation', activeSessionId: 's-long', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  streaming: { label: '流式回复（自动开始）', autoplay: 'stream', build: () => ({ route: 'conversation', activeSessionId: 's-reading', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  errors: { label: '错误与中断', build: () => ({ route: 'conversation', activeSessionId: 's-errors', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  branch: { label: '分支会话', build: () => ({ route: 'conversation', activeSessionId: 's-branch', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  providers: { label: 'Provider 页', build: () => ({ route: 'providers', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  settings: { label: '设置页', build: () => ({ route: 'settings', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  unconfigured: { label: '首次使用（无 Provider）', build: () => ({ route: 'home', accounts: [], sessions: [], ui: { ...baseUi } }) },
 };

@@ -22,6 +22,7 @@ final class ReasoningPolicy {
     static final String WIRE_ANTHROPIC_EFFORT = "anthropic-effort";
 
     static final String THINKING_PROVIDER_DEFAULT = "provider-default";
+    static final String THINKING_ENABLED = "enabled";
     static final String THINKING_ADAPTIVE = "adaptive";
     static final String THINKING_DISABLED = "disabled";
     static final String THINKING_MANUAL = "manual";
@@ -51,7 +52,7 @@ final class ReasoningPolicy {
     static String normalizeThinkingMode(String value) {
         String v = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
         if (v.isEmpty()) return THINKING_PROVIDER_DEFAULT;
-        if (THINKING_PROVIDER_DEFAULT.equals(v) || THINKING_ADAPTIVE.equals(v)
+        if (THINKING_PROVIDER_DEFAULT.equals(v) || THINKING_ENABLED.equals(v) || THINKING_ADAPTIVE.equals(v)
                 || THINKING_DISABLED.equals(v) || THINKING_MANUAL.equals(v)) return v;
         throw new IllegalArgumentException("unsupported thinking mode");
     }
@@ -119,6 +120,7 @@ final class ReasoningPolicy {
         // endpoint also implements Anthropic's optional output_config.effort field. This matters for
         // third-party Anthropic-compatible gateways that implement thinking but not effort.
         if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol)) applyAnthropicThinking(body, provider);
+        else if (OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(provider.protocol)) applyChatThinking(body, provider);
 
         if (DEFAULT.equals(level)) return;
         if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol)) {
@@ -137,6 +139,15 @@ final class ReasoningPolicy {
         } else if (WIRE_OPENAI_CHAT_EFFORT.equals(wire)) {
             body.put("reasoning_effort", level);
         }
+    }
+
+    /** Chat Completions has no standard thinking switch; only a route that declares one gets the field. */
+    private static void applyChatThinking(JSONObject body, ChatDatabase.Provider provider) throws Exception {
+        String mode = normalizeThinkingMode(provider.thinkingMode);
+        if (THINKING_PROVIDER_DEFAULT.equals(mode)) return;
+        RouteDialect dialect = provider.dialect == null ? RouteDialect.defaults(provider.protocol) : provider.dialect;
+        if (!dialect.carriesThinking(provider.protocol, mode)) throw new IllegalArgumentException("thinking mode " + mode + " is not carried by this route");
+        body.put("thinking", new JSONObject().put("type", THINKING_ENABLED.equals(mode) ? "enabled" : "disabled"));
     }
 
     private static void applyAnthropicThinking(JSONObject body, ChatDatabase.Provider provider) throws Exception {

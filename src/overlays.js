@@ -59,7 +59,7 @@ export function renderDrawer(view) {
       todayStrip(view),
       h('div', { class: 'drawer-list' }, (view.sessions || []).length ? sessionList(view) : h('p', { class: 'drawer-empty', text: '还没有会话' })),
       h('footer', { class: 'drawer-foot' },
-        h('button', { type: 'button', class: `drawer-link${view.route === 'providers' ? ' active' : ''}`, dataset: { action: 'nav', route: 'providers' } }, icon('sliders'), 'Provider 与模型'),
+        h('button', { type: 'button', class: `drawer-link${view.route === 'providers' ? ' active' : ''}`, dataset: { action: 'nav', route: 'providers' } }, icon('sliders'), '账号与模型'),
         h('button', { type: 'button', class: `drawer-link${view.route === 'stats' ? ' active' : ''}`, dataset: { action: 'nav', route: 'stats' } }, icon('chart'), '统计'),
         h('button', { type: 'button', class: `drawer-link${view.route === 'settings' ? ' active' : ''}`, dataset: { action: 'nav', route: 'settings' } }, icon('gear'), '设置')))));
   root.classList.toggle('open', drawerOpen);
@@ -373,14 +373,14 @@ export function openConfirmDialog({ title, message, confirmText = '确认', dang
   confirm.focus();
 }
 
-export function openTextDialog({ title, value = '', confirmText = '保存', onConfirm }) {
+export function openTextDialog({ title, value = '', confirmText = '保存', note = '', inputmode = '', onConfirm }) {
   closeDialog(true);
-  const input = h('input', { class: 'modal-input', type: 'text', value, maxlength: '200', autocomplete: 'off', 'aria-label': title || '输入内容' });
+  const input = h('input', { class: 'modal-input', type: 'text', value, maxlength: '400', inputmode: inputmode || undefined, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': title || '输入内容' });
   const cancel = button('取消', 'modal-cancel', {}, 'btn');
   const confirm = button(confirmText, 'modal-confirm', {}, 'btn primary');
   const overlay = h('div', { class: 'modal-backdrop', dataset: { moyuModal: '1' } },
     h('section', { class: 'modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': title || '编辑' },
-      h('h2', { text: title || '编辑' }), input, h('div', { class: 'modal-actions' }, cancel, confirm)));
+      h('h2', { text: title || '编辑' }), note ? h('p', { class: 'modal-note', text: note }) : null, input, h('div', { class: 'modal-actions' }, cancel, confirm)));
   const submit = () => {
     const next = String(input.value || '').trim();
     if (!next) { input.focus(); return; }

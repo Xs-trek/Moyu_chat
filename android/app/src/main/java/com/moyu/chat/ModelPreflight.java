@@ -114,6 +114,10 @@ final class ModelPreflight {
         out.authMode = p.authMode; out.reasoningWire = p.reasoningWire; out.model = p.model;
         out.thinkingMode = p.thinkingMode; out.thinkingBudgetTokens = p.thinkingBudgetTokens;
         out.contextTokens = p.contextTokens; out.inputTokens = p.inputTokens; out.maxOutputTokens = p.maxOutputTokens;
+        out.presetId = p.presetId; out.routeId = p.routeId; out.dialect = p.dialect; out.headers = p.headers;
+        out.serviceTier = p.serviceTier;
+        // Hidden calls set their own small cap, which must reach the wire whatever the deployment declared.
+        out.sendOutputCap = true;
         return out;
     }
 }

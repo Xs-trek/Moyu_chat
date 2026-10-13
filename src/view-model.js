@@ -92,7 +92,7 @@ export function modelChoices(view) {
   const choices = [];
   for (const provider of view.providers || []) {
     if (!provider?.hasCredential) continue;
-    for (const model of provider.models || []) choices.push({ provider, model });
+    for (const model of provider.models || []) if (model.enabled !== false) choices.push({ provider, model });
   }
   return choices;
 }
