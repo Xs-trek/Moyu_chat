@@ -53,7 +53,11 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 - [ ] OpenCode Go 的实际请求能通：分别用一个 Chat 模型（如 glm-5.3-flash）、一个 Messages 模型（如 qwen3.8-flash）各发一轮。若返回 30x 错误，说明官方地址变了，把路线地址改成文档里的新地址（应用不再跟随重定向）。
 - [ ] 模型编辑页“从目录选”：能力列表逐项显示“目录 · 未实测”；改一项后显示“手动”，可恢复推荐值。
 - [ ] 改一条已有 Key 的路线的域名：账号页出现“确认域名”，确认前发送会提示需要确认，确认后正常。
-- [ ] DeepSeek（如有 Key）：思考模式下开启工具调用的会话连续两轮工具调用不报 400。
+- [ ] 新建账号保存后不关页面，再点一次保存、或填完 Key 再保存：不报错，路线数量不变，已加的模型还在。
+- [ ] DeepSeek（如有 Key）：新建账号带出 Responses / Chat Completions / Anthropic 三条路线，新模型默认挂在 Responses 上；`deepseek-flash` 在 Responses 上能发一轮、思考内容可见，推理档位选“none”后不再思考。
+- [ ] DeepSeek Responses：开启工具调用的会话连续两轮工具调用不报 400（推理条目按原样回传）。
+- [ ] DeepSeek Chat Completions：思考模式下开启工具调用的会话连续两轮工具调用不报 400。
+- [ ] 已有的 DeepSeek 账号：“添加路线”里出现“DeepSeek · Responses”，添加后可以从目录选 `deepseek-flash`。
 - [ ] 断开代理后发送：提示“检查网络或代理”，不是 Key 无效。
 - [ ] 停用一个模型：它从新会话和模型选择里消失，账号页仍可编辑。
 

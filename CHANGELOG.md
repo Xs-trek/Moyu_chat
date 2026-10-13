@@ -4,6 +4,14 @@
 
 Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 1（beta 线重新计数，库文件 `moyu-beta.db`）。
 
+### 账号保存修复与 DeepSeek Responses（实机反馈 4）
+
+- 修复：新建账号后在同一个编辑页再次保存（或填完 Key 后再保存）报 `UNIQUE constraint failed: provider_routes…`。原因是原生先回保存结果、后推视图，编辑页拿不到刚保存的路线 ID，第二次保存把同样的路线当成新路线插入；数据库又是先插入新行、后删除旧行。现在：原生先推视图再回结果（`provider.save`、`model.save`）；保存结果按提交顺序返回路线 ID，编辑页直接写回卡片；与已有路线协议和地址完全相同的新路线沿用原路线（ID、域名确认和模型都保留）；被去掉的路线先删再写。
+- DeepSeek 预设新增 Responses 路线（`https://api.deepseek.com` → `…/responses`），排在第一位，作为新模型的默认路线；Chat Completions 和 Anthropic 格式保留。目录：`deepseek-flash` 在 Responses 上用 `reasoning.effort`（`none` 关闭思考，`low` / `high` / `max`），服务端不保存对话，同一回合的工具轮次按原样回传推理条目。
+- DeepSeek 目录去掉 `deepseek-v4-pro`：自 2026-09-14 起它的请求由 V4.1-Flash 按 Flash 价格处理，直到 V4.1-Pro 发布。已添加的 V4 Pro 模型仍可用，能力回到默认值。
+- 路线按添加顺序排列（同一次保存里按提交顺序），预设路线的顺序即默认顺序。
+- “添加路线”先列出这个账号还没有的预设路线（带目录），再列出只选协议的自定义路线；预设新增路线后，已有账号可以直接补上。
+
 ### 账号、路线与模型配置（provider-core）
 
 数据库仍是 schema 1，但布局变了：旧布局的本机数据（账号、模型、会话）在首次启动时清空重建（`PRAGMA application_id` 标记布局版本）。说明见 `docs/provider-config.md`。

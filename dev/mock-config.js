@@ -108,10 +108,14 @@ export function makeConfigIntents(world) {
       a.displayName = String(p.displayName || '').trim() || data.presets.find((x) => x.id === a.presetId)?.name || a.displayName;
       if (p.routes) {
         if (!p.routes.length) throw new Error('账号至少需要一条路线');
+        const claimed = new Set(p.routes.map((r) => r.routeId).filter(Boolean));
         const next = p.routes.map((r) => {
-          const old = r.routeId ? a.routes.find((x) => x.routeId === r.routeId) : null;
-          if (r.routeId && !old) throw new Error('路线不存在');
           const base = trim(r.baseUrl);
+          let old = r.routeId ? a.routes.find((x) => x.routeId === r.routeId) : null;
+          if (r.routeId && !old) throw new Error('路线不存在');
+          // Like native: a new route identical to a stored one this save does not keep reuses it (id, models).
+          if (!r.routeId) old = a.routes.find((x) => !claimed.has(x.routeId) && x.protocol === r.protocol && trim(x.baseUrl) === base) || null;
+          if (old) claimed.add(old.routeId);
           if (!/^https:\/\/[^/]+/.test(base)) throw new Error(`路线「${r.label || r.protocol}」：Base URL 必须使用 HTTPS`);
           if (r.protocol === MESSAGES && /\/v1$/.test(base)) throw new Error(`路线「${r.label}」：Anthropic 格式的 Base URL 不含末尾的 /v1`);
           for (const name of Object.keys(r.headers || {})) if (/key|token|secret|auth|cookie|session|password/i.test(name)) throw new Error(`不能在附加请求头里设置 ${name}`);

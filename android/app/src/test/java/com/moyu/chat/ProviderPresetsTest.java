@@ -138,6 +138,22 @@ public class ProviderPresetsTest {
         assertEquals(ReasoningPolicy.THINKING_DISABLED, m.thinkingMode);
     }
 
+    @Test public void deepSeekDefaultsToItsStatelessResponsesRouteForFlashOnly() {
+        ProviderPresets.Preset deepseek = ProviderPresets.get().preset("deepseek");
+        assertEquals("the first preset route is the default for new models", "responses", deepseek.routes.get(0).id);
+        ChatDatabase.Route route = route("deepseek", "responses");
+        assertEquals("https://api.deepseek.com/responses", ProviderEndpoint.requestUrl(route.baseUrl, OpenAiCompatibleTransport.RESPONSES));
+        assertFalse(RouteDialect.parse(route.protocol, route.dialect).store);
+        ChatDatabase.ModelProfile flash = model(route, "deepseek-flash", "{}");
+        assertEquals(ReasoningPolicy.WIRE_OPENAI_RESPONSES, flash.reasoningWire);
+        assertEquals("effort none is the thinking switch on Responses", "none,low,high,max", flash.reasoningLevels);
+        assertEquals(ClientToolRuntime.OPENAI_RESPONSES, flash.clientToolCalling);
+        assertEquals(ProviderContinuationPolicy.NONE, flash.continuationMode);
+        assertNull("Responses serves deepseek-flash only; V4 Pro is an alias routed to Flash",
+                ProviderPresets.get().catalog(route, "deepseek-v4-pro"));
+        assertNull(ProviderPresets.get().catalog(route("deepseek", "chat"), "deepseek-v4-pro"));
+    }
+
     @Test public void openCodeRoutesShareOneKeyAcrossThreeProtocols() {
         ProviderPresets.Preset go = ProviderPresets.get().preset("opencode-go");
         HashSet<String> protocols = new HashSet<>();

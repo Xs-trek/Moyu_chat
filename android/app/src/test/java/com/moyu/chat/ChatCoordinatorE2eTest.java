@@ -1163,6 +1163,46 @@ public class ChatCoordinatorE2eTest {
         await("host confirmed", () -> routeView(providerId, responsesRoute).optBoolean("hostConfirmed", false));
     }
 
+    @Test public void savingTheSameRouteFormTwiceUpdatesInsteadOfDuplicating() throws Exception {
+        String createId = post("provider.save", new JSONObject().put("presetId", "deepseek"));
+        JSONObject created = awaitResult(createId);
+        assertTrue("preset account must save: " + created, created.optBoolean("ok"));
+        String providerId = created.getJSONObject("data").getString("providerId");
+        java.util.List<ChatDatabase.Route> routes = app.database().listRoutes(providerId);
+        assertEquals(3, routes.size());
+        assertEquals("routes keep the preset order; Responses is the default", OpenAiCompatibleTransport.RESPONSES, routes.get(0).protocol);
+        // The editor reads the saved account from the view when the result arrives, so the view comes first.
+        synchronized (host.envelopes) {
+            int result = -1, view = -1;
+            for (int i = 0; i < host.envelopes.size(); i++) {
+                JSONObject e = host.envelopes.get(i);
+                if ("intent.result".equals(e.optString("type")) && createId.equals(e.optString("requestId"))) result = i;
+                if ("view.full".equals(e.optString("type")) && e.optJSONObject("view").optJSONArray("providers").length() == 1 && result < 0) view = i;
+            }
+            assertTrue("view with the new account precedes the result", view >= 0 && view < result);
+        }
+        String profileId = saveModel(providerId, routes.get(0).id, "deepseek-flash", "", new JSONObject());
+
+        // A stale form resubmits the preset routes without ids: they are the stored routes, not new ones.
+        JSONArray resubmit = new JSONArray();
+        for (ChatDatabase.Route r : routes) resubmit.put(new JSONObject().put("presetRouteId", r.presetRouteId)
+                .put("label", r.label).put("protocol", r.protocol).put("baseUrl", r.baseUrl).put("authMode", r.authMode));
+        JSONObject again = awaitResult(post("provider.save", new JSONObject().put("providerId", providerId).put("routes", resubmit)));
+        assertTrue("resubmitting must not hit the unique index: " + again, again.optBoolean("ok"));
+        JSONArray ids = again.getJSONObject("data").getJSONArray("routeIds");
+        for (int i = 0; i < routes.size(); i++) assertEquals("ids come back in submitted order", routes.get(i).id, ids.getString(i));
+        assertEquals(3, app.database().listRoutes(providerId).size());
+        assertNotNull("the model on the reused route survives", app.database().getModelProfile(profileId));
+
+        // Removing a route and adding an identical one in the same save also reuses it.
+        JSONArray swapped = new JSONArray().put(new JSONObject().put("routeId", routes.get(1).id).put("protocol", routes.get(1).protocol).put("baseUrl", routes.get(1).baseUrl))
+                .put(new JSONObject().put("protocol", routes.get(0).protocol).put("baseUrl", routes.get(0).baseUrl));
+        JSONObject swap = awaitResult(post("provider.save", new JSONObject().put("providerId", providerId).put("routes", swapped)));
+        assertTrue("swap must save: " + swap, swap.optBoolean("ok"));
+        assertEquals(2, app.database().listRoutes(providerId).size());
+        assertNotNull(app.database().getModelProfile(profileId));
+    }
+
     private JSONObject routeView(String providerId, String routeId) {
         JSONObject view = latestView();
         JSONArray providers = view == null ? null : view.optJSONArray("providers");

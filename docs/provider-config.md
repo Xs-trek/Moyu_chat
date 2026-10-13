@@ -12,7 +12,9 @@
 
 会话（Session）在创建或切换模型时冻结模型能力和协议；路线（地址、鉴权、协议细节、请求头）实时跟随，因为它描述的是端点，不是这段对话。
 
-同一把 Key 的多种协议（例如 DeepSeek 的 OpenAI 格式和 Anthropic 格式，OpenCode 的 Chat / Responses / Messages）就是同一个账号下的多条路线。
+同一把 Key 的多种协议（例如 DeepSeek 的 Responses / Chat Completions / Anthropic 格式，OpenCode 的 Chat / Responses / Messages）就是同一个账号下的多条路线。路线按添加顺序排列，预设里的第一条路线是新模型的默认路线；“添加路线”会先列出账号还没有的预设路线。
+
+保存账号时提交的是完整的路线集合：带 `routeId` 的更新原路线；不带的若与一条没被保留的已有路线协议和 Base URL 完全相同，就沿用那条路线（ID、域名确认和模型都保留），否则新建；被去掉的路线先删除再写入。
 
 ### Base URL 写法
 

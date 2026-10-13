@@ -210,6 +210,9 @@ async function saveAccount({ thenKey = false } = {}) {
   if (!data) return;
   const created = !editor.providerId;
   editor.providerId = data.providerId;
+  // The cards now stand for saved routes; a later save must update them, not add them again.
+  const cards = [...editor.node.querySelectorAll('.route-card:not([data-leaving])')];
+  (data.routeIds || []).forEach((id, i) => { if (cards[i] && id) cards[i].dataset.routeId = id; });
   if (thenKey || !data.hasCredential) {
     postIntent('provider.credential.edit', { providerId: data.providerId });
     if (thenKey || created) {
@@ -223,10 +226,18 @@ async function saveAccount({ thenKey = false } = {}) {
   setNotice({ level: 'info', text: '已保存账号' });
 }
 
-function addRoute(protocol) {
+/** Preset routes this account does not have yet (e.g. a route added to the preset after the account was created). */
+function missingPresetRoutes() {
+  const present = new Set([...editor.node.querySelectorAll('.route-card:not([data-leaving])')].map((card) => card.dataset.presetRouteId).filter(Boolean));
+  return routeDraftsFromPreset(editor.preset).filter((r) => r.baseUrl && !present.has(r.presetRouteId));
+}
+
+function addRoute(value) {
   const list = editor.node.querySelector('[data-routes]');
+  const draft = value.startsWith('preset:') ? missingPresetRoutes().find((r) => r.presetRouteId === value.slice(7)) : null;
+  const protocol = draft?.protocol || value;
   const authMode = optionsFor('authMode')[protocol === 'anthropic-messages' ? 1 : 0]?.value || '';
-  const card = routeCard({ key: `new-${++tmpSeq}`, label: PROTOCOL_SHORT[protocol] || protocol, protocol, baseUrl: '', authMode, dialect: {}, headers: {} }, editor.preset);
+  const card = routeCard(draft || { key: `new-${++tmpSeq}`, label: PROTOCOL_SHORT[protocol] || protocol, protocol, baseUrl: '', authMode, dialect: {}, headers: {} }, editor.preset);
   card.classList.add('fx-rise');
   list.append(card);
   card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -463,8 +474,12 @@ document.addEventListener('click', (event) => {
   else if (action === 'ed-open-url') postIntent('external.open', { url: target.dataset.url });
   else if (action === 'ed-key') saveAccount({ thenKey: true });
   else if (action === 'ed-route-add') {
-    openChoice({ title: '添加路线', note: '选择这条路线的协议；创建后不能更改。', value: '',
-      options: optionsFor('protocol').map((o) => ({ value: o.value, label: PROTOCOL_SHORT[o.value] || o.value, hint: o.hint })), onPick: addRoute });
+    const presetName = editor.preset?.name || '预设';
+    openChoice({ title: '添加路线', note: '预设路线带有已审核的模型目录；也可以只选协议，自己填地址。协议创建后不能更改。', value: '',
+      options: [
+        ...missingPresetRoutes().map((r) => ({ value: `preset:${r.presetRouteId}`, label: `${presetName} · ${r.label}`, hint: r.baseUrl })),
+        ...optionsFor('protocol').map((o) => ({ value: o.value, label: PROTOCOL_SHORT[o.value] || o.value, hint: o.hint }))],
+      onPick: addRoute });
   }
   else if (action === 'ed-route-delete') deleteRoute(target.closest('.route-card'));
   else if (action === 'ed-account-delete') {

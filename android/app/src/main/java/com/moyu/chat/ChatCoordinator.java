@@ -227,8 +227,9 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.delete": deleteSession(required(p, "localSessionId")); break;
                 case "chat.message.edit": editMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
                 case "chat.message.rollback": rollbackMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
-                // Configuration editors live in the WebView; only the API Key has a native entry.
-                case "provider.save": result(requestId, true, null, config.saveAccount(p)); emitView(); return;
+                // Configuration editors live in the WebView; only the API Key has a native entry. Saves push
+                // the view before the result, so the editor's follow-up already sees the saved rows (ids).
+                case "provider.save": { JSONObject saved = config.saveAccount(p); emitView(); result(requestId, true, null, saved); return; }
                 case "provider.delete": config.deleteAccount(required(p, "providerId")); break;
                 case "provider.credential.edit": {
                     ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
@@ -237,7 +238,7 @@ final class ChatCoordinator implements AutoCloseable {
                     break;
                 }
                 case "route.host.confirm": config.confirmHost(required(p, "routeId")); break;
-                case "model.save": result(requestId, true, null, config.saveModel(p)); emitView(); return;
+                case "model.save": { JSONObject saved = config.saveModel(p); emitView(); result(requestId, true, null, saved); return; }
                 case "model.delete": config.deleteModel(required(p, "modelProfileId")); break;
                 case "model.enabled.set": config.setModelEnabled(required(p, "modelProfileId"), p.optBoolean("enabled", true)); break;
                 case "model.editor.options": result(requestId, true, null, ProviderConfigService.editorOptions()); return; // read-only

@@ -280,6 +280,10 @@ if (/Toast\.makeText|import android\.widget\.Toast/.test(mainActivity) || !mainA
 if (!mainActivity.includes('public void openCredentialEditor(ChatDatabase.Provider provider, String hosts)') || !mainActivity.includes('只会发往：') || !mainActivity.includes('InputType.TYPE_TEXT_VARIATION_PASSWORD') || /AlertDialog\.Builder/.test(mainActivity.replace(/openCredentialEditor[\s\S]*?dialog\.show\(\);/, ''))) fail('the API Key is the only native form: a password field saved straight to ChatSecretStore');
 if (!coordinator.includes('case "provider.credential.edit"') || /optString\("(apiKey|key|secret)"/.test(config)) fail('provider.save must never accept a key from the WebView; keys go through provider.credential.edit');
 if (!config.includes('static JSONObject editorOptions()') || !editors.includes("requestIntent('model.editor.options'")) fail('editor choice vocabularies must come from native (the validators own them)');
+for (const intent of ['provider.save', 'model.save']) {
+  if (!new RegExp(`case "${intent.replace('.', '\\.')}": \\{ JSONObject saved = [^;]+; emitView\\(\\); result\\(requestId, true, null, saved\\)`).test(coordinatorOnly)) fail(`${intent} must push the view before its result, so the editor sees the saved ids`);
+}
+if (!config.includes('claimed.contains(stored.id)') || !editors.includes('cards[i].dataset.routeId = id')) fail('a resubmitted route form must update the stored routes, never insert duplicates (UNIQUE provider_id, protocol, base_url)');
 if (!config.includes('这条路线上已有 Model ID') || !config.includes('ModelProfileValidator.validateResolvedProfile(route, m)')) fail('duplicate Model IDs and strict deployment validation must fail before low-level SQLite/runtime errors');
 
 const styles = read('src/styles.css');

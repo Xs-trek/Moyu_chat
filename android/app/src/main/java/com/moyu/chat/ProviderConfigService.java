@@ -79,9 +79,11 @@ final class ProviderConfigService {
         db.saveProviderRoutes(account, routes, profiles);
         // A host the stored key was already confirmed for stays trusted for this account's other routes;
         // any other host waits for an explicit confirmation before the key is sent there.
+        // routeIds follow the submitted order, so the editor can give its new route cards their ids.
         JSONArray routeIds = new JSONArray();
-        for (ChatDatabase.Route route : db.listRoutes(account.id)) {
-            routeIds.put(route.id);
+        List<ChatDatabase.Route> stored = db.listRoutes(account.id);
+        for (ChatDatabase.Route route : routes == null ? stored : routes) routeIds.put(route.id);
+        for (ChatDatabase.Route route : stored) {
             String host = ProviderEndpoint.host(route.baseUrl);
             if (!host.equals(db.confirmedHost(route.id)) && trustedHosts.contains(host)) db.confirmRouteHost(route.id, host);
         }
@@ -106,6 +108,12 @@ final class ProviderConfigService {
         HashSet<String> identities = new HashSet<>();
         if (in.length() == 0) throw new IllegalArgumentException("账号至少需要一条路线");
         if (in.length() > 8) throw new IllegalArgumentException("一个账号最多 8 条路线");
+        HashSet<String> claimed = new HashSet<>();
+        for (int i = 0; i < in.length(); i++) {
+            JSONObject r = in.optJSONObject(i);
+            String id = r == null ? "" : r.optString("routeId", "").trim();
+            if (!id.isEmpty()) claimed.add(id);
+        }
         for (int i = 0; i < in.length(); i++) {
             JSONObject r = in.optJSONObject(i);
             if (r == null) throw new IllegalArgumentException("路线格式无效");
@@ -141,6 +149,17 @@ final class ProviderConfigService {
             catch (IllegalArgumentException invalid) { throw new IllegalArgumentException("路线「" + route.label + "」：" + invalid.getMessage()); }
             if (!transports.supports(route.protocol)) throw new IllegalArgumentException("当前不支持协议 " + route.protocol);
             if (!identities.add(route.protocol + "\n" + route.baseUrl)) throw new IllegalArgumentException("两条路线的协议和 Base URL 完全相同");
+            if (routeId.isEmpty()) {
+                // A new route identical to a stored one that this save does not keep (a form saved twice, or a
+                // route removed and re-added) is that route: keep its id, host confirmation and models.
+                for (ChatDatabase.Route stored : existing.values()) {
+                    if (claimed.contains(stored.id) || !stored.protocol.equals(route.protocol) || !stored.baseUrl.equals(route.baseUrl)) continue;
+                    route.id = stored.id;
+                    if (route.presetRouteId.isEmpty()) route.presetRouteId = stored.presetRouteId;
+                    claimed.add(stored.id);
+                    break;
+                }
+            }
             out.add(route);
         }
         return out;

@@ -948,7 +948,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
 
     /**
      * Atomically saves an account, its complete route set and the profiles re-resolved for it. Routes
-     * missing from {@code routes} are deleted together with their models (ON DELETE CASCADE).
+     * missing from {@code routes} are deleted together with their models (ON DELETE CASCADE) before the
+     * set is written, so a route may take over a removed route's protocol + Base URL.
      */
     public synchronized void saveProviderRoutes(Provider p, List<Route> routes, List<ModelProfile> profiles) {
         if (p == null || p.id == null || p.id.trim().isEmpty()) throw new IllegalArgumentException("provider required");
@@ -959,12 +960,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             java.util.HashSet<String> keep = new java.util.HashSet<>();
             if (routes != null) for (Route route : routes) {
                 if (!p.id.equals(route.providerId)) throw new IllegalArgumentException("route belongs to another provider");
-                upsert(db, "provider_routes", "route_id", route.id, routeValues(route));
                 keep.add(route.id);
             }
             if (routes != null) for (Route existing : listRoutes(db, p.id)) {
                 if (!keep.contains(existing.id)) db.delete("provider_routes", "route_id=?", new String[]{existing.id});
             }
+            if (routes != null) for (Route route : routes) upsert(db, "provider_routes", "route_id", route.id, routeValues(route));
             if (profiles != null) for (ModelProfile profile : profiles) {
                 if (profile == null || !keep.contains(profile.routeId)) continue;
                 if (!p.id.equals(profile.providerId)) throw new IllegalArgumentException("model profile belongs to another provider");
@@ -1024,7 +1025,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     private static List<Route> listRoutes(SQLiteDatabase db, String providerId) {
         ArrayList<Route> out = new ArrayList<>();
         if (providerId == null) return out;
-        try (Cursor c = db.rawQuery("SELECT " + ROUTE_COLUMNS + " FROM provider_routes r JOIN providers p ON p.provider_id=r.provider_id WHERE r.provider_id=? ORDER BY r.created_at,r.label", new String[]{providerId})) {
+        try (Cursor c = db.rawQuery("SELECT " + ROUTE_COLUMNS + " FROM provider_routes r JOIN providers p ON p.provider_id=r.provider_id WHERE r.provider_id=? ORDER BY r.created_at,r.rowid", new String[]{providerId})) {
             while (c.moveToNext()) out.add(readRoute(c));
         }
         return out;

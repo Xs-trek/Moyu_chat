@@ -45,7 +45,8 @@ export type MoyuChatIntent =
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
   /**
    * Account editor: name, preset (creation only) and, when present, the complete route set (omitted routes are
-   * deleted with their models). Result `data: { providerId, hasCredential, routeIds }`. Never carries a key.
+   * deleted with their models; a new route identical to a stored one reuses it). Native pushes the view before
+   * the result. Result `data: { providerId, hasCredential, routeIds }`, `routeIds` in the submitted order. Never carries a key.
    */
   | UiIntent<'provider.save', AccountForm>
   | UiIntent<'provider.delete', { providerId: string }>
