@@ -9,6 +9,27 @@ const world = fixture.build();
 world.theme = ['system', 'light', 'dark'].includes(params.get('theme')) ? params.get('theme') : 'system';
 world.tone = ['sage', 'warm', 'neutral'].includes(params.get('tone')) ? params.get('tone') : 'sage';
 world.delight = params.get('delight') !== 'off';
+
+// ?motion=reduce emulates Android "remove animations" (WebView reports prefers-reduced-motion: reduce):
+// the media block's rules are forced on and matchMedia answers yes, so the shipped CSS and JS take that path.
+if (params.get('motion') === 'reduce') {
+  const query = '(prefers-reduced-motion: reduce)';
+  const nativeMatch = window.matchMedia.bind(window);
+  window.matchMedia = (q) => (q.replace(/\s+/g, ' ').trim() === query ? { matches: true, media: q, addEventListener() {}, removeEventListener() {} } : nativeMatch(q));
+  const force = () => {
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try { rules = sheet.cssRules; } catch { continue; }
+      for (const rule of rules) {
+        if (!(rule instanceof CSSMediaRule) || !rule.conditionText.includes('prefers-reduced-motion: reduce')) continue;
+        const forced = new CSSStyleSheet();
+        forced.replaceSync([...rule.cssRules].map((r) => r.cssText).join('\n'));
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, forced];
+      }
+    }
+  };
+  if (document.readyState === 'complete') force(); else window.addEventListener('load', force);
+}
 let revision = 0;
 let stream = null;
 const PATCH_MS = 50; // ChatCoordinator caps streaming views at 20 fps.
@@ -389,7 +410,9 @@ function devPanel() {
     <label>主题<select data-dev="theme">${themes}</select></label>
     <div class="dev-row"><button type="button" data-dev="stream">流式</button><button type="button" data-dev="stream-web">流式+联网</button>
     <button type="button" data-dev="stream-fail">中途出错</button><button type="button" data-dev="stop">中断</button></div>
+    <label><input type="checkbox" data-dev="reduce"${params.get('motion') === 'reduce' ? ' checked' : ''}> 模拟系统“移除动画”</label>
     <small>窄屏预览：浏览器 DevTools 设备模式，或缩窄窗口到 360–430px。</small></div>`;
+  panel.querySelector('[data-dev="reduce"]').addEventListener('change', (event) => { if (event.target.checked) params.set('motion', 'reduce'); else params.delete('motion'); location.search = params.toString(); });
   panel.querySelector('.dev-panel-toggle').addEventListener('click', () => panel.classList.toggle('open'));
   panel.querySelector('[data-dev="fixture"]').addEventListener('change', (event) => { params.set('f', event.target.value); location.search = params.toString(); });
   panel.querySelector('[data-dev="theme"]').addEventListener('change', (event) => { params.set('theme', event.target.value); history.replaceState(null, '', `?${params}`); world.theme = event.target.value; emitView(); });

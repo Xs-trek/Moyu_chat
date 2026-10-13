@@ -53,7 +53,10 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     }
 
     private void createWebView() {
-        WebView next = new WebView(this); next.setBackgroundColor(Color.TRANSPARENT);
+        WebView next = new WebView(this);
+        // Opaque, on the --canvas token: any frame the page has not painted yet (cold start, a large layer
+        // re-rastered during a page transition) shows the page ground, never black or a transparent hole.
+        next.setBackgroundColor(windowCanvas != 0 ? windowCanvas : canvasColor(systemDark(), "sage"));
         webView = next;
         setContentView(next, new ViewGroup.LayoutParams(-1, -1));
         configureWebView();
@@ -250,6 +253,11 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
     }
 
     private String appliedAppearance = "";
+    private int windowCanvas = 0;
+
+    private boolean systemDark() {
+        return (getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+    }
 
     /** Keeps status/navigation bars and the pre-WebView window background on the same canvas token as the UI. */
     @Override public void applyAppearance(String resolvedTheme, String tone) {
@@ -259,6 +267,8 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             if (key.equals(appliedAppearance)) return;
             appliedAppearance = key;
             int canvas = canvasColor(dark, tone);
+            windowCanvas = canvas;
+            if (webView != null) webView.setBackgroundColor(canvas);
             Window window = getWindow();
             window.setStatusBarColor(canvas);
             window.setNavigationBarColor(canvas);

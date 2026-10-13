@@ -371,6 +371,13 @@ for (const block of styles.matchAll(/@keyframes[^{]+\{((?:[^{}]*\{[^}]*\})*)\s*\
 if (!styles.includes('--d-page: 380ms') || !styles.includes('--e-decel:') || !styles.includes('--e-accel:') || !styles.includes('.segmented::before') || !styles.includes('@keyframes fx-unfold { from { grid-template-rows: 0fr;') || !styles.includes('details::details-content')) fail('motion tokens, the sliding segmented pill and height-animated disclosure must stay in place');
 if (!render.includes('function swapPage(') || !render.includes("root.insertBefore(page, current)") || !styles.includes('#app > .page-old') || !styles.includes('@keyframes fx-push-in')) fail('page changes must keep the outgoing page during a push / pop transition');
 if (!/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?animation: fx-fade 160ms/.test(styles) || !morphJs.includes('export function reducedMotion()')) fail('reduced motion must fall back to short cross-fades, not to instant changes');
+// First-frame safety: a dark veil must be invisible unless its animation is running (a skipped
+// animation, e.g. under reduced motion, otherwise leaves a black page), and under reduced motion only the
+// top page fades while the one underneath holds fully opaque.
+for (const rule of styles.matchAll(/([^{}]+){([^{}]*background:s*#000[^{}]*)}/g)) if (!/(^|;)s*opacity:s*0s*(;|$)/.test(rule[2])) fail(`dark overlay "${rule[1].trim()}" must default to opacity: 0`);
+const reduced = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'));
+if (!reduced.includes('.fx-leave-forward::after, .fx-enter-back::after') || !reduced.includes('content: none !important') || !reduced.includes('.fx-enter-back, .fx-leave-forward, .fx-leave-swap { animation: fx-hold') || !styles.includes('.fx-leave-swap { animation: fx-hold')) fail('page transitions must never fade both pages at once or show the dimming veil without its animation');
+if (mainActivity.includes('setBackgroundColor(Color.TRANSPARENT)') || !mainActivity.includes('if (webView != null) webView.setBackgroundColor(canvas);')) fail('the WebView must have an opaque --canvas background so unpainted frames are never black');
 if (!morphJs.includes('export function flip(') || !overlays.includes("flip(drawerOpen ? root.querySelector('.drawer-list') : null")) fail('list reorders and removals must glide (FLIP)');
 if (/backdrop-filter|filter:\s*blur/.test(styles)) fail('avoid blur filters: they are expensive in Android WebView');
 if (/requestAnimationFrame\(function loop|setInterval\(/.test(ui)) fail('UI must not run perpetual JS animation loops');
@@ -381,6 +388,9 @@ const syncTask = uiGradle.slice(uiGradle.indexOf("tasks.register('syncMoyuChatUi
 if (!syncTask.includes("include 'index.html'") || !syncTask.includes("include 'src/**'") || /include\s+'(?!index\.html'|src\/\*\*')/.test(syncTask)) fail('syncMoyuChatUi must package only index.html and src/**');
 if (/dev\//.test(read('index.html'))) fail('shipped index.html must not reference the dev/ preview');
 walk(uiRoot, '.js', (file, text) => { if (/from\s+['"]\.\.\/dev\//.test(text) || /__mock/.test(text)) fail(`${file}: shipped UI must not import the dev/ mock host`); });
+
+const previewHtml = read('dev/preview.html');
+for (const id of [...read('index.html').matchAll(/<div id="([\w-]+)"/g)].map((m) => m[1])) if (!previewHtml.includes(`id="${id}"`)) fail(`dev/preview.html is missing #${id}: the preview must mount the same containers as index.html`);
 
 const manifest = read('android/app/src/main/AndroidManifest.xml');
 if (!manifest.includes('android:allowBackup="false"')) fail('Android backup must remain disabled for local chat data/secrets');

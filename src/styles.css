@@ -651,11 +651,15 @@ h1, h2, h3, p { margin: 0; }
 .fx-leave-forward { animation: fx-push-under var(--d-page) var(--e-decel) forwards; }
 .fx-enter-back { animation: fx-pop-under var(--d-medium) var(--e-standard) both; }
 #app > .fx-leave-back { z-index: 2; box-shadow: var(--lift); animation: fx-pop-out var(--d-medium) var(--e-standard) forwards; }
-.fx-leave-forward::after, .fx-enter-back::after { content: ""; position: absolute; inset: 0; z-index: 30; background: #000; pointer-events: none; }
+/* Dimming veil on the page underneath. Transparent unless its animation runs, so a skipped or late
+   animation can never leave a black page on screen. */
+.fx-leave-forward::after, .fx-enter-back::after { content: ""; position: absolute; inset: 0; z-index: 30; background: #000; opacity: 0; pointer-events: none; }
 .fx-leave-forward::after { animation: fx-dim-in var(--d-page) var(--e-decel) forwards; }
 .fx-enter-back::after { animation: fx-dim-out var(--d-medium) var(--e-standard) both; }
 .fx-enter-swap { z-index: 1; animation: fx-enter-swap 280ms var(--e-decel) both; }
-.fx-leave-swap { animation: fx-fade-out 160ms var(--e-standard) forwards; }
+/* A cross-fade keeps the page underneath fully opaque while the new one fades in over it; two pages
+   fading at once would let the canvas show through as a brightness dip. */
+.fx-leave-swap { animation: fx-hold 280ms linear forwards; }
 
 /* Full-screen panels (configuration editors) push over the app like a native screen. */
 #panel-root { position: fixed; inset: 0; z-index: 70; pointer-events: none; }
@@ -745,6 +749,7 @@ details[open] > summary::after { transform: translateY(1px) rotate(225deg); }
 @keyframes fx-dim-out { from { opacity: .12; } to { opacity: 0; } }
 @keyframes fx-enter-swap { from { opacity: 0; transform: translateY(8px); } }
 @keyframes fx-fade-out { to { opacity: 0; } }
+@keyframes fx-hold { from { opacity: 1; } to { opacity: 1; } }
 @keyframes fx-rise { from { opacity: 0; transform: translateY(14px) scale(.985); } }
 @keyframes fx-fade { from { opacity: 0; } }
 @keyframes fx-unfold { from { grid-template-rows: 0fr; opacity: 0; } }
@@ -841,10 +846,13 @@ details[open] > summary::after { transform: translateY(1px) rotate(225deg); }
 /* System "remove animations": nothing slides or scales; state changes become short cross-fades. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 120ms !important; transition-delay: 0s !important; }
-  .fx-enter-forward, .fx-enter-back, .fx-enter-swap, .fx-rise, .fx-fade, .fx-unfold, .fx-pop, .panel, .sheet, .modal-card, .toast { animation: fx-fade 160ms ease-out both !important; }
-  .fx-leave-forward, .fx-leave-back, .fx-leave-swap, .fx-exit-fold, .fx-exit-fade, .fx-exit-toast { animation: fx-fade-out 120ms ease-in forwards !important; }
+  /* Pages: whichever page is on top fades; the one underneath holds still and fully opaque. */
+  .fx-enter-forward, .fx-enter-swap, .fx-rise, .fx-fade, .fx-unfold, .fx-pop, .panel, .sheet, .modal-card, .toast { animation: fx-fade 160ms ease-out both !important; }
+  .fx-enter-back, .fx-leave-forward, .fx-leave-swap { animation: fx-hold 160ms linear both !important; }
+  .fx-leave-back, .fx-exit-fold, .fx-exit-fade, .fx-exit-toast { animation: fx-fade-out 120ms ease-in forwards !important; }
   #sheet-root.closing .sheet, #panel-root.closing .panel, .modal-backdrop.closing .modal-card { animation: fade-out 120ms ease-in forwards !important; }
-  .fx-leave-forward::after, .fx-enter-back::after, .fx-grow, .ripple, .fish *, .fish .fish-art, .icon-btn::before, .icon-btn::after { animation: none !important; }
+  .fx-leave-forward::after, .fx-enter-back::after, .icon-btn.bubbling::before, .icon-btn.bubbling::after { content: none !important; }
+  .fx-grow, .ripple, .fish *, .fish .fish-art { animation: none !important; }
   html[data-panel="open"] #app { transform: none; }
   .btn:active, .sheet-item:active, .choice-row:active, .drawer-link:active, .icon-btn:active, .composer-send:active { transform: none; }
 }
