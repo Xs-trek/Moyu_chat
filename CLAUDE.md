@@ -21,9 +21,10 @@ Moyu Chat 的开发依据。项目事实以当前源码为准；`docs/history/` 
 
 1. **API Key** 只存在原生安全存储（`ChatSecretStore`）中，不进 WebView、不进 SQLite、不进日志或观察视图。
 2. **严格 CSP**（`index.html`）：前端不加载远程资源。第三方库只能以本地文件引入，引入前先说明理由。
-3. **协议 ≠ 能力**：不从模型名或协议推断推理、thinking、图片、联网、续接、工具调用等能力；能力必须由具体部署（Model Profile）显式声明。
-4. 改动 **Provider / Model Profile / Session** 三层结构或**数据库 schema** 前，必须先和用户讨论。
-5. 前端源码只改根目录的 `src/` 和 `index.html`。`android/app/src/main/assets/ui/` 是 `syncMoyuChatUi` 任务在构建时生成的副本（Git 忽略），不要手改。
+3. **界面风格统一**（`docs/ui-design.md`）：界面全部在 WebView 里实现，不用 `<select>` 和系统 Toast；原生只保留 API Key 输入框、系统图片选择器和外部浏览器。动效按规范的 token 和交互表实现。
+4. **协议 ≠ 能力**：不从模型名或协议推断推理、thinking、图片、联网、续接、工具调用等能力；能力必须由具体部署（Model Profile）显式声明。
+5. 改动 **Provider / Model Profile / Session** 三层结构或**数据库 schema** 前，必须先和用户讨论。
+6. 前端源码只改根目录的 `src/` 和 `index.html`（浏览器预览的 `dev/preview.html` 要保持同样的容器结构）。`android/app/src/main/assets/ui/` 是 `syncMoyuChatUi` 任务在构建时生成的副本（Git 忽略），不要手改。
 
 ## 架构概要
 
@@ -34,7 +35,7 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 
 | 区域 | 主要文件 |
 |---|---|
-| 进程与宿主 | `MoyuChatApplication`、`ChatRuntime`（进程级，Activity 只是挂载点）、`MainActivity`（WebView、配置对话框、图片选择）、`ChatTurnService`（回合期间前台服务） |
+| 进程与宿主 | `MoyuChatApplication`、`ChatRuntime`（进程级，Activity 只是挂载点）、`MainActivity`（WebView、API Key 原生输入框、图片选择）、`ChatTurnService`（回合期间前台服务） |
 | 编排中枢 | `ChatCoordinator`：intent 分发、会话生命周期、分支、视图投影；通过 `TurnPipeline.Env` 向回合提供执行器、忙碌标记和视图推送 |
 | 回合管线 | `TurnPipeline`：接收 → 上下文 → 路由 → 压缩检查点 → 联网规划 → 工具选择 → 联网检索 → 生成 → 校验/修正 → 收尾；`ProviderRoundLoop`（生成阶段：多轮主调用、客户端工具轮次、20 fps 流式投影）；`TurnRun`（回合内状态）、`TurnConfig`（冻结配置）、`TurnControl`（取消、用量、调用链） |
 | 协议适配 | `ChatTransport`、`ChatTransportRegistry`、`OpenAiCompatibleTransport`（Chat Completions + Responses）、`AnthropicMessagesTransport`、`ProviderEndpoint`、`ProviderAuth` |
@@ -44,7 +45,7 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask）、`WebOrchestrator`（规划）、`MoyuWebService`（检索/抓取） |
 | 观察 | `TurnStats`（统计页：按模型 × 上下文模式汇总延迟、token、辅助占比、各辅助模块实际执行率和评价）、`TurnUsage`（按主调用 / 辅助调用 / 子任务分类，并按发起阶段归属每次模型调用）、`TurnTrace`（每个阶段的状态、耗时、判断摘要，跳过时记录原因）、`WireCapture`（协议检查器：脱敏后的请求 / 响应原文，不含请求头和 API Key，只保留最近 30 回合，可在设置中关闭） |
 | 存储 | `ChatDatabase`（`moyu-beta.db`，schema 1）、`ChatMediaStore`、`ChatSecretStore` |
-| 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/highlight.js`（本地轻量代码高亮）、`src/mascot.js`（像素小鱼与彩蛋）、`src/morph.js`（原地更新 DOM 与一次性动效）、`src/drawer-gesture.js`（侧边栏跟手拖动）、`src/remote.js`（按需读取的数据：调用链、回答对比、统计）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
+| 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/highlight.js`（本地轻量代码高亮）、`src/mascot.js`（像素小鱼与彩蛋）、`src/morph.js`（原地更新 DOM、一次性动效、FLIP、数值淡入）、`src/drawer-gesture.js`（侧边栏跟手拖动）、`src/editors.js`（Provider / Model Profile 编辑页）、`src/remote.js`（按需读取的数据：调用链、回答对比、统计）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
 | 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。同一页面收到新视图时用 `morph` 原地更新（保留节点、滚动位置、进行中的过渡和展开状态），只有路由或会话变化才重建页面并播放进入动画；新出现的节点用 `fx-*` 类做一次性动效（只用 transform / opacity），要退场动画的节点声明 `data-exit`调用链只通过 `turn.trace.get` 按需读取，不随视图推送；用量存在 `turns` 表，由原生按原有形状投影成 `kind: usage` 条目。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |
 | 契约 | `contract/moyu-chat-contract.d.ts`：intent 与视图模型类型，改动原生视图或 intent 时同步更新 |
 

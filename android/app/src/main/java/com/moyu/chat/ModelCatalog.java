@@ -149,6 +149,21 @@ final class ModelCatalog {
         profile.maxOutputTokens = userOutput > 0 ? userOutput : r.maxOutputTokens;
     }
 
+    /** What Auto would resolve for this model on this endpoint, as label/value rows for the editor. */
+    static org.json.JSONObject preview(ChatDatabase.Provider provider, String modelId) throws org.json.JSONException {
+        Resolution r = resolve(provider, modelId);
+        org.json.JSONArray rows = new org.json.JSONArray();
+        rows.put(new org.json.JSONArray().put("来源").put(r.source));
+        rows.put(new org.json.JSONArray().put("协议").put(r.deploymentResolved ? r.protocol : "未识别（需高级配置）"));
+        rows.put(new org.json.JSONArray().put("推理").put(r.reasoningLevels.isEmpty() ? "Provider 默认 / 未声明" : r.reasoningLevels.replace(',', '/')));
+        rows.put(new org.json.JSONArray().put("输入 / 输出").put(r.inputModalities + " / " + r.outputModalities));
+        rows.put(new org.json.JSONArray().put("Client Tools").put(ClientToolRuntime.NONE.equals(r.clientToolCalling) ? "未声明" : "支持"));
+        rows.put(new org.json.JSONArray().put("联网").put(r.toolCapabilities.isEmpty() ? "Moyu fallback" : r.toolCapabilities));
+        rows.put(new org.json.JSONArray().put("Continuation").put(r.continuationMode));
+        rows.put(new org.json.JSONArray().put("Harness").put(r.harnessPreset));
+        return new org.json.JSONObject().put("resolved", r.deploymentResolved).put("rows", rows);
+    }
+
     static String summary(ChatDatabase.Provider provider, String modelId) {
         Resolution r = resolve(provider, modelId);
         String reasoning = r.reasoningLevels.isEmpty() ? "Provider 默认/未声明" : r.reasoningLevels.replace(',', '/');

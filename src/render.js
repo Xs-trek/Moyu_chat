@@ -1,10 +1,10 @@
 import { captureTimelineAnchor, restoreTimelineAnchor } from './scroll-anchor.js';
 import { renderMarkdownInto } from './markdown.js';
-import { button, fmtTime, h, icon, iconButton } from './dom.js';
+import { button, fmtTime, h, icon, iconButton, syncSegment } from './dom.js';
 import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
-import { morph, motionAllowed, removeNode, withFx } from './morph.js';
+import { flip, morph, removeNode, swapIn, withFx } from './morph.js';
 import { forgetRemote, loadRemote, loadTrace, peekTrace } from './remote.js';
 import * as vm from './view-model.js';
 
@@ -78,22 +78,6 @@ function reasoningCapability(model) {
   return h('span', { class: 'chip quiet', text: levels.length ? `深度支持 · ${levels.join(' / ')}` : '深度支持 · Provider 默认' });
 }
 
-function contextModeControl(value = 'standard', dataset = { contextModeSelect: '1' }) {
-  const normalized = value === 'auto' ? 'standard' : value;
-  const labels = { minimal: '上下文 · 极简', standard: '上下文 · 标准', smart: '上下文 · Moyu 智能' };
-  return h('select', { class: 'select context-mode-select', 'aria-label': '上下文模式', dataset }, ['minimal', 'standard', 'smart'].map((mode) => h('option', { value: mode, selected: mode === normalized, text: labels[mode] })));
-}
-
-function webModeControl(value = 'auto', dataset = { webModeSelect: '1' }) {
-  const labels = { off: '联网 · 关闭', auto: '联网 · 自动', on: '联网 · 开启' };
-  return h('select', { class: 'select web-mode-select', 'aria-label': '联网模式', dataset }, ['off', 'auto', 'on'].map((mode) => h('option', { value: mode, selected: mode === value, text: labels[mode] })));
-}
-
-function subagentModeControl(value = 'off', dataset = { standardSubagentMode: '1' }) {
-  const normalized = value === 'auto' ? 'auto' : 'off';
-  const labels = { off: '子 Agent · 关闭', auto: '子 Agent · 自动' };
-  return h('select', { class: 'select subagent-mode-select', 'aria-label': '标准模式子 Agent', dataset }, ['off', 'auto'].map((mode) => h('option', { value: mode, selected: mode === normalized, text: labels[mode] })));
-}
 
 function modelFacts(model) {
   const facts = [
@@ -114,7 +98,7 @@ function providers(view) {
       h('p', { class: 'page-note', text: 'Provider 只保存共享的 Base URL 与 API Key；协议、认证、推理 wire 和模型能力属于具体的 Model Profile。' }),
       view.providers.length ? h('div', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card provider-card', dataset: { key: provider.providerId } },
         h('div', { class: 'row' }, h('strong', { class: 'grow truncate', text: provider.displayName }),
-          h('span', { class: `chip ${provider.hasCredential ? 'good' : 'warn'}`, text: provider.hasCredential ? '凭据已配置' : '缺少凭据' })),
+          h('button', { type: 'button', class: `chip chip-btn ${provider.hasCredential ? 'good' : 'warn'}`, dataset: { action: 'provider-key', providerId: provider.providerId }, text: provider.hasCredential ? 'API Key 已配置' : '填写 API Key' })),
         h('code', { class: 'model-id', text: provider.baseUrl || '未配置 Base URL' }),
         h('div', { class: 'row' }, h('span', { class: 'grow' }), button('编辑', 'configure-provider', { providerId: provider.providerId }, 'btn small ghost'), button('添加模型', 'configure-model', { providerId: provider.providerId }, 'btn small')),
         (provider.models || []).map((model) => h('div', { class: 'model-card', dataset: { key: model.modelProfileId } },
@@ -123,15 +107,15 @@ function providers(view) {
           h('code', { class: 'model-id', text: model.modelId }),
           h('div', { class: 'row' }, reasoningCapability(model)),
           h('details', { class: 'facts-wrap' }, h('summary', { text: '部署参数' }), modelFacts(model)),
-          h('div', { class: 'row model-actions' }, contextModeControl(view.ui?.defaultContextMode || 'standard'), webModeControl(view.ui?.defaultWebMode || 'auto'),
+          h('div', { class: 'row model-actions' },
             h('span', { class: 'grow' }), button('编辑', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small ghost'),
             button('新会话', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small primary')))),
       ))) : emptyHero({ title: '暂无 Provider', subtitle: '先添加一个 API endpoint。', children: [button('添加 Provider', 'configure-provider', {}, 'btn primary')] })));
 }
 
 function segmentedSetting(label, action, key, values, current) {
-  return h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label }, values.map(([value, text]) => h('button', {
-    type: 'button', role: 'radio', 'aria-checked': value === current ? 'true' : 'false', class: value === current ? 'on' : '', dataset: { action, [key]: value }, text })));
+  return syncSegment(h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label }, values.map(([value, text]) => h('button', {
+    type: 'button', role: 'radio', 'aria-checked': value === current ? 'true' : 'false', class: value === current ? 'on' : '', dataset: { action, [key]: value }, text }))));
 }
 
 function switchControl(label, on, action, data) {
@@ -158,9 +142,9 @@ function settings(view) {
         settingRow('记录协议报文', '保存最近 30 个回合里每次模型调用的请求和响应原文，在回复详情的调用链里查看。不含请求头和 API Key，图片等长串只保留长度。', switchControl('记录协议报文', wireCapture, 'toggle-wire-capture', { enabled: wireCapture ? 'false' : 'true' })),
         settingRow('跨 Chat 用户记忆', '总开关只决定用户级 Memory/RAG 是否允许使用。关闭时所有模式都不跨 Chat；开启时标准/智能可检索相关本地历史，极简没有 Memory 调用。', switchControl('跨 Chat 用户记忆', memoryEnabled, 'toggle-memory', { enabled: memoryEnabled ? 'false' : 'true' }))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '新会话默认' }),
-        settingRow('上下文模式', '极简：薄提示词 + 原始完整轮次。标准：原始上下文优先，允许用户记忆，50% 主动压缩到约 30%。智能：标准全部能力 + Task Router、reviewed prompt modules、evidence policy 与同模型二次 verifier。', contextModeControl(view.ui?.defaultContextMode || 'standard', { defaultContextMode: '1' })),
-        settingRow('联网', '自动：先由 Web Planner 判断是否需要联网，再按已声明能力选择 Provider hosted Web、Moyu Host 检索或 client Web tools。开启：本轮强制实际联网取证。', webModeControl(view.ui?.defaultWebMode || 'auto', { defaultWebMode: '1' })),
-        settingRow('标准模式子 Agent', '自动：仅当 Model Profile 明确支持 client tool calling 时，允许模型委派最多 4 个隔离的同模型子任务。极简永远关闭，智能默认自动。', subagentModeControl(view.ui?.standardSubagentMode || 'off', { standardSubagentMode: '1' }))),
+        settingRow('上下文模式', '极简：薄提示词 + 原始完整轮次。标准：原始上下文优先，允许用户记忆，50% 主动压缩到约 30%。智能：标准全部能力 + Task Router、reviewed prompt modules、evidence policy 与同模型二次 verifier。', segmentedSetting('上下文模式', 'default-context', 'mode', [['minimal', '极简'], ['standard', '标准'], ['smart', '智能']], view.ui?.defaultContextMode || 'standard'), true),
+        settingRow('联网', '自动：先由 Web Planner 判断是否需要联网，再按已声明能力选择 Provider hosted Web、Moyu Host 检索或 client Web tools。开启：本轮强制实际联网取证。', segmentedSetting('联网', 'default-web', 'mode', [['off', '关闭'], ['auto', '自动'], ['on', '开启']], view.ui?.defaultWebMode || 'auto'), true),
+        settingRow('标准模式子 Agent', '自动：仅当 Model Profile 明确支持 client tool calling 时，允许模型委派最多 4 个隔离的同模型子任务。极简永远关闭，智能默认自动。', segmentedSetting('标准模式子 Agent', 'default-subagent', 'mode', [['off', '关闭'], ['auto', '自动']], view.ui?.standardSubagentMode === 'auto' ? 'auto' : 'off'), true)),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '数据边界' }),
         h('p', { class: 'setting-desc', text: 'Chat 使用自己的本地数据库；API Key 只保存在 Android 安全存储，不进入 WebView 或 SQLite。TaskProfile 与 Checkpoint 只是可重建的上下文控制状态。' }))));
 }
@@ -185,7 +169,7 @@ function stats() {
     const rows = vm.statsView(loading ? lastStats : entry.data);
     content = h('div', { class: `stack stats-rows${loading ? ' is-stale' : ''}`, 'aria-busy': loading ? 'true' : 'false' }, rows.length ? rows.map((row) => h('section', { class: 'card stats-card', dataset: { key: `${row.title}|${row.mode}` } },
       h('div', { class: 'stats-head' }, h('strong', { class: 'grow truncate', text: row.title }), h('span', { class: 'chip quiet', text: row.mode })),
-      h('dl', { class: 'stats-grid' }, row.cells.map(([k, v]) => h('div', { class: 'stats-cell' }, h('dt', { text: k }), h('dd', { text: v }))))))
+      h('dl', { class: 'stats-grid' }, row.cells.map(([k, v]) => h('div', { class: 'stats-cell' }, h('dt', { text: k }), h('dd', { dataset: { swap: '' }, text: v }))))))
       : h('section', { class: 'card' }, h('p', { class: 'setting-desc', text: '这段时间还没有完成的回合。' })));
   }
   return h('main', { class: 'page stats-page' }, appHeader('统计', '按模型和上下文模式汇总的使用情况'),
@@ -204,7 +188,7 @@ function conversationSubtitle(session) {
 function turnChip(session) {
   const [model, ...rest] = vm.turnSummary(session);
   return h('button', { type: 'button', class: 'turn-chip', disabled: !session.canConfigureTurn, 'aria-label': '本轮设置', dataset: { action: 'open-turn-settings', sessionId: session.localSessionId } },
-    h('span', { class: 'turn-chip-model truncate', text: model }), h('span', { class: 'turn-chip-rest truncate', text: rest.length ? ` · ${rest.join(' · ')}` : '' }), icon('chevronDown', 'ico ico-xs'));
+    h('span', { class: 'turn-chip-model truncate', dataset: { swap: '' }, text: model }), h('span', { class: 'turn-chip-rest truncate', dataset: { swap: '' }, text: rest.length ? ` · ${rest.join(' · ')}` : '' }), icon('chevronDown', 'ico ico-xs'));
 }
 
 function primaryButton(session) {
@@ -345,7 +329,7 @@ function detailRows(item, sessionId, canAct) {
     out.push(h('div', { class: 'compare-row' }, button(`对比这个问题的 ${item.answers} 次回答`, 'open-answers', { sessionId, turnId: item.turnId }, 'btn small ghost')));
   }
   if (item.turnId && !item.inherited) out.push(traceSection(sessionId, item.turnId));
-  return h('div', { class: 'turn-more fx-unfold', dataset: { exit: 'fold' } }, out);
+  return h('div', { class: 'turn-more fold fx-unfold', dataset: { exit: 'fold' } }, h('div', { class: 'fold-body' }, out));
 }
 
 /** Stage-by-stage view of the turn, fetched when the details are first expanded. */
@@ -605,7 +589,8 @@ export function patchConversation() {
   const title = document.querySelector('.conversation-title strong');
   if (title) title.textContent = session.title || '';
   const subtitle = document.querySelector('.conversation-title small');
-  if (subtitle) subtitle.textContent = conversationSubtitle(session);
+  const nextSubtitle = conversationSubtitle(session);
+  if (subtitle && subtitle.textContent !== nextSubtitle) { subtitle.textContent = nextSubtitle; swapIn(subtitle); }
   const menu = document.querySelector('.conversation-head [data-action="conversation-menu"]');
   if (menu) menu.dataset.sessionTitle = session.title || '';
 
@@ -623,7 +608,7 @@ export function patchConversation() {
     const attachment = composer.querySelector('.attachment-btn');
     if (attachment) attachment.disabled = !session.canAttachImage;
     const chip = composer.querySelector('.turn-chip');
-    if (chip) chip.replaceWith(turnChip(session));
+    if (chip) morph(chip, turnChip(session));
     const input = composer.querySelector('textarea[name="message"]');
     if (input) {
       const nextDraft = String(session.composerDraft || '');
@@ -681,6 +666,24 @@ function pageMotion(previous, next) {
   return to > from ? 'enter-forward' : to < from ? 'enter-back' : 'enter-swap';
 }
 
+let retireTimer = 0;
+function swapPage(root, current, page, motion, scrollY) {
+  for (const old of root.querySelectorAll(':scope > .page-old')) old.remove();
+  clearTimeout(retireTimer);
+  withFx(page, motion);
+  if (!current || current.classList.contains('loading')) { root.replaceChildren(page); return; }
+  const top = -scrollY;
+  current.style.setProperty('--old-top', `${top}px`);
+  current.style.setProperty('--old-h', `${current.offsetHeight}px`);
+  current.classList.add('page-old', `fx-leave-${motion.replace('enter-', '')}`);
+  current.setAttribute('data-leaving', '1');
+  current.setAttribute('aria-hidden', 'true');
+  current.inert = true;
+  // The incoming page goes first in DOM order so every document query finds it, not the outgoing one.
+  root.insertBefore(page, current);
+  retireTimer = setTimeout(() => current.remove(), 520);
+}
+
 export function render() {
   const state = getState();
   const root = document.querySelector('#app');
@@ -689,16 +692,17 @@ export function render() {
   if (!view) { root.replaceChildren(h('main', { class: 'loading' }, fish('idle', 'md'), h('p', { text: '正在加载本地 Chat…' }))); renderNotice(); return; }
   const anchor = captureTimelineAnchor();
   const sessionId = view.activeSession?.localSessionId || '';
+  // Read before applyRoot: a route change can switch the document scroller off.
+  const pageScroll = window.scrollY;
   applyRoot(view);
   const pages = { home, conversation, providers, settings, stats };
   const page = (pages[view.route] || home)(view);
   const identity = pageIdentity(view);
-  const current = root.firstElementChild;
+  const current = [...root.children].find((node) => !node.classList.contains('page-old')) || null;
   const samePage = Boolean(current && identity === shownPage && !current.classList.contains('loading'));
-  if (samePage) morph(current, page);
+  if (samePage) flip(view.route === 'home' ? current.querySelector('.home-list') : null, () => morph(current, page));
   else {
-    if (motionAllowed()) withFx(page, pageMotion(shownPage, identity));
-    root.replaceChildren(page);
+    swapPage(root, current, page, pageMotion(shownPage, identity), pageScroll);
     // Document-scrolled pages start at the top; the conversation keeps its own scroller.
     if (view.route !== 'conversation') window.scrollTo(0, 0);
   }

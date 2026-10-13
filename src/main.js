@@ -1,6 +1,9 @@
 import { bindHost, postIntent, requestIntent } from './bridge.js';
 import { flash, randomQuote } from './mascot.js';
-import { closeSheet, handleBack, openActions, openAnswers, openConfirmDialog, openPayload, openRerun, openTextDialog, openTurnSettings, payloadText, rerunChoice, selectPayloadPart, setDrawer, setRerunChoice } from './overlays.js';
+import { closeSheet, handleBack, newChatChoice, openActions, openAnswers, openConfirmDialog, openNewChat, openPayload, openRerun, openTextDialog, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
+import { openModelEditor, openProviderEditor } from './editors.js';
+import { syncSegment } from './dom.js';
+import { reducedMotion } from './morph.js';
 import { createRenderGate } from './render-gate.js';
 import { forgetStats, patchConversation, render, renderNotice, resizeTextarea, setStatsDays, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
@@ -97,7 +100,30 @@ function optimisticSegment(target) {
     item.classList.toggle('on', on);
     item.setAttribute('aria-checked', on ? 'true' : 'false');
   }
+  if (target.parentElement?.classList.contains('segmented')) syncSegment(target.parentElement);
 }
+function optimisticChoice(target) {
+  for (const item of target.parentElement?.children || []) {
+    const on = item === target;
+    item.classList.toggle('selected', on);
+    item.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+}
+
+// Touch ripple on primary actions; the press scale itself is CSS (:active).
+document.addEventListener('pointerdown', (event) => {
+  const host = event.target.closest?.('.btn.primary, .composer-send, .drawer-new');
+  if (!host || host.disabled || reducedMotion()) return;
+  const rect = host.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height) * 2.2;
+  const dot = document.createElement('span');
+  dot.className = 'ripple';
+  dot.style.width = dot.style.height = `${size}px`;
+  dot.style.left = `${event.clientX - rect.left - size / 2}px`;
+  dot.style.top = `${event.clientY - rect.top - size / 2}px`;
+  host.append(dot);
+  setTimeout(() => dot.remove(), 600);
+}, true);
 
 function copyText(text, target, okText) {
   if (!text) return;
@@ -214,16 +240,26 @@ document.addEventListener('click', (event) => {
   else if (action === 'conversation-menu') conversationMenu(target);
   else if (action === 'session-menu') sessionMenu(target);
   else if (action === 'message-menu') messageMenu(target);
-  else if (action === 'toggle-turn-details') { toggleTurnDetails(target.dataset.itemKey); if (!patchConversation()) renderGate.request(); }
+  else if (action === 'toggle-turn-details') {
+    const key = target.dataset.itemKey;
+    toggleTurnDetails(key);
+    if (!patchConversation()) renderGate.request();
+    // Details opened at the bottom of the timeline would unfold out of sight: bring them into view once open.
+    const more = [...document.querySelectorAll('.timeline [data-item-key]')].find((node) => node.dataset.itemKey === key)?.querySelector('.turn-more:not([data-leaving])');
+    if (more) {
+      const reveal = () => more.isConnected && more.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      if (reducedMotion()) reveal(); else more.addEventListener('animationend', reveal, { once: true });
+    }
+  }
   else if (action === 'open-payload') openPayload(target.dataset.sessionId, target.dataset.turnId, target.dataset.callIndex, target.dataset.title);
-  else if (action === 'payload-part') selectPayloadPart(target.dataset.part);
+  else if (action === 'payload-part') { optimisticSegment(target); selectPayloadPart(target.dataset.part); }
   else if (action === 'payload-copy') copyText(payloadText(), target, '已复制报文');
   else if (action === 'trace-retry') { forgetRemote(traceKey(target.dataset.turnId)); if (!patchConversation()) renderGate.request(); }
   else if (action === 'rate-turn') postIntent('turn.rate', { localSessionId: sessionId, turnId: target.dataset.turnId, rating: Number(target.dataset.rating) || 0 });
   else if (action === 'open-answers') openAnswers(sessionId, target.dataset.turnId);
   else if (action === 'rerun-open') openRerun(sessionId, target.dataset.localSeq);
-  else if (action === 'rerun-model') setRerunChoice({ modelProfileId: target.dataset.modelProfileId });
-  else if (action === 'rerun-mode') setRerunChoice({ contextMode: target.dataset.contextMode });
+  else if (action === 'rerun-model') { optimisticChoice(target); setRerunChoice({ modelProfileId: target.dataset.modelProfileId }); }
+  else if (action === 'rerun-mode') { optimisticSegment(target); setRerunChoice({ contextMode: target.dataset.contextMode }); }
   else if (action === 'rerun-confirm') rerun();
   else if (action === 'stats-days') { optimisticSegment(target); setStatsDays(target.dataset.days); renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
@@ -255,8 +291,21 @@ document.addEventListener('click', (event) => {
     }
     requestAnimationFrame(() => syncTurnNavigator(scroller));
   }
-  else if (action === 'session-model-set') postIntent('chat.session.model.set', { localSessionId: sessionId, modelProfileId: target.dataset.modelProfileId });
+  else if (action === 'session-model-set') { optimisticChoice(target); postIntent('chat.session.model.set', { localSessionId: sessionId, modelProfileId: target.dataset.modelProfileId }); }
+  else if (action === 'choice-pick') { optimisticChoice(target); pickChoice(target.dataset.value); }
+  else if (action === 'default-context') { optimisticSegment(target); postIntent('context.mode.default.set', { mode: target.dataset.mode }); }
+  else if (action === 'default-web') { optimisticSegment(target); postIntent('web.mode.default.set', { mode: target.dataset.mode }); }
+  else if (action === 'default-subagent') { optimisticSegment(target); postIntent('subagent.standard.default.set', { mode: target.dataset.mode }); }
+  else if (action === 'newchat-mode') { optimisticSegment(target); setNewChatChoice({ contextMode: target.dataset.contextMode }); }
+  else if (action === 'newchat-web') { optimisticSegment(target); setNewChatChoice({ webMode: target.dataset.webMode }); }
+  else if (action === 'newchat-confirm') {
+    const choice = newChatChoice();
+    closeSheet();
+    if (choice) postIntent('chat.session.create', { providerId: choice.providerId, modelProfileId: choice.modelProfileId, contextMode: choice.contextMode, webMode: choice.webMode });
+  }
+  else if (action === 'provider-key') postIntent('provider.credential.edit', { providerId: target.dataset.providerId });
   else if (action === 'session-reasoning-set') {
+    optimisticSegment(target);
     const reasoningEffort = target.dataset.reasoningEffort;
     // Reflect the user's turn setting immediately. Native persistence remains authoritative, while
     // the subsequent Send also carries this selection so bridge scheduling cannot revert the turn.
@@ -264,6 +313,7 @@ document.addEventListener('click', (event) => {
     postIntent('chat.session.reasoning.set', { localSessionId: sessionId, reasoningEffort });
   }
   else if (action === 'session-web-set') {
+    optimisticSegment(target);
     const webMode = target.dataset.webMode;
     setOptimisticWebMode(sessionId, webMode);
     postIntent('chat.session.web.set', { localSessionId: sessionId, webMode });
@@ -317,13 +367,13 @@ document.addEventListener('click', (event) => {
   }
   else if (action === 'new-chat') { closeDrawerIfOverlay(); newChat(currentView()); }
   else if (action === 'new-chat-model') {
-    const modelCard = target.closest('.model-card');
-    const contextMode = modelCard?.querySelector('select[data-context-mode-select]')?.value || currentView()?.ui?.defaultContextMode || 'standard';
-    const webMode = modelCard?.querySelector('select[data-web-mode-select]')?.value || currentView()?.ui?.defaultWebMode || 'auto';
-    postIntent('chat.session.create', { providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId, contextMode, webMode });
+    const view = currentView();
+    const model = view?.providers?.find((p) => p.providerId === target.dataset.providerId)?.models?.find((m) => m.modelProfileId === target.dataset.modelProfileId);
+    openNewChat({ providerId: target.dataset.providerId, modelProfileId: target.dataset.modelProfileId, title: model?.displayName || model?.modelId || '这个模型',
+      contextMode: view?.ui?.defaultContextMode || 'standard', webMode: view?.ui?.defaultWebMode || 'auto' });
   }
-  else if (action === 'configure-provider') postIntent('provider.configure.open', target.dataset.providerId ? { providerId: target.dataset.providerId } : {});
-  else if (action === 'configure-model') postIntent('model.configure.open', { providerId: target.dataset.providerId, ...(target.dataset.modelProfileId ? { modelProfileId: target.dataset.modelProfileId } : {}) });
+  else if (action === 'configure-provider') { closeDrawerIfOverlay(); openProviderEditor(target.dataset.providerId || ''); }
+  else if (action === 'configure-model') openModelEditor(target.dataset.providerId, target.dataset.modelProfileId || '');
   else if (action === 'pick-attachment') postIntent('chat.attachment.pick', { localSessionId: sessionId });
   else if (action === 'remove-attachment') postIntent('chat.attachment.remove', { localSessionId: sessionId, mediaId: target.dataset.mediaId });
   else if (action === 'verification-feedback') {
@@ -352,16 +402,6 @@ document.addEventListener('click', (event) => {
       target.textContent = '已复制';
       setTimeout(() => { if (target.isConnected) target.textContent = previous || '复制'; }, 1200);
     }).catch(() => setNotice({ level: 'warning', text: '复制代码失败' }));
-  }
-});
-
-document.addEventListener('change', (event) => {
-  if (event.target?.dataset?.defaultContextMode === '1') {
-    postIntent('context.mode.default.set', { mode: event.target.value });
-  } else if (event.target?.dataset?.defaultWebMode === '1') {
-    postIntent('web.mode.default.set', { mode: event.target.value });
-  } else if (event.target?.dataset?.standardSubagentMode === '1') {
-    postIntent('subagent.standard.default.set', { mode: event.target.value });
   }
 });
 

@@ -43,8 +43,16 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.delete', { localSessionId: string }>
   | UiIntent<'chat.message.edit', { localSessionId: string; localSeq: number }>
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
-  | UiIntent<'provider.configure.open', { providerId?: string }>
-  | UiIntent<'model.configure.open', { providerId: string; modelProfileId?: string }>
+  /** WebView editor: name + shared endpoint only; result `data: { providerId, hasCredential }`. Never carries a key. */
+  | UiIntent<'provider.save', { providerId?: string; displayName: string; baseUrl: string }>
+  /** Opens the native password dialog; the key goes straight to ChatSecretStore and never reaches the WebView. */
+  | UiIntent<'provider.credential.edit', { providerId: string }>
+  /** WebView editor; result `data: { modelProfileId }`, or a failed result carrying the validation message. */
+  | UiIntent<'model.save', ModelProfileForm>
+  /** Read-only; result `data: ModelEditorOptions` (the validators' own vocabulary). */
+  | UiIntent<'model.editor.options', {}>
+  /** Read-only; result `data: { resolved: boolean; rows: [string, string][] }`: what Auto would resolve. */
+  | UiIntent<'model.catalog.preview', { providerId: string; modelId: string }>
   | UiIntent<'verification.feedback', { localSessionId: string; localSeq: number; label: 'accurate' | 'false_alarm' | 'missed_error' }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
   /** Read-only; the intent.result carries `data: TurnTraceView`. Traces are never pushed with the view. */
@@ -334,3 +342,43 @@ declare global {
   }
   interface WindowEventMap { 'moyu:view': CustomEvent<{ version: 1; type: string; revision?: number; view?: AppViewModel; patch?: ConversationStreamPatch; requestId?: string; ok?: boolean; error?: { summary?: string }; data?: unknown }> }
 }
+
+/** Fields of the WebView Model Profile editor. Numbers travel as strings and are parsed natively. */
+export interface ModelProfileForm {
+  providerId: string;
+  modelProfileId?: string;
+  displayName: string;
+  modelId: string;
+  configMode: 'auto' | 'manual';
+  contextTokens: string;
+  inputTokens: string;
+  maxOutputTokens: string;
+  /** Manual (advanced) mode only; Auto lets the Model Catalog resolve these. */
+  protocol?: string;
+  authMode?: string;
+  reasoningWire?: string;
+  reasoningLevels?: string;
+  inputModalities?: string;
+  outputModalities?: string;
+  toolCapabilities?: string;
+  thinkingMode?: string;
+  thinkingBudgetTokens?: string;
+  continuationMode?: string;
+  harnessPreset?: string;
+  clientToolCalling?: string;
+}
+
+export interface ModelEditorOption { value: string; hint: string }
+export interface ModelEditorOptions {
+  protocol: ModelEditorOption[];
+  authMode: ModelEditorOption[];
+  reasoningWire: ModelEditorOption[];
+  thinkingMode: ModelEditorOption[];
+  clientToolCalling: ModelEditorOption[];
+  reasoningLevels: string[];
+  continuationMode: string[];
+  harnessPreset: string[];
+}
+
+/** Native → WebView message shown in the page's toast (replaces Android Toasts). */
+export interface NoticeEnvelope { version: 1; type: 'notice'; level: 'info' | 'warning' | 'error'; text: string }

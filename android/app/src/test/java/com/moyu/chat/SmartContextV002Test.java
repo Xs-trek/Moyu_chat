@@ -40,8 +40,6 @@ public class SmartContextV002Test {
     static final class Host implements ChatCoordinator.Host {
         final List<JSONObject> envelopes = Collections.synchronizedList(new ArrayList<>());
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
-        @Override public void openProviderEditor(ChatDatabase.Provider existing) { }
-        @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
         @Override public void showMessage(String text) { }
     }
 

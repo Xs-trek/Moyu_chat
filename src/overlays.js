@@ -1,11 +1,12 @@
 // Transient surfaces that live outside #app so full renders never tear them down: the session drawer,
-// bottom sheets (action lists and per-turn settings) and app-owned dialogs. Android Back closes the top one.
+// bottom sheets (action lists, pickers, per-turn settings), full-screen panels (configuration editors) and
+// app-owned dialogs. Android Back closes the top one.
 import { requestIntent } from './bridge.js';
-import { button, h, icon, iconButton } from './dom.js';
+import { button, h, icon, iconButton, syncSegment } from './dom.js';
 import { renderMarkdownInto } from './markdown.js';
 import { fish } from './mascot.js';
 import { getState } from './state.js';
-import { morphInto, motionAllowed } from './morph.js';
+import { EASE_STANDARD, flip, morphInto, reducedMotion } from './morph.js';
 import * as vm from './view-model.js';
 
 let drawerOpen = false;
@@ -23,7 +24,7 @@ export function sessionItem(session, activeId) {
   if (session.origin) meta.push(h('span', { class: 'meta-branch', title: `分支自 ${session.origin.sourceTitle || ''}` }, icon('branch', 'ico ico-xs'), '分支'));
   meta.push(h('span', { class: 'truncate', text: session.modelName || session.model || '' }));
   meta.push(h('span', { class: `mode-tag ${session.contextMode || 'standard'}`, title: `上下文模式：${vm.contextLabel(session.contextMode)}`, text: vm.contextLabel(session.contextMode) }));
-  return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}`, dataset: { key: session.localSessionId, exit: 'fade' } },
+  return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}`, dataset: { key: session.localSessionId, exit: 'collapse' } },
     h('button', { type: 'button', class: 'session-open', dataset: { action: 'open-session', sessionId: session.localSessionId } },
       h('b', { class: 'session-title', text: session.title || '新会话' }),
       h('small', { class: 'session-meta' }, meta)),
@@ -40,8 +41,8 @@ function todayStrip(view) {
   const today = vm.usageToday(view);
   if (!today) return null;
   return h('div', { class: 'today', title: '今天所有会话的用量' },
-    '今日 ', h('b', { text: String(today.turns) }), ' 轮 · ', h('b', { text: vm.compact(today.tokens) }), ' token',
-    today.cacheRate === null ? null : [' · 缓存 ', h('b', { text: `${Math.round(today.cacheRate * 100)}%` })]);
+    '今日 ', h('b', { dataset: { swap: '' }, text: String(today.turns) }), ' 轮 · ', h('b', { dataset: { swap: '' }, text: vm.compact(today.tokens) }), ' token',
+    today.cacheRate === null ? null : [' · 缓存 ', h('b', { dataset: { swap: '' }, text: `${Math.round(today.cacheRate * 100)}%` })]);
 }
 
 export function renderDrawer(view) {
@@ -50,7 +51,7 @@ export function renderDrawer(view) {
   const signature = JSON.stringify([view.sessions, view.activeLocalSessionId, view.usageToday, view.route, view.appearance?.delight]);
   if (signature === drawerSignature && root.firstChild) return;
   drawerSignature = signature;
-  morphInto(root,
+  flip(drawerOpen ? root.querySelector('.drawer-list') : null, () => morphInto(root,
     h('div', { class: 'drawer-scrim', dataset: { action: 'drawer-close' } }),
     h('nav', { class: 'drawer', 'aria-label': '会话' },
       h('header', { class: 'drawer-head' }, fish('still', 'sm'), h('strong', { class: 'grow', text: 'Moyu Chat β' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
@@ -60,7 +61,7 @@ export function renderDrawer(view) {
       h('footer', { class: 'drawer-foot' },
         h('button', { type: 'button', class: `drawer-link${view.route === 'providers' ? ' active' : ''}`, dataset: { action: 'nav', route: 'providers' } }, icon('sliders'), 'Provider 与模型'),
         h('button', { type: 'button', class: `drawer-link${view.route === 'stats' ? ' active' : ''}`, dataset: { action: 'nav', route: 'stats' } }, icon('chart'), '统计'),
-        h('button', { type: 'button', class: `drawer-link${view.route === 'settings' ? ' active' : ''}`, dataset: { action: 'nav', route: 'settings' } }, icon('gear'), '设置'))));
+        h('button', { type: 'button', class: `drawer-link${view.route === 'settings' ? ' active' : ''}`, dataset: { action: 'nav', route: 'settings' } }, icon('gear'), '设置')))));
   root.classList.toggle('open', drawerOpen);
 }
 
@@ -77,6 +78,54 @@ export function setDrawer(open) {
 /** items: [{ label, icon, action, data, danger, disabled, hint }]. Every item closes the sheet after dispatch. */
 export function openActions(title, items) { sheet = { kind: 'actions', title, items }; paintSheet(null); }
 export function openTurnSettings(sessionId) { sheet = { kind: 'turn', sessionId }; paintSheet(getState().view); }
+
+let choiceHandler = null;
+/** App-owned picker: options [{ value, label, hint }]. onPick runs at once; the sheet closes after the selection shows. */
+export function openChoice({ title, note = '', options, value, onPick }) {
+  choiceHandler = onPick;
+  sheet = { kind: 'choice', title, note, options, value };
+  paintSheet(null);
+}
+export function pickChoice(value) {
+  if (sheet?.kind !== 'choice') return;
+  const handler = choiceHandler;
+  choiceHandler = null;
+  sheet = { ...sheet, value };
+  paintSheet(null);
+  handler?.(value);
+  setTimeout(() => { if (sheet?.kind === 'choice') closeSheet(); }, reducedMotion() ? 0 : 160);
+}
+
+function choiceSheet(state) {
+  return [h('h2', { class: 'sheet-title', text: state.title }),
+    state.note ? h('p', { class: 'sheet-note', text: state.note }) : null,
+    h('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': state.title }, state.options.map((option) => {
+      const selected = option.value === state.value;
+      return h('button', { type: 'button', role: 'radio', 'aria-checked': selected ? 'true' : 'false', class: `choice-row${selected ? ' selected' : ''}`, dataset: { action: 'choice-pick', value: option.value } },
+        h('span', { class: 'radio' }), h('span', { class: 'grow' }, option.label, option.hint ? h('small', { class: 'choice-hint', text: option.hint }) : null));
+    }))];
+}
+
+/** Start a conversation with one Model Profile, choosing its context and Web modes first. */
+export function openNewChat({ providerId, modelProfileId, title, contextMode, webMode }) {
+  sheet = { kind: 'newchat', providerId, modelProfileId, title, contextMode, webMode };
+  paintSheet(null);
+}
+export function setNewChatChoice(choice) {
+  if (sheet?.kind !== 'newchat') return;
+  sheet = { ...sheet, ...choice };
+  paintSheet(null);
+}
+export function newChatChoice() { return sheet?.kind === 'newchat' ? { ...sheet } : null; }
+
+function newChatSheet(state) {
+  return [h('h2', { class: 'sheet-title', text: `用 ${state.title} 开新会话` }),
+    segmented('上下文模式', ['minimal', 'standard', 'smart'], state.contextMode, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '',
+      dataset: { action: 'newchat-mode', contextMode: value }, text: vm.contextLabel(value) })),
+    segmented('联网', ['off', 'auto', 'on'], state.webMode, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '',
+      dataset: { action: 'newchat-web', webMode: value }, text: vm.WEB_LABELS[value] })),
+    h('div', { class: 'sheet-foot' }, button('开始', 'newchat-confirm', {}, 'btn primary'))];
+}
 
 /** Re-answer one user message in a new branch, optionally with another model and/or context mode. */
 export function openRerun(sessionId, localSeq) {
@@ -174,8 +223,8 @@ function payloadSheet(state) {
   const index = Math.min(state.part, parts.length - 1);
   const current = parts[index];
   return [head,
-    h('div', { class: 'segmented', role: 'tablist', 'aria-label': '报文' }, parts.map((part, i) => h('button', {
-      type: 'button', role: 'tab', 'aria-selected': i === index ? 'true' : 'false', class: i === index ? 'on' : '', dataset: { action: 'payload-part', part: i }, text: part.label }))),
+    syncSegment(h('div', { class: 'segmented', role: 'tablist', 'aria-label': '报文' }, parts.map((part, i) => h('button', {
+      type: 'button', role: 'tab', 'aria-selected': i === index ? 'true' : 'false', class: i === index ? 'on' : '', dataset: { action: 'payload-part', part: i }, text: part.label })))),
     current.meta ? h('p', { class: 'sheet-note wire-meta', text: current.meta }) : null,
     h('pre', { class: 'wire' }, h('code', { text: current.text || '（空）' })),
     h('div', { class: 'wire-foot' }, h('small', { class: 'grow', text: '不含请求头和 API Key；图片等长串只保留长度。' }), button('复制', 'payload-copy', {}, 'btn small'))];
@@ -188,10 +237,11 @@ export function closeSheet() {
   if (!root || !root.classList.contains('open')) return;
   root.classList.remove('open');
   delete root.dataset.kind;
-  if (!motionAllowed() || !root.firstChild) { root.replaceChildren(); return; }
+  choiceHandler = null;
+  if (!root.firstChild) return;
   root.classList.add('closing');
   clearTimeout(sheetCloseTimer);
-  sheetCloseTimer = setTimeout(() => { if (!sheet) { root.classList.remove('closing'); root.replaceChildren(); } }, 200);
+  sheetCloseTimer = setTimeout(() => { if (!sheet) { root.classList.remove('closing'); root.replaceChildren(); } }, reducedMotion() ? 140 : 220);
 }
 
 /** Re-render a stateful sheet (turn settings) after the native view changed. */
@@ -212,6 +262,10 @@ function paintSheet(view) {
     body = answersSheet(sheet);
   } else if (sheet.kind === 'rerun') {
     body = rerunSheet(view || getState().view, sheet);
+  } else if (sheet.kind === 'choice') {
+    body = choiceSheet(sheet);
+  } else if (sheet.kind === 'newchat') {
+    body = newChatSheet(sheet);
   } else {
     const session = view?.activeSession;
     if (!session || session.localSessionId !== sheet.sessionId) { closeSheet(); return; }
@@ -220,15 +274,21 @@ function paintSheet(view) {
   const parts = [h('div', { class: 'sheet-scrim', dataset: { action: 'sheet-close' } }),
     h('section', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': sheet.kind === 'turn' ? '本轮设置' : (sheet.title || '操作') }, h('div', { class: 'sheet-grip' }), body)];
   clearTimeout(sheetCloseTimer);
-  if (root.classList.contains('open') && root.dataset.kind === sheet.kind) morphInto(root, parts);
-  else { root.classList.remove('closing'); root.replaceChildren(...parts); }
+  if (root.classList.contains('open') && root.dataset.kind === sheet.kind) {
+    // Same sheet, new content (loaded data, a new selection): morph in place and ease its height.
+    const panel = root.querySelector('.sheet');
+    const before = panel?.offsetHeight || 0;
+    morphInto(root, parts);
+    const after = panel?.offsetHeight || 0;
+    if (panel?.animate && !reducedMotion() && Math.abs(after - before) > 8) panel.animate([{ height: `${before}px` }, { height: `${after}px` }], { duration: 260, easing: EASE_STANDARD });
+  } else { root.classList.remove('closing'); root.replaceChildren(...parts); }
   root.dataset.kind = sheet.kind;
   root.classList.add('open');
 }
 
 function segmented(label, values, current, render) {
   return h('div', { class: 'field' }, h('span', { class: 'field-label', text: label }),
-    h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label }, values.map((value) => render(value, value === current))));
+    syncSegment(h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label }, values.map((value) => render(value, value === current)))));
 }
 
 function turnSettings(view, session) {
@@ -258,15 +318,45 @@ function turnSettings(view, session) {
   ];
 }
 
+// ---------- Full-screen panels (configuration editors) ----------
+
+let panel = null;
+let panelTimer = 0;
+export function panelOpen() { return Boolean(panel); }
+export function openPanel(kind, content, onClose = null) {
+  const root = document.getElementById('panel-root');
+  if (!root) return null;
+  clearTimeout(panelTimer);
+  panel = { kind, onClose };
+  const node = h('section', { class: 'panel', role: 'dialog', 'aria-modal': 'true', dataset: { panel: kind } }, content);
+  root.classList.remove('closing');
+  root.replaceChildren(node);
+  root.classList.add('open');
+  document.documentElement.dataset.panel = 'open';
+  return node;
+}
+export function closePanel() {
+  const root = document.getElementById('panel-root');
+  if (!panel || !root) return;
+  const { onClose } = panel;
+  panel = null;
+  document.documentElement.dataset.panel = 'closed';
+  root.classList.remove('open');
+  root.classList.add('closing');
+  clearTimeout(panelTimer);
+  panelTimer = setTimeout(() => { if (!panel) { root.classList.remove('closing'); root.replaceChildren(); } }, reducedMotion() ? 140 : 260);
+  onClose?.();
+}
+
 // ---------- Dialogs (app-owned; never window.confirm) ----------
 
 function closeDialog(immediate = false) {
   const node = document.querySelector('.modal-backdrop[data-moyu-modal]');
   if (!node) return;
   node.removeAttribute('data-moyu-modal');
-  if (immediate || !motionAllowed()) { node.remove(); return; }
+  if (immediate) { node.remove(); return; }
   node.classList.add('closing');
-  setTimeout(() => node.remove(), 160);
+  setTimeout(() => node.remove(), 180);
 }
 
 export function openConfirmDialog({ title, message, confirmText = '确认', danger = false, onConfirm }) {
@@ -308,6 +398,7 @@ export function openTextDialog({ title, value = '', confirmText = '保存', onCo
 export function handleBack() {
   if (document.querySelector('.modal-backdrop[data-moyu-modal]')) { closeDialog(); return true; }
   if (sheet) { closeSheet(); return true; }
+  if (panel) { closePanel(); return true; }
   const nav = document.querySelector('.turn-nav.open');
   if (nav) { nav.classList.remove('open'); nav.querySelector('.turn-nav-toggle')?.setAttribute('aria-expanded', 'false'); return true; }
   if (drawerOpen && !window.matchMedia?.('(min-width: 960px)')?.matches) { setDrawer(false); return true; }

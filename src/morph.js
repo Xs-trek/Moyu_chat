@@ -6,10 +6,19 @@
 // order (looking ahead, so an inserted or removed optional child does not cascade into rebuilds).
 // `data-morph="own"` keeps an element's children (the timeline has its own keyed reconciler).
 // Motion classes (`fx-*`) only play on nodes that are new: morph never adds them to a node that already
-// exists, and keeps the ones still running. A removed node with `data-exit` plays `fx-exit-<name>` first.
+// exists, and keeps the ones still running. A removed node with `data-exit` plays `fx-exit-<name>` first;
+// `data-exit="collapse"` also closes the gap it leaves so the rows below glide up. An element with
+// `data-swap` cross-fades its text when a morph changes it.
+//
+// With the system "remove animations" setting, CSS turns every fx-* motion into a short cross-fade and
+// the JS-driven motions here (FLIP, collapse, swap) are skipped.
 
-const reduceMotion = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
-export function motionAllowed() { return !reduceMotion(); }
+/** True when the system asks for reduced motion (Android: Remove animations / animator scale off). */
+export function reducedMotion() { return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches); }
+
+export const EASE_STANDARD = 'cubic-bezier(.2, 0, 0, 1)';
+export const EASE_DECEL = 'cubic-bezier(.05, .7, .1, 1)';
+export const EASE_ACCEL = 'cubic-bezier(.3, 0, .8, .15)';
 
 function keyOf(node) {
   if (node.nodeType !== Node.ELEMENT_NODE) return null;
@@ -54,10 +63,46 @@ function syncFormState(from, to) {
 /** Removes a node, letting it play its exit animation first when it declares one. */
 export function removeNode(node) {
   const exit = node.nodeType === Node.ELEMENT_NODE ? node.getAttribute('data-exit') : null;
-  if (!exit || !motionAllowed() || !node.isConnected) { node.remove(); return; }
+  if (!exit || !node.isConnected) { node.remove(); return; }
   node.setAttribute('data-leaving', '1');
+  if (exit === 'collapse') { collapse(node); return; }
   node.classList.add(`fx-exit-${exit}`);
   setTimeout(() => node.remove(), 400);
+}
+
+/** Fades a row out, then closes the gap it leaves (a bounded height animation on that one row). */
+function collapse(node) {
+  if (reducedMotion() || !node.animate) { node.remove(); return; }
+  const height = node.offsetHeight;
+  node.style.overflow = 'hidden';
+  node.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(-16px)' }], { duration: 180, easing: EASE_ACCEL, fill: 'forwards' })
+    .finished.then(() => node.animate([{ height: `${height}px` }, { height: '0px', marginTop: '0px', marginBottom: '0px' }], { duration: 240, easing: EASE_STANDARD, fill: 'forwards' }).finished)
+    .catch(() => {}).finally(() => node.remove());
+}
+
+/**
+ * FLIP: runs `mutate`, then slides every keyed child of `container` from where it was to where it is now,
+ * so a reorder or a removal glides instead of jumping. New keyed children rise in.
+ */
+export function flip(container, mutate) {
+  if (!container || reducedMotion() || !container.isConnected || container.offsetParent === null) { mutate(); return; }
+  const before = new Map();
+  for (const node of container.querySelectorAll('[data-key]')) before.set(node.getAttribute('data-key'), node.getBoundingClientRect().top);
+  mutate();
+  if (!before.size) return;
+  for (const node of container.querySelectorAll('[data-key]')) {
+    if (leaving(node) || !node.animate) continue;
+    const key = node.getAttribute('data-key');
+    if (!before.has(key)) { if (!key.startsWith('group:')) node.animate([{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }], { duration: 300, easing: EASE_DECEL }); continue; }
+    const dy = before.get(key) - node.getBoundingClientRect().top;
+    if (Math.abs(dy) > 1) node.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 300, easing: EASE_DECEL });
+  }
+}
+
+/** Cross-fades a value that changed in place (numbers, labels). */
+export function swapIn(node) {
+  if (!node?.animate || reducedMotion()) return;
+  node.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE_DECEL });
 }
 
 function morphChildren(from, to) {
@@ -89,9 +134,11 @@ function morphChildren(from, to) {
 export function morph(from, to) {
   if (!sameKind(from, to)) { from.replaceWith(to); return to; }
   if (from.nodeType === Node.TEXT_NODE) { if (from.data !== to.data) from.data = to.data; return from; }
+  const swap = from.hasAttribute('data-swap') ? from.textContent : null;
   syncAttributes(from, to);
   if (from.getAttribute('data-morph') !== 'own') morphChildren(from, to);
   syncFormState(from, to);
+  if (swap !== null && swap !== from.textContent) swapIn(from);
   return from;
 }
 
@@ -102,9 +149,9 @@ export function morphInto(parent, ...children) {
   morphChildren(parent, holder);
 }
 
-/** Marks a freshly built node with a one-shot motion class; it is cleared when the animation ends. */
+/** Marks a freshly built node with a one-shot motion class; it is cleared when the animation ends. Under reduced motion CSS plays it as a short fade. */
 export function withFx(node, name) {
-  if (node && motionAllowed()) node.classList.add(`fx-${name}`);
+  if (node) node.classList.add(`fx-${name}`);
   return node;
 }
 

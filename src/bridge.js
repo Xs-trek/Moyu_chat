@@ -53,6 +53,8 @@ export function bindHost(onView) {
       if (!patchView(envelope.patch, revision)) postIntent('view.reload', {});
       return;
     }
+    // Native messages use the page's own toast, so the app has one notification style.
+    if (envelope.type === 'notice' && envelope.text) { notice(envelope.level === 'error' ? 'error' : envelope.level === 'warning' ? 'warning' : 'info', String(envelope.text)); return; }
     if (envelope.type === 'intent.result' && envelope.requestId) {
       pending.delete(envelope.requestId);
       const waiter = waiters.get(envelope.requestId);

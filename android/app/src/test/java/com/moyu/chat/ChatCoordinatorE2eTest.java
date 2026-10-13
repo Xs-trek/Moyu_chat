@@ -53,8 +53,7 @@ public class ChatCoordinatorE2eTest {
         volatile boolean runtimeLeaseAllowed = true;
         volatile String appearance = "";
         @Override public void dispatch(JSONObject envelope) { envelopes.add(envelope); }
-        @Override public void openProviderEditor(ChatDatabase.Provider existing) { editorProvider = existing; editorOpened = true; }
-        @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) { }
+        @Override public void openCredentialEditor(ChatDatabase.Provider provider) { editorProvider = provider; editorOpened = true; }
         @Override public boolean setTurnRuntimeActive(String sessionId, boolean active) { return !active || runtimeLeaseAllowed; }
         @Override public void showMessage(String text) { toasts.add(text); }
         @Override public void applyAppearance(String resolvedTheme, String tone) { appearance = resolvedTheme + ":" + tone; }
@@ -110,6 +109,18 @@ public class ChatCoordinatorE2eTest {
             Thread.sleep(50);
         }
         fail("timed out waiting for: " + what);
+    }
+
+    private JSONObject resultOf(String id) {
+        synchronized (host.envelopes) {
+            for (JSONObject e : host.envelopes) if ("intent.result".equals(e.optString("type")) && id.equals(e.optString("requestId"))) return e;
+        }
+        return null;
+    }
+
+    private JSONObject awaitResult(String id) throws Exception {
+        await("result " + id, () -> resultOf(id) != null);
+        return resultOf(id);
     }
 
     private JSONObject latestView() {
@@ -1026,24 +1037,51 @@ public class ChatCoordinatorE2eTest {
         });
     }
 
-    @Test public void configureNewProviderIntentOpensBlankEditorWithoutError() throws Exception {
-        // The WebView sends an empty payload for "new provider"; this used to bind null into SQLite.
-        String requestId = post("provider.configure.open", new JSONObject());
-        await("blank editor opened", () -> host.editorOpened);
-        assertNull("new-provider editor receives a blank provider", host.editorProvider);
-        synchronized (host.envelopes) {
-            for (JSONObject e : host.envelopes) {
-                if ("intent.result".equals(e.optString("type")) && requestId.equals(e.optString("requestId"))) {
-                    assertTrue("configure open must not fail: " + e, e.optBoolean("ok"));
-                }
-            }
-        }
+    @Test public void webEditorsSaveProviderAndModelWhileTheKeyStaysNative() throws Exception {
+        // New provider: name + endpoint only. The WebView never sends or receives a key.
+        JSONObject saved = awaitResult(post("provider.save", new JSONObject().put("displayName", "Web Provider").put("baseUrl", server.url("/v1").toString())));
+        assertTrue("provider save must succeed: " + saved, saved.optBoolean("ok"));
+        String providerId = saved.getJSONObject("data").getString("providerId");
+        assertFalse(saved.getJSONObject("data").getBoolean("hasCredential"));
+        assertNotNull(app.database().getProvider(providerId));
 
-        host.editorOpened = false;
-        host.editorProvider = null;
-        post("provider.configure.open", new JSONObject().put("providerId", "missing"));
-        await("unknown provider id falls back to blank editor", () -> host.editorOpened);
-        assertNull(host.editorProvider);
+        // Validation errors come back as a failed result for the form, not as a native toast.
+        JSONObject blank = awaitResult(post("provider.save", new JSONObject().put("providerId", providerId).put("displayName", " ").put("baseUrl", "https://x.test/v1")));
+        assertFalse(blank.optBoolean("ok"));
+        assertTrue(blank.getJSONObject("error").getString("summary").contains("显示名称"));
+
+        // The key is entered natively.
+        post("provider.credential.edit", new JSONObject().put("providerId", providerId));
+        await("native key editor opened", () -> host.editorOpened);
+        assertEquals(providerId, host.editorProvider.id);
+        coordinator.saveProvider(host.editorProvider, "sk-web-editor-secret");
+        await("key stored", () -> secrets.has(providerId));
+
+        JSONObject preview = awaitResult(post("model.catalog.preview", new JSONObject().put("providerId", providerId).put("modelId", "mock-model")));
+        assertTrue(preview.optBoolean("ok"));
+        assertTrue(preview.getJSONObject("data").getJSONArray("rows").length() > 0);
+
+        JSONObject manual = new JSONObject().put("providerId", providerId).put("modelId", "mock-model").put("displayName", "Mock")
+                .put("configMode", "manual").put("protocol", OpenAiCompatibleTransport.CHAT_COMPLETIONS).put("authMode", ProviderAuth.BEARER)
+                .put("reasoningWire", ReasoningPolicy.WIRE_NONE).put("inputModalities", "text").put("outputModalities", "text")
+                .put("contextTokens", "32000").put("inputTokens", "0").put("maxOutputTokens", "4096").put("thinkingBudgetTokens", "0")
+                .put("thinkingMode", ReasoningPolicy.THINKING_PROVIDER_DEFAULT).put("continuationMode", ProviderContinuationPolicy.NONE)
+                .put("harnessPreset", HarnessProfile.BALANCED).put("clientToolCalling", ClientToolRuntime.NONE);
+        JSONObject model = awaitResult(post("model.save", manual));
+        assertTrue("model save must succeed: " + model, model.optBoolean("ok"));
+        String profileId = model.getJSONObject("data").getString("modelProfileId");
+        assertEquals(32000, app.database().getModelProfile(profileId).contextTokens);
+
+        JSONObject duplicate = awaitResult(post("model.save", new JSONObject(manual.toString()).put("contextTokens", "abc")));
+        assertFalse("bad limits must fail with a readable error", duplicate.optBoolean("ok"));
+
+        JSONObject edited = awaitResult(post("model.save", new JSONObject(manual.toString()).put("modelProfileId", profileId).put("displayName", "Renamed")));
+        assertTrue(edited.optBoolean("ok"));
+        assertEquals("Renamed", app.database().getModelProfile(profileId).displayName);
+
+        synchronized (host.envelopes) {
+            for (JSONObject e : host.envelopes) assertFalse("the API key must never reach the WebView", e.toString().contains("sk-web-editor-secret"));
+        }
     }
 
     @Test public void rejectedForegroundLeaseDoesNotAcceptTurnAndRestoresExactDraft() throws Exception {

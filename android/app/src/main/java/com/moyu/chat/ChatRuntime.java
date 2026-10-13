@@ -64,14 +64,9 @@ final class ChatRuntime implements ChatCoordinator.Host {
         else synchronized (this) { deferredMessage = text; }
     }
 
-    @Override public void openProviderEditor(ChatDatabase.Provider existing) {
+    @Override public void openCredentialEditor(ChatDatabase.Provider provider) {
         MainActivity current = visibleActivity();
-        if (current != null) current.openProviderEditor(existing);
-    }
-
-    @Override public void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing) {
-        MainActivity current = visibleActivity();
-        if (current != null) current.openModelEditor(provider, existing);
+        if (current != null) current.openCredentialEditor(provider);
     }
 
     @Override public void openImagePicker(String sessionId) {

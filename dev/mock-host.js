@@ -268,15 +268,68 @@ function handle(type, p) {
     case 'turn.rate': for (const x of world.sessions) for (const m of x.messages) if (m.turnId === p.turnId) { if (p.rating) m.rating = p.rating; else delete m.rating; } break;
     case 'verification.feedback': { const item = s?.messages.find((x) => x.localSeq === p.localSeq); if (item?.verification) item.verification = { ...item.verification, feedbackLabel: p.label }; break; }
     case 'external.open': notice(`打开外部链接 ${p.url}`); return;
-    case 'provider.configure.open': case 'model.configure.open': notice('原生配置对话框（预览中不可用）'); return;
+    case 'provider.credential.edit': {
+      // Native password dialog: not available in the preview, so pretend the key was saved.
+      const provider = world.providers.find((x) => x.providerId === p.providerId);
+      if (provider) { provider.hasCredential = true; provider.configured = provider.models.length > 0; }
+      notice('原生 API Key 输入框（预览中直接视为已保存）');
+      break;
+    }
     default: throw new Error(`unsupported intent: ${type}`);
   }
   emitView();
 }
 
+// Data-returning editor intents (ChatCoordinator: provider.save, model.save, model.editor.options, model.catalog.preview).
+const opt = (value, hint = '') => ({ value, hint });
+const EDITOR_INTENTS = {
+  'model.editor.options': () => ({
+    protocol: [opt('openai-chat-completions', '追加 /chat/completions'), opt('openai-responses', '追加 /responses'), opt('anthropic-messages', '追加 /messages')],
+    authMode: [opt('bearer', 'Authorization: Bearer 请求头'), opt('x-api-key', 'x-api-key 请求头'), opt('api-key', 'api-key 请求头')],
+    reasoningWire: [opt('none', '不发送推理档位'), opt('openai-responses', 'Responses 的 reasoning.effort'), opt('openai-chat-effort', 'Chat Completions 的 reasoning_effort'), opt('anthropic-effort', 'Messages 的 effort')],
+    thinkingMode: [opt('provider-default', '不猜第三方模型能力'), opt('adaptive'), opt('disabled'), opt('manual', '需要填写 Manual thinking budget')],
+    clientToolCalling: [opt('none'), opt('openai-chat-tools'), opt('openai-responses-tools'), opt('anthropic-tools')],
+    reasoningLevels: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    continuationMode: ['none', 'native'], harnessPreset: ['lean', 'balanced', 'reinforced'],
+  }),
+  'model.catalog.preview': (p) => {
+    const known = /claude|gpt|deepseek/i.test(p.modelId || '');
+    return { resolved: known, rows: [['来源', known ? 'reviewed-catalog' : 'neutral-defaults'], ['协议', known ? (/claude/i.test(p.modelId) ? 'anthropic-messages' : 'openai-chat-completions') : '未识别（需高级配置）'],
+      ['推理', known ? 'low/medium/high' : 'Provider 默认 / 未声明'], ['输入 / 输出', /vision|gpt|claude/i.test(p.modelId || '') ? 'text,image / text' : 'text / text'],
+      ['Client Tools', known ? '支持' : '未声明'], ['联网', 'Moyu fallback'], ['Continuation', 'none'], ['Harness', known ? 'balanced' : 'lean']] };
+  },
+  'provider.save': (p) => {
+    if (!String(p.displayName || '').trim()) throw new Error('显示名称不能为空');
+    if (!/^https:\/\//.test(String(p.baseUrl || ''))) throw new Error('Base URL 必须是 https:// 开头的地址');
+    let provider = world.providers.find((x) => x.providerId === p.providerId);
+    if (!provider) { provider = { providerId: `p-${Date.now()}`, hasCredential: false, configured: false, models: [] }; world.providers.push(provider); }
+    Object.assign(provider, { displayName: p.displayName.trim(), baseUrl: p.baseUrl.trim() });
+    return { providerId: provider.providerId, hasCredential: provider.hasCredential };
+  },
+  'model.save': (p) => {
+    const provider = world.providers.find((x) => x.providerId === p.providerId);
+    if (!provider) throw new Error('provider not found');
+    if (!String(p.modelId || '').trim()) throw new Error('Model ID 不能为空');
+    for (const [k, label] of [['contextTokens', 'Context Window'], ['maxOutputTokens', 'Max Output']]) if (!/^\d+$/.test(String(p[k] || ''))) throw new Error(`${label} 必须是整数`);
+    let model = provider.models.find((m) => m.modelProfileId === p.modelProfileId);
+    if (!model) { model = { modelProfileId: `m-${Date.now()}` }; provider.models.push(model); }
+    Object.assign(model, { ...p, displayName: p.displayName || p.modelId, contextTokens: Number(p.contextTokens), inputTokens: Number(p.inputTokens || 0), maxOutputTokens: Number(p.maxOutputTokens), thinkingBudgetTokens: Number(p.thinkingBudgetTokens || 0) });
+    delete model.providerId;
+    provider.configured = provider.hasCredential;
+    return { modelProfileId: model.modelProfileId };
+  },
+};
+
 window.MoyuHost = {
   postMessage(raw) {
     const message = JSON.parse(raw);
+    if (EDITOR_INTENTS[message.type]) {
+      setTimeout(() => {
+        try { const data = EDITOR_INTENTS[message.type](message.payload || {}); emitView(); result(message.requestId, true, '', data); }
+        catch (error) { result(message.requestId, false, error.message); }
+      }, 160);
+      return;
+    }
     if (message.type === 'turn.rerun') {
       try {
         const source = findSession(message.payload?.localSessionId);

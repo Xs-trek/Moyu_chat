@@ -35,6 +35,7 @@ const ICONS = {
   chevronDown: ['M6 9l6 6 6-6'],
   chevronUp: ['M6 15l6-6 6 6'],
   close: ['M6 6l12 12', 'M18 6L6 18'],
+  back: ['M15 6l-6 6 6 6'],
   branch: ['M7 4v10', 'M7 14a4 4 0 0 0 4 4h2', 'M17 6a2 2 0 1 0 0 .01', 'M17 8v2a4 4 0 0 1-4 4H7'],
   edit: ['M4 20h4L19 9l-4-4L4 16z', 'M13 7l4 4'],
   undo: ['M9 7L4 12l5 5', 'M4 12h11a5 5 0 0 1 0 10h-3'],
@@ -66,6 +67,20 @@ export function iconButton(name, label, action, data = {}, cls = 'icon-btn') {
 
 export function button(text, action, data = {}, cls = 'btn') {
   return h('button', { type: 'button', class: cls, dataset: { action, ...data } }, text);
+}
+
+/**
+ * Segmented controls are equal-width columns with one sliding pill (::before) positioned by --seg-n /
+ * --seg-i. Call after building or after changing which button is on.
+ */
+export function syncSegment(node) {
+  if (!node) return node;
+  const items = [...node.children].filter((child) => child.tagName === 'BUTTON');
+  const index = items.findIndex((child) => child.classList.contains('on') || child.getAttribute('aria-checked') === 'true' || child.getAttribute('aria-selected') === 'true');
+  node.style.setProperty('--seg-n', String(Math.max(1, items.length)));
+  node.style.setProperty('--seg-i', String(Math.max(0, index)));
+  node.classList.toggle('has-pill', index >= 0);
+  return node;
 }
 
 export function fmtTime(value) {

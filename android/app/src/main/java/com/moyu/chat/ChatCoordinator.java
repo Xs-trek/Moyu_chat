@@ -17,7 +17,7 @@ import java.util.concurrent.ScheduledExecutorService;
 final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_ITEMS = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
-    interface Host { void dispatch(JSONObject envelope); void openProviderEditor(ChatDatabase.Provider existing); void openModelEditor(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing); default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } }
+    interface Host { void dispatch(JSONObject envelope); /** Native secure entry for a Provider's API Key: the key goes straight to ChatSecretStore, never through the WebView. */ default void openCredentialEditor(ChatDatabase.Provider provider) { } default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } }
 
     private final ChatDatabase db;
     private final ChatSecretStore secrets;
@@ -105,49 +105,8 @@ final class ChatCoordinator implements AutoCloseable {
 
     void saveProvider(ChatDatabase.Provider provider, String apiKey, SaveCallback completion) {
         worker.execute(() -> {
-            String previousSecret = null;
-            boolean secretWritten = false;
             try {
-                if (provider == null || provider.id == null || provider.id.trim().isEmpty()) throw new IllegalArgumentException("provider id required");
-                provider.id = bounded(provider.id, 128, "provider id");
-                provider.displayName = bounded(provider.displayName, 128, "display name");
-                // Provider is the shared account/connection boundary. Protocol/auth/reasoning wire are
-                // model-deployment capabilities and are validated per Model Profile below.
-                provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
-
-                java.util.List<ChatDatabase.ModelProfile> affectedProfiles = db.listModelProfiles(provider.id);
-                for (ChatDatabase.ModelProfile profile : affectedProfiles) {
-                    try {
-                        if (ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(profile.configMode))) {
-                            // Endpoint identity is part of deployment authority. Re-resolve Auto whenever the
-                            // shared endpoint changes so stale official/native capabilities cannot follow it.
-                            ModelCatalog.applyAuto(provider, profile,
-                                    profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
-                        }
-                        ModelProfileValidator.validateResolvedProfile(provider, profile);
-                        if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
-                    } catch (IllegalArgumentException profileError) {
-                        throw new IllegalArgumentException("Model “" + profile.modelId + "” 配置无效：" + profileError.getMessage());
-                    }
-                }
-
-                String nextSecret = apiKey == null ? "" : apiKey.trim();
-                boolean credentialChanged = !nextSecret.isEmpty();
-                if (credentialChanged) {
-                    previousSecret = secrets.get(provider.id);
-                    secrets.put(provider.id, nextSecret);
-                    secretWritten = true;
-                }
-                try {
-                    db.saveProviderAndProfiles(provider, affectedProfiles, credentialChanged);
-                } catch (Exception databaseError) {
-                    if (secretWritten) {
-                        try { secrets.put(provider.id, previousSecret == null ? "" : previousSecret); }
-                        catch (Exception restoreError) { throw new IllegalStateException("provider save failed and previous credential could not be restored", databaseError); }
-                    }
-                    throw databaseError;
-                }
-                emitView();
+                persistProvider(provider, apiKey);
                 if (completion != null) completion.complete(null);
             } catch (Exception error) {
                 String message = safe(error);
@@ -156,38 +115,158 @@ final class ChatCoordinator implements AutoCloseable {
         });
     }
 
+    /** Validates and stores a Provider (and, when given, its API Key) on the calling worker thread. */
+    private void persistProvider(ChatDatabase.Provider provider, String apiKey) throws Exception {
+        String previousSecret = null;
+        boolean secretWritten = false;
+        if (provider == null || provider.id == null || provider.id.trim().isEmpty()) throw new IllegalArgumentException("provider id required");
+        provider.id = bounded(provider.id, 128, "provider id");
+        provider.displayName = bounded(provider.displayName, 128, "display name");
+        // Provider is the shared account/connection boundary. Protocol/auth/reasoning wire are
+        // model-deployment capabilities and are validated per Model Profile below.
+        provider.baseUrl = ProviderEndpoint.normalize(provider.baseUrl);
+
+        java.util.List<ChatDatabase.ModelProfile> affectedProfiles = db.listModelProfiles(provider.id);
+        for (ChatDatabase.ModelProfile profile : affectedProfiles) {
+            try {
+                if (ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(profile.configMode))) {
+                    // Endpoint identity is part of deployment authority. Re-resolve Auto whenever the
+                    // shared endpoint changes so stale official/native capabilities cannot follow it.
+                    ModelCatalog.applyAuto(provider, profile,
+                            profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
+                }
+                ModelProfileValidator.validateResolvedProfile(provider, profile);
+                if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
+            } catch (IllegalArgumentException profileError) {
+                throw new IllegalArgumentException("Model “" + profile.modelId + "” 配置无效：" + profileError.getMessage());
+            }
+        }
+
+        String nextSecret = apiKey == null ? "" : apiKey.trim();
+        boolean credentialChanged = !nextSecret.isEmpty();
+        if (credentialChanged) {
+            previousSecret = secrets.get(provider.id);
+            secrets.put(provider.id, nextSecret);
+            secretWritten = true;
+        }
+        try {
+            db.saveProviderAndProfiles(provider, affectedProfiles, credentialChanged);
+        } catch (Exception databaseError) {
+            if (secretWritten) {
+                try { secrets.put(provider.id, previousSecret == null ? "" : previousSecret); }
+                catch (Exception restoreError) { throw new IllegalStateException("provider save failed and previous credential could not be restored", databaseError); }
+            }
+            throw databaseError;
+        }
+        emitView();
+    }
+
     void saveModelProfile(ChatDatabase.ModelProfile profile) { saveModelProfile(profile, null); }
 
     void saveModelProfile(ChatDatabase.ModelProfile profile, SaveCallback completion) {
         worker.execute(() -> {
             try {
-                ChatDatabase.Provider provider = profile == null ? null : db.getProvider(profile.providerId);
-                if (profile == null || provider == null) throw new IllegalArgumentException("provider not found");
-                profile.id = bounded(profile.id, 160, "model profile id");
-                profile.providerId = bounded(profile.providerId, 128, "provider id");
-                profile.modelId = bounded(profile.modelId, 256, "model id");
-                profile.displayName = bounded(profile.displayName == null || profile.displayName.trim().isEmpty() ? profile.modelId : profile.displayName, 128, "model display name");
-                profile.configMode = ModelCatalog.normalizeConfigMode(profile.configMode);
-                if (ModelCatalog.CONFIG_AUTO.equals(profile.configMode)) {
-                    // Auto is catalog-owned as one coherent deployment profile. Per-field overrides
-                    // belong to Advanced/manual mode; mixing stale manual values into Auto would make
-                    // catalog updates appear applied while silently retaining old limits/capabilities.
-                    ModelCatalog.applyAuto(provider, profile,
-                            profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
-                }
-                ChatDatabase.ModelProfile duplicate = db.findModelProfile(profile.providerId, profile.modelId);
-                if (duplicate != null && !profile.id.equals(duplicate.id)) {
-                    throw new IllegalArgumentException("此 Provider 已存在 Model ID “" + profile.modelId + "”。请编辑已有模型，或填写不同的 Model ID。");
-                }
-                ModelProfileValidator.validateResolvedProfile(provider, profile);
-                if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
-                db.saveModelProfile(profile); emitView();
+                persistModelProfile(profile);
                 if (completion != null) completion.complete(null);
             } catch (Exception error) {
                 String message = safe(error);
                 if (completion != null) completion.complete(message); else host.showMessage(message);
             }
         });
+    }
+
+    /** Validates and stores a Model Profile on the calling worker thread. */
+    private void persistModelProfile(ChatDatabase.ModelProfile profile) throws Exception {
+        ChatDatabase.Provider provider = profile == null ? null : db.getProvider(profile.providerId);
+        if (profile == null || provider == null) throw new IllegalArgumentException("provider not found");
+        profile.id = bounded(profile.id, 160, "model profile id");
+        profile.providerId = bounded(profile.providerId, 128, "provider id");
+        profile.modelId = bounded(profile.modelId, 256, "model id");
+        profile.displayName = bounded(profile.displayName == null || profile.displayName.trim().isEmpty() ? profile.modelId : profile.displayName, 128, "model display name");
+        profile.configMode = ModelCatalog.normalizeConfigMode(profile.configMode);
+        if (ModelCatalog.CONFIG_AUTO.equals(profile.configMode)) {
+            // Auto is catalog-owned as one coherent deployment profile. Per-field overrides
+            // belong to Advanced/manual mode; mixing stale manual values into Auto would make
+            // catalog updates appear applied while silently retaining old limits/capabilities.
+            ModelCatalog.applyAuto(provider, profile,
+                    profile.contextTokens, profile.inputTokens, profile.maxOutputTokens);
+        }
+        ChatDatabase.ModelProfile duplicate = db.findModelProfile(profile.providerId, profile.modelId);
+        if (duplicate != null && !profile.id.equals(duplicate.id)) {
+            throw new IllegalArgumentException("此 Provider 已存在 Model ID “" + profile.modelId + "”。请编辑已有模型，或填写不同的 Model ID。");
+        }
+        ModelProfileValidator.validateResolvedProfile(provider, profile);
+        if (!transports.supports(profile.protocol)) throw new IllegalArgumentException("当前 Protocol 暂不受支持：" + profile.protocol);
+        db.saveModelProfile(profile); emitView();
+    }
+
+    private static JSONObject option(String value, String hint) throws Exception { return new JSONObject().put("value", value).put("hint", hint); }
+
+    /** The deployment vocabulary the validators accept, so the WebView editor never hard-codes it. */
+    static JSONObject modelEditorOptions() throws Exception {
+        return new JSONObject()
+                .put("protocol", new JSONArray()
+                        .put(option(OpenAiCompatibleTransport.CHAT_COMPLETIONS, "追加 /chat/completions"))
+                        .put(option(OpenAiCompatibleTransport.RESPONSES, "追加 /responses"))
+                        .put(option(AnthropicMessagesTransport.PROTOCOL, "追加 /messages")))
+                .put("authMode", new JSONArray()
+                        .put(option(ProviderAuth.BEARER, "Authorization: Bearer 请求头"))
+                        .put(option(ProviderAuth.X_API_KEY, "x-api-key 请求头"))
+                        .put(option(ProviderAuth.API_KEY, "api-key 请求头")))
+                .put("reasoningWire", new JSONArray()
+                        .put(option(ReasoningPolicy.WIRE_NONE, "不发送推理档位"))
+                        .put(option(ReasoningPolicy.WIRE_OPENAI_RESPONSES, "Responses 的 reasoning.effort"))
+                        .put(option(ReasoningPolicy.WIRE_OPENAI_CHAT_EFFORT, "Chat Completions 的 reasoning_effort"))
+                        .put(option(ReasoningPolicy.WIRE_ANTHROPIC_EFFORT, "Messages 的 effort")))
+                .put("thinkingMode", new JSONArray()
+                        .put(option(ReasoningPolicy.THINKING_PROVIDER_DEFAULT, "不猜第三方模型能力"))
+                        .put(option(ReasoningPolicy.THINKING_ADAPTIVE, ""))
+                        .put(option(ReasoningPolicy.THINKING_DISABLED, ""))
+                        .put(option(ReasoningPolicy.THINKING_MANUAL, "需要填写 Manual thinking budget")))
+                .put("clientToolCalling", new JSONArray()
+                        .put(option(ClientToolRuntime.NONE, ""))
+                        .put(option(ClientToolRuntime.OPENAI_CHAT, ""))
+                        .put(option(ClientToolRuntime.OPENAI_RESPONSES, ""))
+                        .put(option(ClientToolRuntime.ANTHROPIC_TOOLS, "")))
+                .put("reasoningLevels", new JSONArray().put(ReasoningPolicy.NONE_LEVEL).put(ReasoningPolicy.MINIMAL).put(ReasoningPolicy.LOW)
+                        .put(ReasoningPolicy.MEDIUM).put(ReasoningPolicy.HIGH).put(ReasoningPolicy.XHIGH).put(ReasoningPolicy.MAX))
+                .put("continuationMode", new JSONArray().put(ProviderContinuationPolicy.NONE).put(ProviderContinuationPolicy.NATIVE))
+                .put("harnessPreset", new JSONArray().put(HarnessProfile.LEAN).put(HarnessProfile.BALANCED).put(HarnessProfile.REINFORCED));
+    }
+
+    /**
+     * Builds a Model Profile from the WebView editor's fields. Limits are explicit deployment inputs in
+     * both modes; Auto leaves wire / capability / Harness metadata to the Model Catalog.
+     */
+    static ChatDatabase.ModelProfile modelProfileFrom(ChatDatabase.Provider provider, ChatDatabase.ModelProfile existing, JSONObject p) {
+        ChatDatabase.ModelProfile m = existing != null ? existing : new ChatDatabase.ModelProfile();
+        if (m.id == null || m.id.trim().isEmpty()) m.id = "model-" + java.util.UUID.randomUUID();
+        m.providerId = provider.id;
+        m.modelId = p.optString("modelId", "").trim();
+        m.displayName = p.optString("displayName", "").trim();
+        if (m.modelId.isEmpty()) throw new IllegalArgumentException("Model ID 不能为空");
+        m.contextTokens = ModelProfileValidator.parseInteger("Context Window", p.optString("contextTokens", ""));
+        m.inputTokens = ModelProfileValidator.parseInteger("Max Input", p.optString("inputTokens", "0"));
+        m.maxOutputTokens = ModelProfileValidator.parseInteger("Max Output", p.optString("maxOutputTokens", ""));
+        ModelProfileValidator.validateLimits(m.contextTokens, m.inputTokens, m.maxOutputTokens);
+        boolean auto = ModelCatalog.CONFIG_AUTO.equals(ModelCatalog.normalizeConfigMode(p.optString("configMode", ModelCatalog.CONFIG_AUTO)));
+        m.configMode = auto ? ModelCatalog.CONFIG_AUTO : ModelCatalog.CONFIG_MANUAL;
+        if (auto) {
+            // persistModelProfile resolves reviewed wire/capability/Harness metadata while preserving the limits above.
+            m.catalogVersion = ModelCatalog.CATALOG_VERSION;
+        } else {
+            m.protocol = p.optString("protocol", "").trim(); m.authMode = p.optString("authMode", "").trim(); m.reasoningWire = p.optString("reasoningWire", "").trim();
+            m.inputModalities = p.optString("inputModalities", "text").trim(); m.outputModalities = p.optString("outputModalities", "text").trim();
+            m.toolCapabilities = p.optString("toolCapabilities", "").trim();
+            m.reasoningLevels = p.optString("reasoningLevels", "").trim();
+            m.thinkingMode = p.optString("thinkingMode", "").trim();
+            m.thinkingBudgetTokens = ModelProfileValidator.parseInteger("Manual thinking budget", p.optString("thinkingBudgetTokens", "0"));
+            m.continuationMode = p.optString("continuationMode", "").trim();
+            m.harnessPreset = p.optString("harnessPreset", "").trim();
+            m.clientToolCalling = p.optString("clientToolCalling", "").trim();
+            m.catalogKey = "unknown"; m.catalogVersion = ""; m.catalogSource = "manual";
+        }
+        return m;
     }
 
     private void handle(String raw) {
@@ -297,18 +376,44 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.delete": deleteSession(required(p, "localSessionId")); break;
                 case "chat.message.edit": editMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
                 case "chat.message.rollback": rollbackMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
-                // Absent providerId means "configure a new provider"; never bind null into the DB layer.
-                case "provider.configure.open": {
-                    String providerId = p.optString("providerId", "");
-                    host.openProviderEditor(providerId.trim().isEmpty() ? null : db.getProvider(providerId));
+                // Configuration editors live in the WebView; only the API Key has a native entry.
+                // Absent providerId means "a new provider"; never bind null into the DB layer.
+                case "provider.save": {
+                    String providerId = p.optString("providerId", "").trim();
+                    ChatDatabase.Provider existing = providerId.isEmpty() ? null : db.getProvider(providerId);
+                    ChatDatabase.Provider provider = existing != null ? existing : new ChatDatabase.Provider();
+                    if (provider.id == null || provider.id.trim().isEmpty()) provider.id = "provider-" + java.util.UUID.randomUUID();
+                    provider.displayName = p.optString("displayName", "").trim();
+                    if (provider.displayName.isEmpty()) throw new IllegalArgumentException("显示名称不能为空");
+                    provider.baseUrl = p.optString("baseUrl", "");
+                    persistProvider(provider, "");
+                    result(requestId, true, null, new JSONObject().put("providerId", provider.id).put("hasCredential", secrets.has(provider.id)));
+                    return;
+                }
+                case "provider.credential.edit": {
+                    ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
+                    if (provider == null) throw new IllegalArgumentException("provider not found");
+                    host.openCredentialEditor(provider);
                     break;
                 }
-                case "model.configure.open": {
-                    String providerId = required(p, "providerId"); ChatDatabase.Provider provider = db.getProvider(providerId);
+                case "model.save": {
+                    ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
                     if (provider == null) throw new IllegalArgumentException("provider not found");
-                    String profileId = p.optString("modelProfileId", "");
-                    host.openModelEditor(provider, profileId.trim().isEmpty() ? null : db.getModelProfile(profileId));
-                    break;
+                    String profileId = p.optString("modelProfileId", "").trim();
+                    ChatDatabase.ModelProfile profile = modelProfileFrom(provider, profileId.isEmpty() ? null : db.getModelProfile(profileId), p);
+                    persistModelProfile(profile);
+                    result(requestId, true, null, new JSONObject().put("modelProfileId", profile.id));
+                    return;
+                }
+                case "model.editor.options": {
+                    result(requestId, true, null, modelEditorOptions());
+                    return; // read-only: no view change
+                }
+                case "model.catalog.preview": {
+                    ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
+                    if (provider == null) throw new IllegalArgumentException("provider not found");
+                    result(requestId, true, null, ModelCatalog.preview(provider, p.optString("modelId", "").trim()));
+                    return; // read-only: no view change
                 }
                 case "verification.feedback": recordVerificationFeedback(required(p, "localSessionId"), requiredSeq(p), required(p, "label")); break;
                 case "branch.create.local": createLocalBranch(required(p, "localSessionId"), p.has("throughSeq") ? p.optInt("throughSeq") : null); break;
