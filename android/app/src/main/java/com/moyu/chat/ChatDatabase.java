@@ -911,8 +911,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     /** Per model × context mode statistics of turns started at or after {@code sinceIso}. */
-    public synchronized JSONArray turnStats(String sinceIso) {
-        TurnStats stats = new TurnStats();
+    public synchronized JSONArray turnStats(String sinceIso) { return turnStats(sinceIso, null); }
+
+    /** Finished turns since {@code sinceIso}, grouped by {@code dims} (see TurnStats.GROUPINGS). */
+    public synchronized JSONArray turnStats(String sinceIso, String[] dims) {
+        TurnStats stats = new TurnStats(dims);
         SQLiteDatabase db = getReadableDatabase();
         String sql = "SELECT t.turn_id,t.config,t.usage,t.status,t.rating,s.stage,s.status,s.input_tokens,s.output_tokens,s.detail"
                 + " FROM turns t LEFT JOIN turn_spans s ON s.turn_id=t.turn_id WHERE t.started_at>=? AND t.status<>'running' ORDER BY t.turn_id,s.ordinal";
@@ -980,6 +983,38 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         String[] args = throughSeq == null ? new String[]{sessionId} : new String[]{sessionId, String.valueOf(throughSeq)};
         try (Cursor c = getReadableDatabase().rawQuery(sql, args)) {
             while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
+        }
+        return out;
+    }
+
+    /** Records the outcome of a key check or of a turn; returns false when nothing changed. */
+    public synchronized boolean setKeyStatus(String providerId, String status, String checkedAt) {
+        if (providerId == null || status == null) return false;
+        Provider current = getProvider(providerId);
+        if (current == null) return false;
+        if (status.equals(current.keyStatus) && (checkedAt == null || checkedAt.equals(current.keyCheckedAt))) return false;
+        ContentValues v = new ContentValues(); v.put("key_status", status);
+        if (checkedAt != null) v.put("key_checked_at", checkedAt);
+        return getWritableDatabase().update("providers", v, "provider_id=?", new String[]{providerId}) == 1;
+    }
+
+    /**
+     * Estimated spend of an account's turns started at or after {@code sinceIso}, per currency (turns.config
+     * names the account; turns.usage carries the estimate). Turns without a price add nothing.
+     */
+    public synchronized JSONObject spendSince(String providerId, String sinceIso) {
+        JSONObject out = new JSONObject();
+        if (providerId == null || sinceIso == null) return out;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT config,usage FROM turns WHERE started_at>=? AND instr(usage,'\"cost\"')>0", new String[]{sinceIso})) {
+            while (c.moveToNext()) {
+                try {
+                    if (!providerId.equals(new JSONObject(c.getString(0)).optString("providerId", ""))) continue;
+                    JSONObject cost = new JSONObject(c.getString(1)).optJSONObject("cost");
+                    if (cost == null || !cost.has("amount")) continue;
+                    String currency = cost.optString("currency", "USD");
+                    out.put(currency, out.optDouble(currency, 0d) + cost.optDouble("amount", 0d));
+                } catch (Exception ignored) { }
+            }
         }
         return out;
     }

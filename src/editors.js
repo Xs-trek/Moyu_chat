@@ -115,6 +115,7 @@ function openAccountForm(provider, preset) {
       h('div', { class: 'row' }, h('span', { class: 'grow' }), button('添加路线', 'ed-route-add', {}, 'btn small')),
       h('h3', { class: 'form-section', text: 'API Key' }),
       keyRow(provider),
+      budgetBlock(provider),
       provider ? h('div', { class: 'danger-zone' }, button('删除这个账号', 'ed-account-delete', {}, 'btn small danger')) : null)]);
   editor = { kind: 'provider', providerId: provider?.providerId || '', presetId: preset?.id || provider?.presetId || 'custom-openai', node, preset };
 }
@@ -143,6 +144,8 @@ function routeCard(r, preset) {
   } else if (protocol === 'anthropic-messages') {
     advanced.push(block('自动缓存', '在请求顶层加 cache_control，让服务端自动缓存对话前缀。只在端点支持时开启。', segmented('autoCache', [['true', '开启'], ['false', '关闭']], String(Boolean(dialect.autoCache)), '自动缓存')));
   }
+  advanced.push(block('并发上限', '这条路线上同时生成的回答数；超出的回合排队，轮到时自动开始。0 = 不限。',
+    textInput('maxConcurrent', String(dialect.maxConcurrent || 0), { inputmode: 'numeric', label: '并发上限' })));
   const headers = Object.entries(r.headers || {});
   const suggestions = (preset?.suggestedHeaders || []).filter((name) => !(name in (r.headers || {})));
   return h('article', { class: 'route-card', dataset: { routeKey: r.key, routeId: r.routeId || '', protocol, presetRouteId: r.presetRouteId || '', presetBaseUrl: r.presetBaseUrl || '' } },
@@ -173,6 +176,33 @@ function headerRow(name, value) {
     iconButton('close', '删除请求头', 'ed-header-remove'));
 }
 
+/** Currency the account's models are priced in (first priced model), for the budget default. */
+function pricedCurrency(provider) {
+  for (const m of provider?.models || []) if (m.pricing?.currency) return m.pricing.currency;
+  return 'USD';
+}
+
+function budgetBlock(provider) {
+  const budget = provider?.budget || {};
+  return h('div', { class: 'budget-block' },
+    h('h3', { class: 'form-section', text: '预算' }),
+    h('p', { class: 'form-help', text: '按模型价格估算这个账号的花费（含辅助调用）。达到预算后，每一轮发送前都会先问你；不设就不限。没有价格的模型不计入。' }),
+    block('币种', '和模型价格的币种一致才会计入。', segmented('budgetCurrency', [['USD', '美元 $'], ['CNY', '人民币 ¥']], budget.currency || pricedCurrency(provider), '预算币种')),
+    h('div', { class: 'row budget-fields' },
+      h('div', { class: 'grow' }, textField('budgetDaily', '每日', '', budget.daily ?? '', { inputmode: 'decimal', placeholder: '不限' })),
+      h('div', { class: 'grow' }, textField('budgetMonthly', '每月', '', budget.monthly ?? '', { inputmode: 'decimal', placeholder: '不限' }))));
+}
+
+function collectBudget() {
+  const node = editor.node.querySelector('.budget-block');
+  if (!node) return null;
+  const value = (name) => node.querySelector(`input[name="${name}"]`)?.value.trim() || '';
+  const out = { currency: node.querySelector('.segmented[data-field="budgetCurrency"]')?.dataset.value || 'USD' };
+  if (value('budgetDaily')) out.daily = value('budgetDaily');
+  if (value('budgetMonthly')) out.monthly = value('budgetMonthly');
+  return out;
+}
+
 function keyRow(provider) {
   const has = Boolean(provider?.hasCredential);
   return h('div', { class: 'form-field' },
@@ -189,6 +219,8 @@ function collectRoutes() {
     const dialect = {};
     for (const node of card.querySelectorAll('[data-action="ed-dialect"]')) dialect[node.dataset.field] = node.dataset.value;
     for (const node of card.querySelectorAll('.segmented[data-field]')) dialect[node.dataset.field] = node.dataset.value === 'true';
+    const concurrent = field('maxConcurrent');
+    if (concurrent && concurrent !== '0') dialect.maxConcurrent = concurrent;
     const headers = {};
     for (const row of card.querySelectorAll('.header-row:not([data-leaving])')) {
       const name = row.querySelector('input[name="headerName"]').value.trim();
@@ -205,6 +237,8 @@ function collectRoutes() {
 
 async function saveAccount({ thenKey = false } = {}) {
   const payload = { displayName: editor.node.querySelector('input[name="displayName"]')?.value.trim() || '', routes: collectRoutes() };
+  const budget = collectBudget();
+  if (budget) payload.budget = budget;
   if (editor.providerId) payload.providerId = editor.providerId; else payload.presetId = editor.presetId;
   const data = await submit('provider.save', payload);
   if (!data) return;
@@ -267,7 +301,8 @@ export function openModelEditor(providerId, modelProfileId = '') {
         block('路线', '这个模型通过哪条路线（协议 + 地址）访问。', choiceButton('ed-route', { value: route.routeId }, routeLabel(route))),
         block('Model ID', '写入请求 body 的 model 字符串。', h('div', { class: 'row' },
           h('div', { class: 'grow' }, textInput('modelId', m?.modelId || '', { placeholder: 'model-id', label: 'Model ID' })),
-          h('button', { type: 'button', class: 'btn small', dataset: { action: 'ed-catalog' }, text: '从目录选' }))),
+          h('button', { type: 'button', class: 'btn small', dataset: { action: 'ed-catalog' }, text: '从目录选' }),
+          h('button', { type: 'button', class: 'btn small', dataset: { action: 'ed-discover' }, text: '端点列表' }))),
         textField('displayName', '显示名称', '留空时使用目录名称或 Model ID。', m?.displayName || '', { placeholder: '可选' }),
         m ? block('启用', '停用的模型保留配置，但不会出现在模型选择里。', segmented('enabled', [['true', '启用'], ['false', '停用']], String(m.enabled !== false), '启用')) : null,
         h('h3', { class: 'form-section', text: '能力与参数' }),
@@ -426,6 +461,25 @@ function pickFromCatalog() {
   }).catch((error) => setNotice({ level: 'error', text: `无法读取目录：${error?.message || error}` }));
 }
 
+/** The route's own model list (GET …/models with the account key); limits it reports show as "端点" sources. */
+function pickFromEndpoint(target) {
+  if (target) { target.disabled = true; target.textContent = '读取中…'; }
+  requestIntent('route.models.list', { routeId: editor.routeId }).then((data) => {
+    if (!data?.ok) { showError(data?.summary || '没有读到模型列表'); return; }
+    const models = data.models || [];
+    if (!models.length) { setNotice({ level: 'info', text: '端点返回的模型列表是空的，请直接填写 Model ID。' }); return; }
+    const k = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    openChoice({ title: '端点的模型列表', note: `共 ${models.length} 个。端点报告的上下文、输出上限会作为“端点”来源出现在能力列表里。`, value: modelIdValue(),
+      options: models.map((m) => ({ value: m.id, label: m.id,
+        hint: [m.contextTokens ? `上下文 ${k(m.contextTokens)}` : '', m.maxOutputTokens ? `输出 ${k(m.maxOutputTokens)}` : '', m.inputModalities === 'text,image' ? '图片输入' : ''].filter(Boolean).join(' · ') })),
+      onPick: (value) => {
+        const input = editor.node.querySelector('input[name="modelId"]');
+        if (input) { input.value = value; refreshPreview(0); }
+      } });
+  }).catch((error) => showError(String(error?.message || error || '')))
+    .finally(() => { if (target?.isConnected) { target.disabled = false; target.textContent = '端点列表'; } });
+}
+
 // ---------- Shared plumbing ----------
 
 function showError(message) {
@@ -531,6 +585,7 @@ document.addEventListener('click', (event) => {
       } });
   }
   else if (action === 'ed-catalog') pickFromCatalog();
+  else if (action === 'ed-discover') pickFromEndpoint(target);
   else if (action === 'ed-cap') editCapability(target.dataset.field);
   else if (action === 'ed-model-delete') {
     openConfirmDialog({ title: '删除模型', danger: true, confirmText: '删除', message: '模型配置会被删除；已有会话保留，但要切换到其它模型才能继续。',

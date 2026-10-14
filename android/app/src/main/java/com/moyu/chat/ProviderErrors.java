@@ -23,6 +23,26 @@ final class ProviderErrors {
         return id.length() > 128 ? id.substring(0, 128) : id;
     }
 
+    /** Longest wait honoured from a Retry-After header; a longer ask is treated as "not now". */
+    static final long MAX_RETRY_AFTER_MS = 60_000L;
+
+    /** Retry-After as milliseconds (delta-seconds or HTTP date), 0 when absent, unparsable or in the past. */
+    static long retryAfterMillis(Response response) {
+        String value = response == null ? null : response.header("retry-after");
+        if (value == null || value.trim().isEmpty()) return 0L;
+        String text = value.trim();
+        try {
+            double seconds = Double.parseDouble(text);
+            return seconds > 0 ? Math.min(MAX_RETRY_AFTER_MS + 1, (long) Math.ceil(seconds * 1000)) : 0L;
+        } catch (NumberFormatException notSeconds) {
+            try {
+                long at = java.time.ZonedDateTime.parse(text, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
+                long wait = at - System.currentTimeMillis();
+                return wait > 0 ? Math.min(MAX_RETRY_AFTER_MS + 1, wait) : 0L;
+            } catch (Exception unparsable) { return 0L; }
+        }
+    }
+
     static boolean retryable(int status, String detail) {
         if (status == 429) return !quota(detail);
         return status == 408 || status == 409 || status == 529 || status >= 500;

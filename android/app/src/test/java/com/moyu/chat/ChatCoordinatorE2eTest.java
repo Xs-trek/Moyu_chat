@@ -1741,7 +1741,8 @@ public class ChatCoordinatorE2eTest {
         AtomicInteger calls = new AtomicInteger();
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
-                if (calls.getAndIncrement() == 0) return new MockResponse().setResponseCode(500).setBody("{\"error\":{\"message\":\"boom\"}}");
+                // 400 is not retryable, so the turn fails (5xx would be retried automatically).
+                if (calls.getAndIncrement() == 0) return new MockResponse().setResponseCode(400).setBody("{\"error\":{\"message\":\"boom\"}}");
                 return sse("data: {\"choices\":[{\"delta\":{\"content\":\"mock answer\"}}]}\n\n"
                         + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}\n\n"
                         + "data: [DONE]\n\n");
@@ -1856,5 +1857,152 @@ public class ChatCoordinatorE2eTest {
         profile.enabled = false;
         profile.maxOutputTokens = profile.maxOutputTokens / 2;
         assertFalse("a disabled profile is not offered", ChatCoordinator.profileChanged(app.database().getSession(sessionId), profile));
+    }
+
+    // ---------- Provider guard: key check, model list, probe, budget, retries, route concurrency ----------
+
+    private static final String SSE_OK = "data: {\"choices\":[{\"delta\":{\"content\":\"mock answer\"}}]}\n\n"
+            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}\n\n"
+            + "data: [DONE]\n\n";
+
+    @Test public void keyCheckReadsTheModelListAndFeedsDiscoveredLimits() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                if (request.getPath().endsWith("/models")) return new MockResponse().setBody("{\"data\":[{\"id\":\"mock-model\",\"context_length\":64000,\"max_output_tokens\":8000},{\"id\":\"other\"}]}");
+                return sse(SSE_OK);
+            }
+        });
+        JSONObject result = awaitResult(post("provider.key.verify", new JSONObject().put("providerId", "mock-provider")));
+        assertTrue(result.toString(), result.optBoolean("ok"));
+        JSONObject data = result.getJSONObject("data");
+        assertEquals("valid", data.getString("keyStatus"));
+        assertEquals(2, data.getJSONArray("models").length());
+        RecordedRequest listed = null;
+        for (RecordedRequest r = server.takeRequest(2, TimeUnit.SECONDS); r != null; r = server.takeRequest(200, TimeUnit.MILLISECONDS)) if (r.getPath().endsWith("/models")) listed = r;
+        assertNotNull(listed);
+        assertEquals("GET", listed.getMethod());
+        assertEquals("/v1/models", listed.getPath());
+        assertEquals("Bearer " + SECRET, listed.getHeader("Authorization"));
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        assertEquals("the endpoint's own limit becomes the discovered layer", 64_000, profile.contextTokens);
+        assertEquals("discovered", DeploymentResolver.json(profile.sources).optString("contextTokens"));
+        await("view shows the checked key", () -> {
+            JSONObject provider = latestView().optJSONArray("providers").optJSONObject(0);
+            return "valid".equals(provider.optString("keyStatus")) && !provider.optString("keyCheckedAt").isEmpty()
+                    && provider.optJSONArray("models").optJSONObject(0).optBoolean("listed");
+        });
+        assertFalse("no key in any view", latestView().toString().contains(SECRET));
+    }
+
+    @Test public void aRefusedKeyIsInvalidAndARedirectIsNeverFollowed() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) { return new MockResponse().setResponseCode(401).setBody("{\"error\":{\"message\":\"bad key\"}}"); }
+        });
+        JSONObject refused = awaitResult(post("provider.key.verify", new JSONObject().put("providerId", "mock-provider"))).getJSONObject("data");
+        assertEquals("invalid", refused.getString("keyStatus"));
+        assertFalse(refused.optBoolean("ok"));
+        assertTrue(refused.optString("summary").contains("API Key 无效"));
+
+        int before = server.getRequestCount();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) { return new MockResponse().setResponseCode(302).setHeader("Location", "https://elsewhere.example/v1/models"); }
+        });
+        JSONObject redirected = awaitResult(post("provider.key.verify", new JSONObject().put("providerId", "mock-provider"))).getJSONObject("data");
+        assertEquals("redirect", redirected.getString("code"));
+        assertEquals("error", redirected.getString("keyStatus"));
+        assertEquals("exactly one request: the redirect was not followed", before + 1, server.getRequestCount());
+    }
+
+    @Test public void aConnectionTestIsStoredWithTheModelAndChangesNoCapability() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile before = app.database().firstModelProfile("mock-provider");
+        JSONObject result = awaitResult(post("model.probe", new JSONObject().put("modelProfileId", before.id))).getJSONObject("data");
+        assertTrue(result.toString(), result.getBoolean("ok"));
+        assertTrue(result.getBoolean("usageReported"));
+        assertEquals("mock answer", result.getString("reply"));
+        assertTrue(result.has("firstOutputMs"));
+        ChatDatabase.ModelProfile after = app.database().getModelProfile(before.id);
+        assertTrue(DeploymentResolver.json(after.probe).getJSONObject("result").getBoolean("ok"));
+        assertEquals(before.contextTokens, after.contextTokens);
+        assertEquals(before.maxOutputTokens, after.maxOutputTokens);
+        await("probe in the view", () -> latestView().optJSONArray("providers").optJSONObject(0).optJSONArray("models").optJSONObject(0).optJSONObject("probe") != null);
+    }
+
+    @Test public void aReachedBudgetAsksBeforeEachTurnAndConfirmationGoesAhead() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.pricing = "{\"currency\":\"USD\",\"input\":1000,\"output\":1000}";
+        app.database().saveModelProfile(profile);
+        ChatDatabase.Provider account = app.database().getProvider("mock-provider");
+        account.budget = "{\"currency\":\"USD\",\"daily\":0.001}";
+        app.database().saveProvider(account);
+        String sessionId = createSession();
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
+        await("first turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+        JSONObject cost = lastTurnUsage(sessionId).getJSONObject("cost");
+        assertEquals("(7 + 2) tokens at $1000 per million", 0.009, cost.getDouble("amount"), 1e-9);
+
+        JSONObject refused = awaitResult(post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second")));
+        assertFalse(refused.optBoolean("ok"));
+        JSONObject budget = refused.getJSONObject("data").getJSONObject("budget");
+        assertEquals("daily", budget.getString("period"));
+        assertTrue(refused.getJSONObject("data").getBoolean("draftRestored"));
+        assertEquals("second", app.database().getSession(sessionId).draft);
+        assertEquals(2, app.database().timeline(sessionId).length());
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second").put("budgetConfirmed", true));
+        await("confirmed turn completed", () -> app.database().timeline(sessionId).length() == 4 && "completed".equals(app.database().getSession(sessionId).state));
+        await("budget spend in the view", () -> latestView().optJSONArray("providers").optJSONObject(0).optJSONObject("budget").optDouble("spentToday", 0) > 0.01);
+    }
+
+    @Test public void aRateLimitBeforeAnyOutputIsRetriedAfterRetryAfter() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        AtomicInteger calls = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                if (calls.getAndIncrement() == 0) return new MockResponse().setResponseCode(429).setHeader("Retry-After", "0.2").setBody("{\"error\":{\"message\":\"slow down\"}}");
+                return sse(SSE_OK);
+            }
+        });
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "please"));
+        await("turn completed after one retry", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+        JSONArray rows = app.database().timeline(sessionId);
+        assertEquals("mock answer", rows.getJSONObject(1).optString("text"));
+        assertFalse(rows.getJSONObject(1).optBoolean("incomplete"));
+        assertEquals(2, calls.get());
+        assertEquals(1, lastTurnUsage(sessionId).optInt("providerRetries"));
+    }
+
+    @Test public void aFullRouteQueuesTheNextTurnUntilASlotFrees() throws Exception {
+        ChatDatabase.Provider provider = mockProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        provider.dialect = RouteDialect.parse(OpenAiCompatibleTransport.CHAT_COMPLETIONS, new JSONObject().put("maxConcurrent", 1));
+        saveDeployment(provider);
+        String first = createSession();
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
+        await("second session created", () -> !first.equals(latestView().optString("activeLocalSessionId")));
+        String second = latestView().optString("activeLocalSessionId");
+        java.util.List<Long> arrivals = Collections.synchronizedList(new ArrayList<>());
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                arrivals.add(System.nanoTime());
+                return sse(SSE_OK).setBodyDelay(arrivals.size() == 1 ? 1200 : 0, TimeUnit.MILLISECONDS);
+            }
+        });
+        post("chat.session.send", new JSONObject().put("localSessionId", first).put("text", "slow one"));
+        await("first request sent", () -> arrivals.size() == 1);
+        post("chat.session.send", new JSONObject().put("localSessionId", second).put("text", "waits"));
+        await("second turn shows it is queued", () -> {
+            JSONArray rows = app.database().timeline(second);
+            return rows.length() == 2 && "queued".equals(rows.optJSONObject(1).optString("streamStage"));
+        });
+        assertEquals("the second request waits for the slot", 1, arrivals.size());
+        await("both completed", () -> "completed".equals(app.database().getSession(first).state) && "completed".equals(app.database().getSession(second).state)
+                && app.database().timeline(second).length() == 2 && !app.database().timeline(second).optJSONObject(1).optBoolean("streaming"));
+        assertEquals(2, arrivals.size());
+        assertEquals("mock answer", app.database().timeline(second).getJSONObject(1).optString("text"));
     }
 }

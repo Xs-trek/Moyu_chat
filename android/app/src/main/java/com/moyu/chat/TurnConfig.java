@@ -9,6 +9,8 @@ final class TurnConfig {
     final String harnessPreset, clientToolCalling, subagentMode;
     final int thinkingBudgetTokens, contextTokens, inputTokens, maxOutputTokens;
     final boolean reasoningAvailable;
+    /** The profile's prices when the turn was accepted (ModelPricing shape), "{}" when unknown. */
+    final String pricing;
 
     TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
                ChatDatabase.Session session, ChatDatabase.ModelProfile profile) {
@@ -35,5 +37,6 @@ final class TurnConfig {
         this.inputTokens = session.inputTokens;
         this.maxOutputTokens = session.maxOutputTokens;
         this.reasoningAvailable = !ReasoningPolicy.normalizeLevels(session.reasoningLevels).isEmpty();
+        this.pricing = profile == null || profile.pricing == null || profile.pricing.trim().isEmpty() ? "{}" : profile.pricing;
     }
 }

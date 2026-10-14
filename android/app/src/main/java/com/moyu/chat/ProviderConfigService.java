@@ -20,8 +20,24 @@ final class ProviderConfigService {
     private final ChatSecretStore secrets;
     private final ChatTransportRegistry transports;
 
+    /** Latest model list read from each route's endpoint (ProviderGuard), in memory only: routeId → modelId → fields. */
+    private final Map<String, Map<String, JSONObject>> discoveredByRoute = new java.util.concurrent.ConcurrentHashMap<>();
+
     ProviderConfigService(ChatDatabase db, ChatSecretStore secrets, ChatTransportRegistry transports) {
         this.db = db; this.secrets = secrets; this.transports = transports;
+    }
+
+    void rememberDiscovered(String routeId, Map<String, JSONObject> models) {
+        if (routeId != null && models != null) discoveredByRoute.put(routeId, new java.util.LinkedHashMap<>(models));
+    }
+
+    /** What the route's model list said about {@code modelId} ("discovered" layer), or "{}" when it was not read. */
+    String discoveredFor(String routeId, String modelId) {
+        Map<String, JSONObject> models = routeId == null ? null : discoveredByRoute.get(routeId);
+        if (models == null || modelId == null || modelId.trim().isEmpty()) return "{}";
+        JSONObject fields = models.get(modelId.trim());
+        try { return fields == null ? new JSONObject().put("listed", false).toString() : new JSONObject(fields.toString()).put("listed", true).toString(); }
+        catch (org.json.JSONException error) { return "{}"; }
     }
 
     // ---------- Accounts and routes ----------
@@ -48,6 +64,7 @@ final class ProviderConfigService {
         String name = p.optString("displayName", "").trim();
         if (name.isEmpty()) name = preset == null ? "" : preset.name;
         account.displayName = bounded(name, 128, "显示名称");
+        if (p.has("budget")) account.budget = normalizeBudget(p.optJSONObject("budget")).toString();
 
         JSONArray routesIn = p.optJSONArray("routes");
         if (routesIn == null && created) routesIn = presetRoutes(preset);
@@ -226,10 +243,15 @@ final class ProviderConfigService {
         String routeId = p.optString("routeId", m.routeId == null ? "" : m.routeId).trim();
         ChatDatabase.Route route = db.getRoute(routeId);
         if (route == null || !account.id.equals(route.providerId)) throw new IllegalArgumentException("请选择这个账号下的一条路线");
+        boolean sameEvidence = m.routeId != null && m.routeId.equals(route.id);
         if (m.routeId != null && !m.routeId.equals(route.id)) { m.discovered = "{}"; m.probe = "{}"; } // evidence is per route
         String modelId = p.optString("modelId", m.modelId == null ? "" : m.modelId).trim();
         if (modelId.isEmpty()) throw new IllegalArgumentException("Model ID 不能为空");
+        if (!modelId.equals(m.modelId)) { sameEvidence = false; m.probe = "{}"; }
         m.modelId = bounded(modelId, 256, "Model ID");
+        // A model list read for this route since the profile was last resolved describes the model too.
+        String listed = discoveredFor(route.id, m.modelId);
+        if (!"{}".equals(listed) || !sameEvidence) m.discovered = listed;
         if (p.has("displayName")) m.displayName = p.optString("displayName", "").trim();
         if (m.displayName != null && m.displayName.length() > 128) throw new IllegalArgumentException("模型显示名称过长");
         if (p.has("enabled")) m.enabled = p.optBoolean("enabled", true);
@@ -265,8 +287,10 @@ final class ProviderConfigService {
         ChatDatabase.ModelProfile m = new ChatDatabase.ModelProfile();
         String profileId = p.optString("modelProfileId", "").trim();
         ChatDatabase.ModelProfile stored = profileId.isEmpty() ? null : db.getModelProfile(profileId);
-        if (stored != null && route.id.equals(stored.routeId)) { m.discovered = stored.discovered; m.probe = stored.probe; }
         m.id = "preview"; m.providerId = route.providerId; m.modelId = p.optString("modelId", "").trim();
+        if (stored != null && route.id.equals(stored.routeId) && m.modelId.equals(stored.modelId)) { m.discovered = stored.discovered; m.probe = stored.probe; }
+        String listed = discoveredFor(route.id, m.modelId);
+        if (!"{}".equals(listed)) m.discovered = listed;
         String error = "";
         try {
             m.overrides = DeploymentResolver.normalizeOverrides(p.optJSONObject("overrides")).toString();
@@ -399,6 +423,25 @@ final class ProviderConfigService {
                         .put(DeploymentResolver.SRC_CATALOG, "目录").put(DeploymentResolver.SRC_PROBE, "实测").put(DeploymentResolver.SRC_MANUAL, "手动"));
     }
 
+    /** The account's budget with what has been spent in each window, or {} when none is set. */
+    private JSONObject budgetView(ChatDatabase.Provider account) throws org.json.JSONException {
+        JSONObject budget = DeploymentResolver.json(account.budget);
+        if (!budget.has("daily") && !budget.has("monthly")) return new JSONObject();
+        String currency = budget.optString("currency", "USD");
+        String[] windows = budgetWindows(java.time.ZonedDateTime.now());
+        if (budget.has("daily")) budget.put("spentToday", db.spendSince(account.id, windows[0]).optDouble(currency, 0d));
+        if (budget.has("monthly")) budget.put("spentMonth", db.spendSince(account.id, windows[1]).optDouble(currency, 0d));
+        return budget;
+    }
+
+    private boolean balanceSupported(String providerId) {
+        for (ChatDatabase.Route route : db.listRoutes(providerId)) {
+            ProviderPresets.RouteSpec spec = ProviderPresets.get().pristineSpec(route);
+            if (spec != null && !spec.balancePath.isEmpty()) return true;
+        }
+        return false;
+    }
+
     JSONArray providersView() throws Exception {
         JSONArray providers = new JSONArray();
         for (ChatDatabase.Provider account : db.listProviders()) {
@@ -435,16 +478,70 @@ final class ProviderConfigService {
                         .put("toolCapabilities", m.toolCapabilities).put("serviceTier", m.serviceTier)
                         .put("pricing", DeploymentResolver.json(m.pricing)).put("retention", m.retention)
                         .put("sources", DeploymentResolver.json(m.sources)).put("overrides", DeploymentResolver.json(m.overrides))
-                        .put("catalogKey", m.catalogKey).put("catalogVerified", catalog != null && catalog.verified));
+                        .put("catalogKey", m.catalogKey).put("catalogVerified", catalog != null && catalog.verified)
+                        .put("probe", DeploymentResolver.json(m.probe).optJSONObject("result") == null ? JSONObject.NULL : DeploymentResolver.json(m.probe).optJSONObject("result"))
+                        .put("listed", DeploymentResolver.json(m.discovered).has("listed") ? DeploymentResolver.json(m.discovered).optBoolean("listed") : JSONObject.NULL));
             }
             providers.put(new JSONObject().put("providerId", account.id).put("displayName", account.displayName)
                     .put("presetId", account.presetId).put("presetName", preset == null ? account.presetId : preset.name)
                     .put("presetKind", preset == null ? "custom" : preset.kind)
-                    .put("hasCredential", hasKey).put("keyStatus", account.keyStatus)
+                    .put("hasCredential", hasKey).put("keyStatus", account.keyStatus).put("keyCheckedAt", account.keyCheckedAt)
+                    .put("budget", budgetView(account)).put("balanceSupported", balanceSupported(account.id))
                     .put("model", firstModel).put("configured", hasKey && enabled > 0)
                     .put("routes", routes).put("models", models));
         }
         return providers;
+    }
+
+    /**
+     * Spend guard of an account: {currency, daily?, monthly?} in the currency its models are priced in.
+     * Empty object = no budget. Amounts are positive and at most 1,000,000.
+     */
+    static JSONObject normalizeBudget(JSONObject raw) {
+        JSONObject out = new JSONObject();
+        if (raw == null) return out;
+        try {
+            String currency = raw.optString("currency", "USD").trim().toUpperCase(java.util.Locale.ROOT);
+            if (!("USD".equals(currency) || "CNY".equals(currency))) throw new IllegalArgumentException("预算币种只支持 USD 或 CNY");
+            for (String key : new String[]{"daily", "monthly"}) {
+                Object value = raw.opt(key);
+                if (value == null || value == JSONObject.NULL || String.valueOf(value).trim().isEmpty()) continue;
+                double amount;
+                try { amount = Double.parseDouble(String.valueOf(value).trim()); }
+                catch (NumberFormatException error) { throw new IllegalArgumentException("预算金额无效：" + value); }
+                if (!(amount > 0) || amount > 1_000_000) throw new IllegalArgumentException("预算金额必须大于 0 且不超过 1,000,000");
+                out.put(key, amount);
+            }
+            if (out.length() > 0) out.put("currency", currency);
+            return out;
+        } catch (org.json.JSONException error) { throw new IllegalArgumentException("预算格式无效"); }
+    }
+
+    /** Local start of today and of this month as ISO instants (budgets follow the phone's calendar). */
+    static String[] budgetWindows(java.time.ZonedDateTime now) {
+        java.time.ZonedDateTime day = now.toLocalDate().atStartOfDay(now.getZone());
+        return new String[]{day.toInstant().toString(), day.withDayOfMonth(1).toInstant().toString()};
+    }
+
+    /**
+     * The first budget the account has already reached ({period, limit, spent, currency}), or null. A turn
+     * past a budget needs the user's confirmation; spend counts only turns priced in the budget's currency.
+     */
+    JSONObject budgetReached(String providerId) throws org.json.JSONException {
+        ChatDatabase.Provider account = db.getProvider(providerId);
+        JSONObject budget = account == null ? new JSONObject() : DeploymentResolver.json(account.budget);
+        if (!budget.has("daily") && !budget.has("monthly")) return null;
+        String currency = budget.optString("currency", "USD");
+        String[] windows = budgetWindows(java.time.ZonedDateTime.now());
+        if (budget.has("daily")) {
+            double spent = db.spendSince(providerId, windows[0]).optDouble(currency, 0d);
+            if (spent >= budget.getDouble("daily")) return new JSONObject().put("period", "daily").put("limit", budget.getDouble("daily")).put("spent", spent).put("currency", currency);
+        }
+        if (budget.has("monthly")) {
+            double spent = db.spendSince(providerId, windows[1]).optDouble(currency, 0d);
+            if (spent >= budget.getDouble("monthly")) return new JSONObject().put("period", "monthly").put("limit", budget.getDouble("monthly")).put("spent", spent).put("currency", currency);
+        }
+        return null;
     }
 
     private static String bounded(String value, int max, String label) {

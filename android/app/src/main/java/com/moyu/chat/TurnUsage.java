@@ -21,7 +21,8 @@ final class TurnUsage {
         final String stage;
         /** Order of the call within the turn, shared with the wire records. */
         final int index;
-        Integer input, output;
+        Integer input, output, cached, cacheWrite;
+        final java.time.Instant startedAt = java.time.Instant.now();
         boolean ended;
         /** Why the call produced no usable result: the provider's error code, or "timeout" / "cancelled". */
         String failure;
@@ -29,6 +30,9 @@ final class TurnUsage {
     }
 
     private final ArrayList<RequestUsage> requests = new ArrayList<>();
+    /** Prices the turn was accepted with; null = no estimate. */
+    private volatile JSONObject pricing;
+    void setPricing(JSONObject value) { pricing = value == null || value.length() == 0 ? null : value; }
     synchronized boolean hasRequests() { return !requests.isEmpty(); }
 
     private synchronized RequestUsage begin(Kind kind, String stage) {
@@ -43,6 +47,12 @@ final class TurnUsage {
         // The same cumulative values may arrive through both usage callbacks.
         if (input != null) request.input = Math.max(request.input == null ? 0 : request.input, Math.max(0, input));
         if (output != null) request.output = Math.max(request.output == null ? 0 : request.output, Math.max(0, output));
+    }
+
+    private synchronized void reportCache(RequestUsage request, Integer cached, Integer cacheWrite) {
+        if (request.ended) return;
+        if (cached != null) request.cached = Math.max(request.cached == null ? 0 : request.cached, Math.max(0, cached));
+        if (cacheWrite != null) request.cacheWrite = Math.max(request.cacheWrite == null ? 0 : request.cacheWrite, Math.max(0, cacheWrite));
     }
 
     private synchronized void end(RequestUsage request) { request.ended = true; }
@@ -86,10 +96,12 @@ final class TurnUsage {
                     @Override public void onUsageDetails(Integer input, Integer output, Integer cached,
                                                          Integer cacheWrite, Integer cacheBase, Integer reasoning) {
                         report(request, input, output);
+                        reportCache(request, cached, cacheWrite);
                         sink.onUsageDetails(input, output, cached, cacheWrite, cacheBase, reasoning);
                     }
                     @Override public void onClientToolBatch(JSONArray calls) { end(request); sink.onClientToolBatch(calls); }
                     @Override public void onCompleted() { end(request); sink.onCompleted(); }
+                    @Override public void onRetryAfter(long millis) { sink.onRetryAfter(millis); }
                     @Override public void onWire(String direction, String text) {
                         WireRecorder recorder = wireRecorder;
                         if (recorder != null) try { recorder.record(request.stage, request.index, direction, text); } catch (Exception ignored) { }
@@ -161,11 +173,37 @@ final class TurnUsage {
         }
         if (inputKnown) target.put("totalInputTokens", input);
         if (outputKnown) target.put("totalOutputTokens", output);
+        projectCost(target);
         // inputTokens sums every main call of a tool loop; context fill is what the last one actually sent.
         if (lastMainInput != null) target.put("lastMainInputTokens", lastMainInput.longValue());
         target.put("modelCallCount", requests.size());
         target.put("auxiliaryCallCount", counts[Kind.AUXILIARY.ordinal()]);
         target.put("subagentCallCount", counts[Kind.SUBAGENT.ordinal()]);
         target.put("usageIncomplete", incomplete);
+    }
+
+    /**
+     * Estimated cost of every call of the turn (helpers and subagents run on the same deployment), each priced
+     * by its own prompt size and time. {@code partial} when some call reported no usage, so the sum is low.
+     */
+    private void projectCost(JSONObject target) throws org.json.JSONException {
+        JSONObject prices = pricing;
+        if (prices == null) return;
+        double amount = 0;
+        String currency = null;
+        boolean partial = false, offPeak = false, any = false;
+        for (RequestUsage request : requests) {
+            if (request.input == null && request.output == null) { partial = true; continue; }
+            if (request.input == null || request.output == null) partial = true;
+            JSONObject estimate = ModelPricing.estimate(prices, request.input == null ? 0 : request.input, request.output == null ? 0 : request.output,
+                    request.cached == null ? 0 : request.cached, request.cacheWrite == null ? 0 : request.cacheWrite, request.startedAt);
+            if (estimate == null) return;
+            amount += estimate.optDouble("amount", 0);
+            currency = estimate.optString("currency", "USD");
+            offPeak |= estimate.optBoolean("offPeak", false);
+            any = true;
+        }
+        if (!any) return;
+        target.put("cost", new JSONObject().put("currency", currency).put("amount", amount).put("partial", partial).put("offPeak", offPeak));
     }
 }

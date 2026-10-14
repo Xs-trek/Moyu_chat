@@ -24,6 +24,7 @@ final class TerminalSink implements ChatTransport.Sink {
                                          Integer cacheWriteInputTokens, Integer cacheHitBaseTokens, Integer reasoningTokens) {
         if (!terminal.get()) delegate.onUsageDetails(inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, cacheHitBaseTokens, reasoningTokens);
     }
+    @Override public void onRetryAfter(long millis) { if (!terminal.get()) delegate.onRetryAfter(millis); }
     @Override public void onCompleted() { if (terminal.compareAndSet(false, true)) delegate.onCompleted(); }
     @Override public void onError(String code, String summary, boolean retryable) { if (terminal.compareAndSet(false, true)) delegate.onError(code, summary, retryable); }
     /** Wire records are diagnostics, not stream semantics: they pass even after the terminal callback. */

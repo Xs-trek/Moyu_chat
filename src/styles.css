@@ -732,7 +732,7 @@ html[data-panel="closed"] #app { transition: transform var(--d-medium) var(--e-s
   appearance: none; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted);
   font: 500 var(--text-xs)/1 var(--font-mono); transition: background var(--d-small) var(--e-standard), color var(--d-small) var(--e-standard), border-color var(--d-small) var(--e-standard), transform var(--d-press) var(--e-standard);
 }
-.chip-toggle[aria-pressed="true"] { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
+.chip-toggle[aria-pressed="true"], .chip-toggle[aria-checked="true"] { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
 .key-row { display: flex; align-items: center; gap: 8px; min-height: var(--control-height); padding: 4px 4px 4px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--raised); }
 .catalog-card { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
 .form-error { padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius-md); background: var(--danger-soft); color: var(--ink); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -749,6 +749,12 @@ html[data-panel="closed"] #app { transition: transform var(--d-medium) var(--e-s
 .preset-row .choice-hint { display: block; margin-top: 2px; color: var(--muted); font-size: var(--text-xs); }
 .route-card { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
 .route-line { display: flex; align-items: center; gap: 8px; min-height: 40px; min-width: 0; }
+.guard-row { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 2px 0; }
+.guard-lines { display: grid; gap: 2px; min-width: 0; }
+.guard-text, .probe-text { font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; }
+.guard-text.warn, .probe-text.warn { color: var(--warn); }
+.probe-row { align-items: center; gap: 4px; }
+.budget-fields { align-items: flex-start; gap: 10px; }
 .route-text { display: grid; min-width: 0; line-height: 1.25; }
 .route-host { color: var(--muted); font: var(--text-xs)/1.3 var(--font-mono); }
 .notice-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); }

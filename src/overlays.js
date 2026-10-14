@@ -129,6 +129,12 @@ function newChatSheet(state) {
     h('div', { class: 'sheet-foot' }, button('开始', 'newchat-confirm', {}, 'btn primary'))];
 }
 
+/** Read-only Markdown in a sheet (for example the answer a repair replaced). */
+export function openTextSheet({ title, note = '', markdown = '' }) {
+  sheet = { kind: 'text', title, note, markdown };
+  paintSheet(null);
+}
+
 /** Re-answer one user message in a new branch, optionally with another model and/or context mode. */
 export function openRerun(sessionId, localSeq) {
   const session = getState().view?.activeSession;
@@ -276,6 +282,10 @@ function paintSheet(view) {
     body = choiceSheet(sheet);
   } else if (sheet.kind === 'newchat') {
     body = newChatSheet(sheet);
+  } else if (sheet.kind === 'text') {
+    const box = h('div', { class: 'answer-text markdown-body' });
+    renderMarkdownInto(box, sheet.markdown || '');
+    body = [h('h2', { class: 'sheet-title', text: sheet.title }), sheet.note ? h('p', { class: 'sheet-note', text: sheet.note }) : null, box];
   } else {
     const session = view?.activeSession;
     if (!session || session.localSessionId !== sheet.sessionId) { closeSheet(); return; }

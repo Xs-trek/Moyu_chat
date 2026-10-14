@@ -9,6 +9,8 @@ const STAGES = {
   preparing: ['整理上下文', 'think'],
   connecting: ['连接模型', 'idle'],
   connected: ['已连接 · 等待模型', 'idle'],
+  retrying: ['服务繁忙，稍后自动重试', 'idle'],
+  queued: ['排队中 · 路线并发已满', 'idle'],
   web_planning: ['规划联网', 'think'],
   web_search: ['搜索网页', 'search'],
   web_fetch: ['读取网页', 'search'],
@@ -159,6 +161,51 @@ export function contextFill(session) {
 export function retrySeq(session) {
   const seq = Number(session?.retryLocalSeq);
   return session?.canSend && Number.isInteger(seq) && seq > 0 ? seq : null;
+}
+
+const KEY_STATUS = {
+  valid: ['Key 可用', 'good'], invalid: ['Key 无效', 'warn'], unverified: ['Key 未验证', 'quiet'], error: ['验证失败', 'warn'], unknown: ['Key 未验证', 'quiet'],
+};
+
+/** Account key chip: whether a key is stored and what the last check (or turn) said about it. */
+export function keyStatus(provider) {
+  if (!provider?.hasCredential) return { label: '填写 API Key', tone: 'warn', checkedAt: '' };
+  const [label, tone] = KEY_STATUS[provider.keyStatus] || KEY_STATUS.unknown;
+  return { label, tone, checkedAt: provider.keyCheckedAt || '' };
+}
+
+/** "今日 $0.12 / $5.00 · 本月 …"; null without a budget. Reached limits are flagged. */
+export function budgetLine(provider) {
+  const b = provider?.budget;
+  if (!b || (b.daily === undefined && b.monthly === undefined)) return null;
+  const parts = [];
+  let reached = false;
+  if (b.daily !== undefined) { parts.push(`今日 ${money(b.spentToday || 0, b.currency)} / ${money(b.daily, b.currency)}`); reached ||= (b.spentToday || 0) >= b.daily; }
+  if (b.monthly !== undefined) { parts.push(`本月 ${money(b.spentMonth || 0, b.currency)} / ${money(b.monthly, b.currency)}`); reached ||= (b.spentMonth || 0) >= b.monthly; }
+  return { text: `预算 · ${parts.join(' · ')}`, reached };
+}
+
+/** Last connection test of a model, as one line; null when never tested. */
+export function probeLine(model) {
+  const p = model?.probe;
+  if (!p || !p.checkedAt) return null;
+  const when = messageTime(p.checkedAt);
+  if (!p.ok) return { text: `测试失败 · ${p.summary || p.code || '未知原因'} · ${when}`, tone: 'warn' };
+  const parts = ['测试通过'];
+  if (p.firstOutputMs !== undefined) parts.push(`首字 ${secs(p.firstOutputMs)}`);
+  if (p.totalMs !== undefined) parts.push(`共 ${secs(p.totalMs)}`);
+  parts.push(p.usageReported ? '有用量' : '没报用量');
+  if (p.reasoningSeen) parts.push('有推理文本');
+  parts.push(when);
+  return { text: parts.join(' · '), tone: 'good' };
+}
+
+/** Balance result of provider.balance.get as one line. */
+export function balanceText(data) {
+  if (!data) return '';
+  if (!data.ok) return `余额查询失败：${data.summary || data.code || ''}`;
+  const list = (data.balances || []).map((b) => `${b.currency === 'CNY' ? '¥' : b.currency === 'USD' ? '$' : `${b.currency} `}${b.total}`);
+  return `余额 ${list.length ? list.join(' · ') : '—'}${data.available === false ? '（不可用）' : ''}`;
 }
 
 export function capabilities(session) {
@@ -365,24 +412,59 @@ export function answersView(group) {
 }
 
 /** Statistics rows as cards: one per model × context mode. */
+export const PROTOCOL_LABELS = { 'openai-chat-completions': 'Chat Completions', 'openai-responses': 'Responses', 'anthropic-messages': 'Messages' };
+
+/** Statistics groupings the native side accepts (TurnStats.GROUPINGS), with their picker labels. */
+export const STATS_GROUPINGS = [['model,mode', '模型 × 模式'], ['model', '模型'], ['protocol', '协议'], ['effort', '推理深度'], ['mode', '模式'], ['model,effort', '模型 × 深度']];
+
+/** "$0.0123" / "¥1.20": enough digits that small turns are not rounded to zero. */
+export function money(amount, currency = 'USD') {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return '—';
+  const sign = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
+  const digits = value >= 100 ? 0 : value >= 1 ? 2 : value >= 0.01 ? 3 : 4;
+  return `${sign}${value.toFixed(digits)}`;
+}
+
+function costText(costs) {
+  const entries = Object.entries(costs || {});
+  return entries.length ? entries.map(([currency, amount]) => money(amount, currency)).join(' + ') : '—';
+}
+
+function groupTitle(group = {}) {
+  const parts = [];
+  if (group.model) parts.push(group.model);
+  if (group.protocol) parts.push(PROTOCOL_LABELS[group.protocol] || group.protocol);
+  if (group.effort) parts.push(`推理 ${effortLabel(group.effort)}`);
+  return parts.join(' · ');
+}
+
 export function statsView(data) {
   const rows = Array.isArray(data?.rows) ? data.rows : [];
   const pct = (part, whole) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—');
-  return rows.map((row) => ({
-    title: row.model || '—',
-    mode: contextLabel(row.contextMode),
-    cells: [
-      ['回合', `${row.turns}${row.failed ? ` · 失败 ${row.failed}` : ''}${row.cancelled ? ` · 停止 ${row.cancelled}` : ''}`],
-      ['首字', row.avgFirstOutputMs !== undefined ? secs(row.avgFirstOutputMs) : '—'],
-      ['平均耗时', row.avgDurationMs !== undefined ? secs(row.avgDurationMs) : '—'],
-      ['平均 token', row.avgTokens !== undefined ? compact(row.avgTokens) : '—'],
-      ['辅助占比', row.helperShare !== undefined ? `${Math.round(row.helperShare * 100)}%` : '—'],
-      ['路由', pct(row.routed, row.turns)],
-      ['联网', pct(row.webUsed, row.turns)],
-      ['校验 / 修正', row.verified ? `${pct(row.verified, row.turns)} / ${row.repaired} 次` : '—'],
-      ['评价', row.ratedUp || row.ratedDown ? `好 ${row.ratedUp} · 差 ${row.ratedDown}` : '—'],
-    ],
-  }));
+  return rows.map((row) => {
+    const group = row.group || { model: row.model, mode: row.contextMode };
+    const mode = group.mode ? contextLabel(group.mode) : '';
+    const cost = row.cost ? `${costText(row.cost)}${row.partialCostTurns ? ' 起' : ''}` : '—';
+    return {
+      key: JSON.stringify(group),
+      title: groupTitle(group) || mode || '—',
+      mode: groupTitle(group) ? mode : '',
+      cells: [
+        ['回合', `${row.turns}${row.failed ? ` · 失败 ${row.failed}` : ''}${row.cancelled ? ` · 停止 ${row.cancelled}` : ''}`],
+        ['首字中位', row.medianFirstOutputMs !== undefined ? secs(row.medianFirstOutputMs) : '—'],
+        ['耗时中位', row.medianDurationMs !== undefined ? secs(row.medianDurationMs) : '—'],
+        ['平均 token', row.avgTokens !== undefined ? compact(row.avgTokens) : '—'],
+        ['缓存命中', row.cacheHitRate !== undefined ? `${Math.round(row.cacheHitRate * 100)}%` : '—'],
+        ['费用（估算）', cost],
+        ['辅助占比', row.helperShare !== undefined ? `${Math.round(row.helperShare * 100)}%` : '—'],
+        ['路由', pct(row.routed, row.turns)],
+        ['联网', pct(row.webUsed, row.turns)],
+        ['校验 / 修正', row.verified ? `${pct(row.verified, row.turns)} / ${row.repaired} 次` : '—'],
+        ['评价', row.ratedUp || row.ratedDown ? `好 ${row.ratedUp} · 差 ${row.ratedDown}` : '—'],
+      ],
+    };
+  });
 }
 
 /** Normalised numbers for one turn's usage row (all optional; null means not reported). */
@@ -400,6 +482,8 @@ export function turnUsage(usage) {
     subagents, childInput: count(usage.childInputTokens), childOutput: count(usage.childOutputTokens),
     auxiliary, auxInput: count(usage.auxiliaryInputTokens), auxOutput: count(usage.auxiliaryOutputTokens),
     totalInput: count(usage.totalInputTokens), totalOutput: count(usage.totalOutputTokens), incomplete: Boolean(usage.usageIncomplete),
+    retries: count(usage.providerRetries),
+    cost: usage.cost && Number.isFinite(Number(usage.cost.amount)) ? { amount: Number(usage.cost.amount), currency: usage.cost.currency || 'USD', partial: Boolean(usage.cost.partial), offPeak: Boolean(usage.cost.offPeak) } : null,
   };
 }
 
@@ -419,7 +503,8 @@ export function verificationState(verification) {
   else if (verification.action === 'repair') { seal = '已改'; label = '智能校验 · 已修正'; tone = 'warn'; }
   // Feedback trains calibration only from valid, fully covered pass/fail verdicts.
   const feedbackEligible = verification?.status === 'valid' && verification?.coverageComplete === true && (verdict === 'pass' || verdict === 'fail');
-  return { seal, label, tone, verdict, feedbackEligible, recorded: verification.feedbackLabel || '', coverageReason: verification.coverageReason || '', risk: count(verification.risk) };
+  return { seal, label, tone, verdict, feedbackEligible, recorded: verification.feedbackLabel || '', coverageReason: verification.coverageReason || '', risk: count(verification.risk),
+    preRepairText: verification.repaired && typeof verification.preRepairText === 'string' ? verification.preRepairText : '' };
 }
 
 /** Cumulative reported tokens of the visible session, used for milestone notices. */

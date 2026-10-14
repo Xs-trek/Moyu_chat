@@ -73,7 +73,51 @@ final class TurnPipeline {
         TurnRun r = accept(id, text, turnConfig, turnControl);
         if (r == null) return;
         if (!buildContext(r) || !prepareContext(r) || !planWeb(r) || !selectTools(r) || !retrieveWeb(r)) return;
-        new ProviderRoundLoop(this, r).start();
+        startGeneration(r);
+    }
+
+    final RouteGate routeGate = new RouteGate();
+
+    /**
+     * The main generation starts at once, or, when the route's concurrency cap is reached, waits in the route's
+     * queue showing "queued" (stopping it there ends the turn). The slot is released in finish().
+     */
+    private void startGeneration(TurnRun r) throws Exception {
+        String routeId = r.provider.routeId;
+        int limit = r.provider.dialect == null ? 0 : r.provider.dialect.maxConcurrent;
+        java.util.concurrent.atomic.AtomicBoolean settled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        ChatTransport.Turn[] waiting = new ChatTransport.Turn[1];
+        Runnable[] resume = new Runnable[1];
+        resume[0] = () -> env.authority().execute(() -> {
+            r.routeSlot.set(routeId);
+            if (!settled.compareAndSet(false, true)) { releaseRouteSlot(r); return; }
+            r.control.clearTransport(waiting[0]);
+            if (r.control.isCancelled() || !env.ownsTurn(r.id, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
+            try { new ProviderRoundLoop(this, r).start(); }
+            catch (Exception error) { finish(r, "", "", null, null, "", new String[]{"transport_start_failed", safe(error)}); }
+        });
+        if (routeGate.enter(routeId, limit, resume[0])) {
+            if (limit > 0) r.routeSlot.set(routeId);
+            try { new ProviderRoundLoop(this, r).start(); }
+            catch (Exception error) { releaseRouteSlot(r); throw error; }
+            return;
+        }
+        waiting[0] = () -> {
+            if (!settled.compareAndSet(false, true)) return;
+            routeGate.withdraw(routeId, resume[0]);
+            env.authority().execute(() -> finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}));
+        };
+        r.live.put("streamStage", "queued");
+        db.replaceTimelineBody(r.streamKey, r.live);
+        env.putActiveTurn(r.id, waiting[0]);
+        r.control.bindTransport(waiting[0]);
+        env.setStarting(r.id, false);
+        env.emitStreamingView(r.id);
+    }
+
+    private void releaseRouteSlot(TurnRun r) {
+        String held = r.routeSlot.getAndSet(null);
+        if (held != null) routeGate.leave(held);
     }
 
     // ---------- accept ----------
@@ -92,6 +136,8 @@ final class TurnPipeline {
         ChatDatabase.Provider provider = r.provider;
         ChatTransport rawTransport = transports.forProtocol(provider.protocol); if (rawTransport == null) throw new IllegalStateException("不支持这个账号的协议");
         TurnUsage usage = turnControl.usage;
+        try { usage.setPricing(ModelPricing.normalize(new JSONObject(turnConfig.pricing))); }
+        catch (Exception unpriced) { usage.setPricing(null); } // a bad stored price never blocks a turn
         r.mainTransport = usage.track(rawTransport, TurnUsage.Kind.MAIN, TurnTrace.GENERATE);
         r.routeTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE);
         r.checkpointTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.CHECKPOINT);
@@ -158,7 +204,8 @@ final class TurnPipeline {
                 .put("harnessPreset", c.harnessPreset).put("webMode", c.webMode).put("subagentMode", r.adaptivePolicy.subagentMode)
                 .put("reasoningEffort", c.reasoningEffort).put("thinkingMode", c.thinkingMode).put("thinkingBudgetTokens", c.thinkingBudgetTokens)
                 .put("continuationMode", c.continuationMode).put("clientToolCalling", c.clientToolCalling)
-                .put("contextTokens", c.contextTokens).put("inputTokens", c.inputTokens).put("maxOutputTokens", c.maxOutputTokens);
+                .put("contextTokens", c.contextTokens).put("inputTokens", c.inputTokens).put("maxOutputTokens", c.maxOutputTokens)
+                .put("routeId", r.provider.routeId == null ? "" : r.provider.routeId);
     }
 
     // ---------- context ----------
@@ -492,6 +539,8 @@ final class TurnPipeline {
                     .put("repaired", repaired)
                     .put("repairLimitReached", repairLimitReached)
                     .put("attempts", attempts);
+            // The first answer stays readable next to the repaired one, so a repair can be judged by comparison.
+            if (repaired) meta.put("preRepairText", candidate == null ? "" : candidate);
             seed.put("verification", meta);
             if (!repaired) attachProviderContinuation(seed, r.config, providerContinuationItems);
         } catch (Exception ignored) { }
@@ -596,6 +645,9 @@ final class TurnPipeline {
             }
             db.finalizeTurn(id, r.streamKey, finished,
                     terminalError == null ? null : terminalError[0], terminalError == null ? null : terminalError[1], finalState);
+            // Every real turn is also a key check: an answer proves the key, a 401 disproves it.
+            if (terminalError == null) db.setKeyStatus(r.provider.id, ProviderGuard.KEY_VALID, null);
+            else if ("http_401".equals(terminalError[0])) db.setKeyStatus(r.provider.id, ProviderGuard.KEY_INVALID, Instant.now().toString());
         } catch (Exception finalizeError) {
             // Runtime authority must never remain locked because a projection write failed.
             try { db.deleteTimelineItem(r.streamKey); } catch (Exception ignored) { }
@@ -607,6 +659,7 @@ final class TurnPipeline {
         } finally {
             // The turn record is settled last: once it reads as finished, its reply text is already final.
             recordTrace(r.control, terminalError);
+            releaseRouteSlot(r);
             env.releaseTurn(id);
         }
     }

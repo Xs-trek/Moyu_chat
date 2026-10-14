@@ -5,7 +5,7 @@ import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
 import { flip, morph, removeNode, swapIn, withFx } from './morph.js';
-import { forgetRemote, loadRemote, loadTrace, peekTrace } from './remote.js';
+import { forgetRemote, loadRemote, loadTrace, peekTrace, peekRemote } from './remote.js';
 import * as vm from './view-model.js';
 
 export { openConfirmDialog, openTextDialog } from './overlays.js';
@@ -114,6 +114,14 @@ function routeLine(route) {
       : h('span', { class: `chip ${route.reviewed ? 'good' : 'quiet'}`, text: route.reviewed ? '预设' : '自定义' }));
 }
 
+function probeRow(model) {
+  const running = peekRemote(`probe:${model.modelProfileId}`)?.state === 'loading';
+  const line = vm.probeLine(model);
+  return h('div', { class: 'row probe-row', dataset: { probeSignature: JSON.stringify([model.probe || null, running]) } },
+    h('small', { class: `grow probe-text${line?.tone === 'warn' ? ' warn' : ''}`, text: running ? '测试中…' : line ? line.text : '还没有测试过连接' }),
+    button(running ? '测试中…' : '测试', 'model-probe', { modelProfileId: model.modelProfileId }, 'btn small ghost'));
+}
+
 function modelCard(provider, model) {
   const retention = RETENTION[model.retention];
   const source = model.catalogKey ? (model.catalogVerified ? ['目录', 'good'] : ['目录 · 未实测', 'quiet']) : ['手动声明', 'quiet'];
@@ -124,10 +132,34 @@ function modelCard(provider, model) {
       h('span', { class: `chip ${source[1]}`, text: source[0] })),
     h('code', { class: 'model-id', text: `${model.modelId} · ${model.routeLabel || ''}` }),
     h('div', { class: 'row wrap' }, reasoningCapability(model), retention ? h('span', { class: `chip ${retention[1]}`, text: retention[0] }) : null),
+    model.listed === false ? h('div', { class: 'notice-row warn' }, h('span', { class: 'grow', text: '端点的模型列表里没有这个 Model ID，请检查拼写或路线。' })) : null,
     h('details', { class: 'facts-wrap' }, h('summary', { text: '部署参数' }), modelFacts(model)),
+    provider.hasCredential ? probeRow(model) : null,
     h('div', { class: 'row model-actions' },
       h('span', { class: 'grow' }), button('编辑', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small ghost'),
       enabled ? button('新会话', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small primary') : null));
+}
+
+function keyChip(provider) {
+  const status = vm.keyStatus(provider);
+  return h('button', { type: 'button', class: `chip chip-btn ${status.tone}`, title: provider.hasCredential ? '更换 API Key' : '填写 API Key', dataset: { action: 'provider-key', providerId: provider.providerId }, text: status.label });
+}
+
+/** Key check, balance and budget of one account. */
+function guardRow(provider) {
+  if (!provider.hasCredential) return null;
+  const verifying = peekRemote(`verify:${provider.providerId}`)?.state === 'loading';
+  const balance = peekRemote(`balance:${provider.providerId}`);
+  const status = vm.keyStatus(provider);
+  const budget = vm.budgetLine(provider);
+  const lines = [];
+  if (status.checkedAt) lines.push(h('small', { class: 'guard-text', text: `上次检查 ${vm.messageTime(status.checkedAt)}` }));
+  if (balance) lines.push(h('small', { class: 'guard-text', text: balance.state === 'loading' ? '查询余额中…' : balance.state === 'error' ? `余额查询失败：${balance.error}` : vm.balanceText(balance.data) }));
+  if (budget) lines.push(h('small', { class: `guard-text${budget.reached ? ' warn' : ''}`, text: budget.text }));
+  return h('div', { class: 'guard-row' },
+    h('div', { class: 'grow guard-lines' }, lines),
+    button(verifying ? '检查中…' : '检查 Key', 'provider-verify', { providerId: provider.providerId }, 'btn small ghost'),
+    provider.balanceSupported ? button('查余额', 'provider-balance', { providerId: provider.providerId }, 'btn small ghost') : null);
 }
 
 function providers(view) {
@@ -138,7 +170,8 @@ function providers(view) {
       view.providers.length ? h('div', { class: 'stack' }, view.providers.map((provider) => h('article', { class: 'card provider-card', dataset: { key: provider.providerId } },
         h('div', { class: 'row' }, h('strong', { class: 'grow truncate', text: provider.displayName }),
           provider.presetName && provider.presetName !== provider.displayName ? h('span', { class: 'chip quiet', text: provider.presetName }) : null,
-          h('button', { type: 'button', class: `chip chip-btn ${provider.hasCredential ? 'good' : 'warn'}`, dataset: { action: 'provider-key', providerId: provider.providerId }, text: provider.hasCredential ? 'API Key 已配置' : '填写 API Key' })),
+          keyChip(provider)),
+        guardRow(provider),
         h('div', { class: 'route-lines' }, (provider.routes || []).map(routeLine)),
         h('div', { class: 'row' }, h('span', { class: 'grow' }), button('编辑账号', 'configure-provider', { providerId: provider.providerId }, 'btn small ghost'), button('添加模型', 'configure-model', { providerId: provider.providerId }, 'btn small')),
         (provider.models || []).map((model) => modelCard(provider, model)),
@@ -187,13 +220,15 @@ function settings(view) {
 
 const STATS_PERIODS = [[7, '7 天'], [30, '30 天'], [90, '90 天']];
 let statsDays = 7;
+let statsGroup = vm.STATS_GROUPINGS[0][0];
 let lastStats = null;
 export function setStatsDays(days) { statsDays = STATS_PERIODS.some(([d]) => d === Number(days)) ? Number(days) : 7; }
+export function setStatsGroup(group) { statsGroup = vm.STATS_GROUPINGS.some(([g]) => g === group) ? group : vm.STATS_GROUPINGS[0][0]; }
 /** Statistics are re-read every time the page is opened. */
-export function forgetStats() { for (const [days] of STATS_PERIODS) forgetRemote(`stats:${days}`); }
+export function forgetStats() { for (const [days] of STATS_PERIODS) for (const [group] of vm.STATS_GROUPINGS) forgetRemote(`stats:${days}:${group}`); }
 
 function stats() {
-  const entry = loadRemote(`stats:${statsDays}`, 'stats.get', { days: statsDays });
+  const entry = loadRemote(`stats:${statsDays}:${statsGroup}`, 'stats.get', { days: statsDays, groupBy: statsGroup });
   if (entry?.state === 'ready') lastStats = entry.data;
   const loading = !entry || entry.state === 'loading';
   let content;
@@ -201,15 +236,17 @@ function stats() {
   else if (entry?.state === 'error') content = h('p', { class: 'setting-desc', text: `未能读取：${entry.error}` });
   else {
     const rows = vm.statsView(loading ? lastStats : entry.data);
-    content = h('div', { class: `stack stats-rows${loading ? ' is-stale' : ''}`, 'aria-busy': loading ? 'true' : 'false' }, rows.length ? rows.map((row) => h('section', { class: 'card stats-card', dataset: { key: `${row.title}|${row.mode}` } },
-      h('div', { class: 'stats-head' }, h('strong', { class: 'grow truncate', text: row.title }), h('span', { class: 'chip quiet', text: row.mode })),
+    content = h('div', { class: `stack stats-rows${loading ? ' is-stale' : ''}`, 'aria-busy': loading ? 'true' : 'false' }, rows.length ? rows.map((row) => h('section', { class: 'card stats-card', dataset: { key: row.key } },
+      h('div', { class: 'stats-head' }, h('strong', { class: 'grow truncate', text: row.title }), row.mode ? h('span', { class: 'chip quiet', text: row.mode }) : null),
       h('dl', { class: 'stats-grid' }, row.cells.map(([k, v]) => h('div', { class: 'stats-cell' }, h('dt', { text: k }), h('dd', { dataset: { swap: '' }, text: v }))))))
       : h('section', { class: 'card' }, h('p', { class: 'setting-desc', text: '这段时间还没有完成的回合。' })));
   }
-  return h('main', { class: 'page stats-page' }, appHeader('统计', '按模型和上下文模式汇总的使用情况'),
+  return h('main', { class: 'page stats-page' }, appHeader('统计', '真实使用中的速度、成本和辅助模块效果'),
     h('div', { class: 'page-body stack' },
       segmentedSetting('统计周期', 'stats-days', 'days', STATS_PERIODS.map(([d, label]) => [String(d), label]), String(statsDays)),
-      h('p', { class: 'setting-desc', text: '辅助占比 = 路由、压缩、联网规划、校验、修正、子任务消耗的 token 占比；路由 / 联网 / 校验是实际执行的回合比例。用来判断某个辅助模块对某个模型还值不值得开。' }),
+      h('div', { class: 'chip-set', role: 'radiogroup', 'aria-label': '分组' }, vm.STATS_GROUPINGS.map(([group, label]) => h('button', {
+        type: 'button', role: 'radio', 'aria-checked': group === statsGroup ? 'true' : 'false', class: 'chip-toggle', dataset: { action: 'stats-group', group }, text: label }))),
+      h('p', { class: 'setting-desc', text: '耗时取中位数。费用按模型配置里的价格估算（含辅助调用），没有价格的模型不计；带“起”表示有调用没报用量，实际更高。辅助占比 = 路由、压缩、联网规划、校验、修正、子任务消耗的 token 占比；路由 / 联网 / 校验是实际执行的回合比例。' }),
       content));
 }
 
@@ -357,6 +394,8 @@ function detailRows(item, sessionId, canAct) {
     if (u.auxiliary) rows.push([`辅助调用 ×${u.auxiliary}`, `${vm.full(u.auxInput)} / ${vm.full(u.auxOutput)}`]);
     if (u.subagents || u.auxiliary) rows.push([u.incomplete ? '已报告合计' : '合计 入/出', `${vm.full(u.totalInput)} / ${vm.full(u.totalOutput)}`]);
     if (u.incomplete) rows.push(['用量', '部分请求未报告完整用量']);
+    if (u.retries) rows.push(['自动重试', `${u.retries} 次（限流或服务繁忙）`]);
+    if (u.cost) rows.push(['费用（估算）', `${vm.money(u.cost.amount, u.cost.currency)}${u.cost.partial ? ' 起' : ''}${u.cost.offPeak ? ' · 闲时价' : ''}`]);
   }
   if (item.webBackend) rows.push(['联网', `${item.webBackend}${item.sources?.length ? ` · ${item.sources.length} 来源` : ''}`]);
   const verification = vm.verificationState(item.verification);
@@ -373,6 +412,9 @@ function detailRows(item, sessionId, canAct) {
             ? button('误判', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'false_alarm' }, 'btn small ghost')
             : button('漏错', 'verification-feedback', { sessionId, localSeq: item.localSeq, label: 'missed_error' }, 'btn small ghost'),
         ] : null));
+  }
+  if (verification?.preRepairText) {
+    out.push(h('div', { class: 'compare-row' }, button('看修正前的回答', 'show-pre-repair', { sessionId, localSeq: item.localSeq }, 'btn small ghost')));
   }
   if (item.turnId && !item.inherited && Number(item.answers) > 1) {
     out.push(h('div', { class: 'compare-row' }, button(`对比这个问题的 ${item.answers} 次回答`, 'open-answers', { sessionId, turnId: item.turnId }, 'btn small ghost')));

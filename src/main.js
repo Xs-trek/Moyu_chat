@@ -1,14 +1,14 @@
 import { bindHost, postIntent, requestIntent } from './bridge.js';
 import { flash, randomQuote } from './mascot.js';
-import { closeImageViewer, closeSheet, handleBack, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
+import { closeImageViewer, closeSheet, handleBack, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTextSheet, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
 import { openModelEditor, openProviderEditor } from './editors.js';
 import { syncSegment } from './dom.js';
 import { reducedMotion } from './morph.js';
 import { createRenderGate } from './render-gate.js';
-import { forgetStats, patchConversation, patchStreamItem, render, renderNotice, resizeTextarea, setStatsDays, syncTurnNavigator, toggleTurnDetails } from './render.js';
+import { forgetStats, patchConversation, patchStreamItem, render, renderNotice, resizeTextarea, setStatsDays, setStatsGroup, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
 import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
-import { forgetRemote, onRemoteChange, traceKey } from './remote.js';
+import { forgetRemote, onRemoteChange, refreshRemote, traceKey } from './remote.js';
 import * as vm from './view-model.js';
 import './drawer-gesture.js';
 
@@ -16,6 +16,7 @@ const renderGate = createRenderGate(render);
 // A requested turn trace arrived: refresh the expanded footer in place.
 onRemoteChange(() => { if (!patchConversation()) renderGate.request(); });
 subscribe((_state, change) => {
+  if (change?.scope !== 'stream' && change?.scope !== 'toast') verifyNewKeys(currentView());
   if (change?.scope === 'toast') renderNotice();
   else if (change?.scope === 'stream' && change.item && patchStreamItem(change)) return;
   else if (!patchConversation()) renderGate.request();
@@ -264,6 +265,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'rerun-mode') { optimisticSegment(target); setRerunChoice({ contextMode: target.dataset.contextMode }); }
   else if (action === 'rerun-confirm') rerun();
   else if (action === 'stats-days') { optimisticSegment(target); setStatsDays(target.dataset.days); renderGate.request(); }
+  else if (action === 'stats-group') { setStatsGroup(target.dataset.group); renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
   else if (action === 'toggle-turn-nav') {
     const nav = target.closest('.turn-nav');
@@ -306,6 +308,13 @@ document.addEventListener('click', (event) => {
     if (choice) postIntent('chat.session.create', { providerId: choice.providerId, modelProfileId: choice.modelProfileId, contextMode: choice.contextMode, webMode: choice.webMode });
   }
   else if (action === 'provider-key') postIntent('provider.credential.edit', { providerId: target.dataset.providerId });
+  else if (action === 'provider-verify') guardCheck(`verify:${target.dataset.providerId}`, 'provider.key.verify', { providerId: target.dataset.providerId }, (data) => {
+    const text = { valid: 'Key 可用', invalid: 'Key 无效', unverified: '这个端点没有模型列表接口，发送一次消息即可确认 Key', error: `检查失败：${data.summary || ''}` }[data.keyStatus] || '已检查';
+    return { level: data.keyStatus === 'valid' ? 'info' : data.keyStatus === 'unverified' ? 'info' : 'error', text };
+  });
+  else if (action === 'provider-balance') guardCheck(`balance:${target.dataset.providerId}`, 'provider.balance.get', { providerId: target.dataset.providerId });
+  else if (action === 'model-probe') guardCheck(`probe:${target.dataset.modelProfileId}`, 'model.probe', { modelProfileId: target.dataset.modelProfileId },
+    (data) => ({ level: data.ok ? 'info' : 'error', text: data.ok ? `连接正常${data.reply ? `：${data.reply}` : ''}` : `测试失败：${data.summary || data.code || ''}` }));
   else if (action === 'route-host-confirm') {
     const routeId = target.dataset.routeId;
     openConfirmDialog({ title: '确认新的域名', confirmText: '确认发送',
@@ -394,6 +403,11 @@ document.addEventListener('click', (event) => {
   else if (action === 'retry-turn') retryTurn(sessionId);
   else if (action === 'apply-profile') postIntent('chat.session.model.set', { localSessionId: sessionId, modelProfileId: target.dataset.modelProfileId });
   else if (action === 'view-image') openImageViewer(target.dataset.src, target.dataset.name);
+  else if (action === 'show-pre-repair') {
+    const item = (currentView()?.activeSession?.messages || []).find((m) => Number(m.localSeq) === Number(target.dataset.localSeq));
+    const text = vm.verificationState(item?.verification)?.preRepairText;
+    if (text) openTextSheet({ title: '修正前的回答', note: '智能校验认为这一版有问题，修正后换成了现在显示的回答。', markdown: text });
+  }
   else if (action === 'viewer-close') closeImageViewer();
   else if (action === 'open-source' && target.dataset.url) postIntent('external.open', { url: target.dataset.url });
   else if (action === 'jump-latest') {
@@ -432,6 +446,58 @@ function resizeComposerTextarea(input) {
   resizeTextarea(input);
 }
 
+/** Account checks: the remote cache shows "running" on the page; the outcome comes back as a notice. */
+function guardCheck(key, type, payload, notice) {
+  refreshRemote(key, type, payload)
+    .then((data) => { if (notice) setNotice(notice(data)); })
+    .catch((error) => setNotice({ level: 'error', text: String(error?.message || error || '') }));
+  renderGate.request();
+}
+
+/**
+ * Sends one turn. The result of an accepted send arrives when the turn ends; a rejected send fails at once
+ * and Native has put the submitted text back as the draft, so the cleared composer shows it again. A send
+ * refused because the account reached its budget asks first and goes again with budgetConfirmed.
+ */
+function sendTurn(sessionId, text, activeSession, budgetConfirmed) {
+  const reasoningEffort = activeSession?.reasoningEffort;
+  const webMode = activeSession?.webMode;
+  return postIntent('chat.session.send', { localSessionId: sessionId, text, ...(budgetConfirmed ? { budgetConfirmed: true } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}), ...(webMode ? { webMode } : {}) }, {
+    resolve() {},
+    reject(error) {
+      if (error?.data?.draftRestored) restoreComposerText(sessionId, text);
+      if (error?.data?.budget && !budgetConfirmed) {
+        confirmOverBudget(error.message, () => {
+          const form = document.querySelector('form[data-form="composer"]');
+          const input = form?.dataset.sessionId === sessionId ? form.elements.namedItem('message') : null;
+          if (input && input.value === text) { input.value = ''; resizeComposerTextarea(input); }
+          advanceDraftGeneration(sessionId);
+          sendTurn(sessionId, text, currentView()?.activeSession, true);
+        });
+        return;
+      }
+      setNotice({ level: 'error', text: error?.message || '发送失败' });
+    },
+  });
+}
+
+function confirmOverBudget(message, onConfirm) {
+  openConfirmDialog({ title: '已达到预算', message: `${message || '这个账号的估算花费已达预算'}。仍然发送这一轮吗？`, confirmText: '仍然发送', onConfirm });
+}
+
+/** A key just saved (status still unknown, never checked) is checked once with the endpoint's free model list. */
+const keyChecks = new Set();
+function verifyNewKeys(view) {
+  for (const provider of view?.providers || []) {
+    const fresh = provider.hasCredential && (provider.keyStatus || 'unknown') === 'unknown' && !provider.keyCheckedAt;
+    if (!fresh) { keyChecks.delete(provider.providerId); continue; }
+    if (keyChecks.has(provider.providerId)) continue;
+    keyChecks.add(provider.providerId);
+    refreshRemote(`verify:${provider.providerId}`, 'provider.key.verify', { providerId: provider.providerId }).catch(() => {});
+  }
+}
+
 /** Retry rewinds the failed turn natively; text being typed is saved first so it stays in the composer. */
 function retryTurn(sessionId) {
   if (!sessionId) return;
@@ -443,7 +509,13 @@ function retryTurn(sessionId) {
     advanceDraftGeneration(sessionId);
     postIntent('chat.session.saveDraft', { localSessionId: sessionId, text: String(input.value || '') });
   }
-  postIntent('chat.turn.retry', { localSessionId: sessionId });
+  postIntent('chat.turn.retry', { localSessionId: sessionId }, {
+    resolve() {},
+    reject(error) {
+      if (error?.data?.budget) confirmOverBudget(error.message, () => postIntent('chat.turn.retry', { localSessionId: sessionId, budgetConfirmed: true }));
+      else setNotice({ level: 'error', text: error?.message || '重试失败' });
+    },
+  });
 }
 
 /** Put a rejected message back into a composer the user has not typed into since. */
@@ -474,18 +546,7 @@ document.addEventListener('submit', (event) => {
     setNotice({ level: 'info', text: '当前回合仍在进行，内容已保留为下一条草稿' });
     return;
   }
-  const reasoningEffort = activeSession?.reasoningEffort;
-  const webMode = activeSession?.webMode;
-  // The result of an accepted send arrives when the turn ends; a rejected send fails at once and Native
-  // has put the submitted text back as the draft, so the cleared composer shows it again.
-  const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text,
-    ...(reasoningEffort ? { reasoningEffort } : {}), ...(webMode ? { webMode } : {}) }, {
-    resolve() {},
-    reject(error) {
-      if (error?.data?.draftRestored) restoreComposerText(sessionId, text);
-      setNotice({ level: 'error', text: error?.message || '发送失败' });
-    },
-  });
+  const requestId = sendTurn(sessionId, text, activeSession, false);
   if (requestId && input) {
     input.value = '';
     resizeComposerTextarea(input);

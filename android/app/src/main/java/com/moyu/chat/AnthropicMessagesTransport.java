@@ -85,6 +85,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             if (reasoningTokens != null) roundReasoning = Math.max(roundReasoning, Math.max(0, reasoningTokens));
             emitUsage();
         }
+        @Override public void onRetryAfter(long millis) { delegate.onRetryAfter(millis); }
         @Override public void onCompleted() { delegate.onCompleted(); }
         @Override public void onError(String code, String summary, boolean retryable) { delegate.onError(code, summary, retryable); }
     }
@@ -386,6 +387,8 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
                 try { raw = response.body() == null ? "" : response.body().string(); } catch (Exception ignored) { }
                 wire.append(raw);
                 String detail = errorMessage(raw);
+                long wait = ProviderErrors.retryAfterMillis(response);
+                if (wait > 0) sink.onRetryAfter(wait);
                 sink.onError("http_" + response.code(), ProviderErrors.httpSummary(response.code(), detail, ProviderErrors.requestId(response)),
                         ProviderErrors.retryable(response.code(), detail));
                 return null;

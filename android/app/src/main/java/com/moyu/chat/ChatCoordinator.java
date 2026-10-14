@@ -29,12 +29,15 @@ final class ChatCoordinator implements AutoCloseable {
     private final ScheduledExecutorService streamProjectionScheduler = Executors.newSingleThreadScheduledExecutor();
     // Blocking Router/Checkpoint/Web preparation must never occupy the UI/intent authority queue.
     private final ExecutorService preparationWorker = Executors.newFixedThreadPool(2);
+    /** Network checks the user starts on the account page (key, model list, balance, connection test). */
+    private final ExecutorService guardWorker = Executors.newFixedThreadPool(2);
     // Client tools may run independently; the hard subagent fan-out is four and no child may recurse.
     private final ExecutorService clientToolWorker = Executors.newFixedThreadPool(ClientToolRuntime.MAX_PARALLEL_SUBAGENTS);
     private final ChatTransportRegistry transports = new ChatTransportRegistry();
     private final ContextBuilder contexts;
     private final SnapshotService snapshots;
     private final ProviderConfigService config;
+    private final ProviderGuard guard;
     /** Turn stages (Router, checkpoint, Web, generation, verification) live in the pipeline; this class owns intents and views. */
     private final TurnPipeline pipeline;
     private final Map<String, ChatTransport.Turn> activeTurns = new ConcurrentHashMap<>();
@@ -76,6 +79,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.systemDark = () -> (app.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES;
         this.contexts = new ContextBuilder(db, mediaStore); this.snapshots = new SnapshotService(db);
         this.config = new ProviderConfigService(db, secrets, transports);
+        this.guard = new ProviderGuard(db, secrets, config, transports);
         this.pipeline = new TurnPipeline(new PipelineEnv(), db, contexts, mediaStore, transports);
         // Recovery runs on the same single worker as every intent, so it is ordered before any send.
         worker.execute(() -> { db.recoverInterruptedSessions(); pruneOrphans(); config.refreshCatalog(); emitView(); });
@@ -170,7 +174,11 @@ final class ChatCoordinator implements AutoCloseable {
                     startTurn(requestId, sessionId, message, p, "", message);
                     return;
                 }
-                case "chat.turn.retry": retryTurn(requestId, required(p, "localSessionId")); return;
+                case "chat.turn.retry": retryTurn(requestId, required(p, "localSessionId"), p.optBoolean("budgetConfirmed", false)); return;
+                case "provider.key.verify": { String id = required(p, "providerId"); checkAsync(requestId, () -> guard.verifyKey(id)); return; }
+                case "route.models.list": { String id = required(p, "routeId"); checkAsync(requestId, () -> guard.listModels(id)); return; }
+                case "provider.balance.get": { String id = required(p, "providerId"); checkAsync(requestId, () -> guard.balance(id)); return; }
+                case "model.probe": { String id = required(p, "modelProfileId"); checkAsync(requestId, () -> guard.probe(id)); return; }
                 // The composer already shows what was typed: saving it changes nothing on screen, so no view push.
                 case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); result(requestId, true, null); return;
                 case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;
@@ -223,7 +231,8 @@ final class ChatCoordinator implements AutoCloseable {
                 case "stats.get": {
                     int days = Math.max(1, Math.min(365, p.optInt("days", 7)));
                     String since = Instant.now().minus(java.time.Duration.ofDays(days)).toString();
-                    result(requestId, true, null, new JSONObject().put("days", days).put("since", since).put("rows", db.turnStats(since)));
+                    String[] groupBy = TurnStats.grouping(p.optString("groupBy", ""));
+                    result(requestId, true, null, new JSONObject().put("days", days).put("since", since).put("groupBy", String.join(",", groupBy)).put("rows", db.turnStats(since, groupBy)));
                     return; // read-only: no view change
                 }
                 case "turn.payload.get": {
@@ -263,6 +272,10 @@ final class ChatCoordinator implements AutoCloseable {
             // are frozen while this serialized intent worker owns the turn. UI navigation or profile
             // edits cannot relabel an already accepted request.
             turnConfig = freezeTurnConfig(sessionId);
+            if (!p.optBoolean("budgetConfirmed", false)) {
+                JSONObject reached = config.budgetReached(turnConfig.providerId);
+                if (reached != null) throw new BudgetReached(reached);
+            }
             if (!host.setTurnRuntimeActive(sessionId, true)) throw new IllegalStateException("系统没有允许启动后台生成服务，请稍后再试");
             if (turnControls.putIfAbsent(sessionId, turnControl) != null) {
                 host.setTurnRuntimeActive(sessionId, false);
@@ -483,7 +496,10 @@ final class ChatCoordinator implements AutoCloseable {
             try { db.setDraft(sessionId, message); restored = true; } catch (Exception ignored) { }
         }
         JSONObject data = null;
-        try { data = new JSONObject().put("draftRestored", restored); } catch (Exception ignored) { }
+        try {
+            data = new JSONObject().put("draftRestored", restored);
+            if (error instanceof BudgetReached) data.put("budget", ((BudgetReached) error).detail);
+        } catch (Exception ignored) { }
         result(requestId, false, safe(error), data);
         emitView();
     }
@@ -628,20 +644,22 @@ final class ChatCoordinator implements AutoCloseable {
      * Retry rewinds the last turn when it failed or did not finish and sends the same question again with the
      * session's current settings. Like edit, the failed turn's record goes with it; text typed in the composer stays.
      */
-    private void retryTurn(String requestId, String sessionId) throws Exception {
+    private void retryTurn(String requestId, String sessionId, boolean budgetConfirmed) throws Exception {
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
         if (sessionBusy(sessionId)) throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
         JSONObject question = retryTarget(db.timeline(sessionId));
         if (question == null) throw new IllegalStateException("最后一轮已经完成，不需要重试");
         if (db.draftMedia(sessionId).length() > 0) throw new IllegalStateException("输入框里还有待发送的图片，请先发送或移除再重试");
-        freezeTurnConfig(sessionId); // a turn that could not start is refused before anything is rewound
+        TurnConfig planned = freezeTurnConfig(sessionId); // a turn that could not start is refused before anything is rewound
+        JSONObject reached = budgetConfirmed ? null : config.budgetReached(planned.providerId);
+        if (reached != null) { BudgetReached refusal = new BudgetReached(reached); result(requestId, false, refusal.getMessage(), new JSONObject().put("budget", reached)); return; }
         String keptDraft = session.draft == null ? "" : session.draft;
         String text = question.optString("text", "");
         JSONArray attachments = question.optJSONArray("attachments");
         db.truncateTimelineFrom(sessionId, question.optInt("localSeq"));
         db.replaceDraftMedia(sessionId, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
         db.setDraft(sessionId, keptDraft);
-        startTurn(requestId, sessionId, text, new JSONObject(), keptDraft, keptDraft.trim().isEmpty() ? text : text + "\n\n" + keptDraft);
+        startTurn(requestId, sessionId, text, new JSONObject().put("budgetConfirmed", budgetConfirmed), keptDraft, keptDraft.trim().isEmpty() ? text : text + "\n\n" + keptDraft);
     }
 
     /** The last local question when its turn failed or did not finish (error row, unfinished or missing answer), else null. */
@@ -664,6 +682,33 @@ final class ChatCoordinator implements AutoCloseable {
             return answered ? null : item;
         }
         return null;
+    }
+
+    /** A turn refused because the account reached a budget; the WebView asks and resends with budgetConfirmed. */
+    static final class BudgetReached extends IllegalStateException {
+        final JSONObject detail;
+        BudgetReached(JSONObject detail) {
+            super(budgetMessage(detail));
+            this.detail = detail;
+        }
+    }
+
+    static String budgetMessage(JSONObject d) {
+        String sign = "CNY".equals(d.optString("currency")) ? "¥" : "$";
+        return ("monthly".equals(d.optString("period")) ? "本月" : "今天") + "的估算花费已达预算（" + sign + String.format(java.util.Locale.ROOT, "%.2f", d.optDouble("spent"))
+                + " / " + sign + String.format(java.util.Locale.ROOT, "%.2f", d.optDouble("limit")) + "）";
+    }
+
+    private interface Check { JSONObject run() throws Exception; }
+
+    /** Runs a network check off the intent worker; the result (and a fresh view) come back on the worker. */
+    private void checkAsync(String requestId, Check check) {
+        guardWorker.execute(() -> {
+            JSONObject data = null; String error = null;
+            try { data = check.run(); } catch (Exception failure) { error = safe(failure); }
+            JSONObject done = data; String failed = error;
+            worker.execute(() -> { emitView(); result(requestId, failed == null, failed, done); });
+        });
     }
 
     /** Rollback rewinds the current local session; branching is a separate explicit user action. */
@@ -994,5 +1039,5 @@ final class ChatCoordinator implements AutoCloseable {
 
     private static String validTheme(String value) { String v = value == null ? "" : value.trim(); if (!("system".equals(v) || "light".equals(v) || "dark".equals(v))) return "system"; return v; }
 
-    @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); pipeline.webService.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); worker.shutdownNow(); }
+    @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); pipeline.webService.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); guardWorker.shutdownNow(); worker.shutdownNow(); }
 }

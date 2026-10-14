@@ -19,6 +19,9 @@ final class TurnRun {
     final ChatDatabase.Session session;
     final JSONArray pendingMedia;
 
+    /** Route whose concurrency slot this turn holds (RouteGate); released exactly once when the turn ends. */
+    final java.util.concurrent.atomic.AtomicReference<String> routeSlot = new java.util.concurrent.atomic.AtomicReference<>();
+
     /** Stage-tagged transports: usage is attributed to the stage that issued the call. */
     ChatTransport mainTransport, routeTransport, checkpointTransport, webPlanTransport, verifyTransport, repairTransport, subagentTransport;
 

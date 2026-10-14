@@ -121,6 +121,8 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                 String detail = httpErrorDetail(response);
                 String summary = ProviderErrors.httpSummary(response.code(), detail, ProviderErrors.requestId(response));
                 wire.append(summary);
+                long wait = ProviderErrors.retryAfterMillis(response);
+                if (wait > 0) sink.onRetryAfter(wait);
                 sink.onError("http_" + response.code(), summary, ProviderErrors.retryable(response.code(), detail));
                 return;
             }
@@ -556,6 +558,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             d.onReasoningDelta(delta);
         }
         @Override public void onProviderContinuation(JSONObject state) { d.onProviderContinuation(state); }
+        @Override public void onRetryAfter(long millis) { d.onRetryAfter(millis); }
         @Override public void onTextDelta(String delta) { d.onTextDelta(delta); }
         @Override public void onImage(String mimeType, String base64, String fileName) { d.onImage(mimeType, base64, fileName); }
         @Override public void onToolActivity(String tool, String state) { d.onToolActivity(tool, state); }

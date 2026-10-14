@@ -35,8 +35,11 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.model.set', { localSessionId: string; modelProfileId: string }>
   | UiIntent<'chat.session.reasoning.set', { localSessionId: string; reasoningEffort: string }>
   | UiIntent<'chat.session.web.set', { localSessionId: string; webMode: WebMode }>
-  /** A send that is not accepted fails at once with `data: { draftRestored: boolean }`: the submitted text is the draft again. */
-  | UiIntent<'chat.session.send', { localSessionId: string; text: string; reasoningEffort?: string; webMode?: WebMode }>
+  /**
+   * A send that is not accepted fails at once with `data: { draftRestored: boolean; budget?: BudgetReachedView }`: the submitted
+   * text is the draft again. With `budget` the account reached a budget; sending again with `budgetConfirmed` goes ahead.
+   */
+  | UiIntent<'chat.session.send', { localSessionId: string; text: string; reasoningEffort?: string; webMode?: WebMode; budgetConfirmed?: boolean }>
   | UiIntent<'chat.session.saveDraft', { localSessionId: string; text: string }>
   | UiIntent<'chat.attachment.pick', { localSessionId: string }>
   | UiIntent<'chat.attachment.remove', { localSessionId: string; mediaId: string }>
@@ -49,7 +52,7 @@ export type MoyuChatIntent =
    * question and images again with the session's current settings; the failed turn's record is removed, the
    * composer's text is kept. Refused (nothing rewound) while images wait in the composer.
    */
-  | UiIntent<'chat.turn.retry', { localSessionId: string }>
+  | UiIntent<'chat.turn.retry', { localSessionId: string; budgetConfirmed?: boolean }>
   /**
    * Account editor: name, preset (creation only) and, when present, the complete route set (omitted routes are
    * deleted with their models; a new route identical to a stored one reuses it). Native pushes the view before
@@ -71,6 +74,14 @@ export type MoyuChatIntent =
   | UiIntent<'model.preview', { providerId: string; routeId: string; modelId: string; modelProfileId?: string; overrides?: ModelOverrides }>
   /** Read-only; result `data: { routeId, version, models: CatalogModelView[] }`: reviewed models for a pristine preset route. */
   | UiIntent<'route.catalog', { routeId: string }>
+  /** Checks the account key with the endpoint's model list; result `data: ModelListView & { keyStatus; checkedAt; routeLabel }`. Also runs after a key is saved. */
+  | UiIntent<'provider.key.verify', { providerId: string }>
+  /** The route's own model list (GET …/models); limits it reports become the "discovered" source of matching models. */
+  | UiIntent<'route.models.list', { routeId: string }>
+  /** Vendor balance where the preset declares an endpoint (`ProviderView.balanceSupported`); result `data: BalanceView`. */
+  | UiIntent<'provider.balance.get', { providerId: string }>
+  /** One tiny request on the model's deployment; result `data: ProbeResultView`, also stored as `ModelProfileView.probe`. */
+  | UiIntent<'model.probe', { modelProfileId: string }>
   | UiIntent<'verification.feedback', { localSessionId: string; localSeq: number; label: 'accurate' | 'false_alarm' | 'missed_error' }>
   | UiIntent<'branch.create.local', { localSessionId: string; throughSeq?: number }>
   /** Read-only; the intent.result carries `data: TurnTraceView`. Traces are never pushed with the view. */
@@ -88,7 +99,8 @@ export type MoyuChatIntent =
   /** Read-only; result `data: AnswerGroupView`. */
   | UiIntent<'turn.answers.get', { localSessionId: string; turnId: string }>
   /** Read-only; result `data: { days, since, rows: StatsRowView[] }`. */
-  | UiIntent<'stats.get', { days: number }>;
+  /** groupBy: 'model,mode' (default) | 'model' | 'protocol' | 'effort' | 'mode' | 'model,effort'. */
+  | UiIntent<'stats.get', { days: number; groupBy?: string }>;
 
 export interface MediaView {
   mediaId: string;
@@ -149,7 +161,31 @@ export interface ModelProfileView {
   /** '<preset>/<route>/<model>' when a reviewed catalog entry applies, else ''. */
   catalogKey: string;
   catalogVerified: boolean;
+  /** Last connection test (model.probe), or null. It records what happened; it changes no capability. */
+  probe: ProbeResultView | null;
+  /** Whether the route's model list (last read) contains this Model ID; null when never read. */
+  listed: boolean | null;
 }
+
+export interface ProbeResultView {
+  checkedAt: string; ok: boolean; code?: string; summary?: string;
+  totalMs: number; firstOutputMs?: number; usageReported: boolean; reasoningSeen: boolean; reply: string;
+}
+
+export interface ModelListView {
+  routeId: string; ok: boolean; status?: number; code?: string; summary?: string;
+  models?: { id: string; contextTokens?: number; maxOutputTokens?: number; inputModalities?: string }[];
+}
+
+export interface BalanceView {
+  checkedAt: string; ok: boolean; available?: boolean; summary?: string;
+  balances?: { currency: string; total: string; granted: string; toppedUp: string }[];
+}
+
+/** Estimated spend guard of an account, with the spend so far in each window that has a limit. */
+export interface BudgetView { currency?: 'USD' | 'CNY'; daily?: number; monthly?: number; spentToday?: number; spentMonth?: number }
+
+export interface BudgetReachedView { period: 'daily' | 'monthly'; limit: number; spent: number; currency: 'USD' | 'CNY' }
 
 /** One endpoint of an account. Protocol is fixed after creation. */
 export interface RouteView {
@@ -176,6 +212,8 @@ export interface RouteDialectView {
   reasoningReplay?: 'never' | 'with-tools' | 'always';
   store?: boolean;
   autoCache?: boolean;
+  /** Concurrent main generation calls on this route (any protocol); absent = no cap. Extra turns queue (stream stage 'queued'). */
+  maxConcurrent?: number;
 }
 
 /** An account: one API Key (native secure store) shared by its routes. */
@@ -190,7 +228,12 @@ export interface ProviderView {
   routes: RouteView[];
   models: ModelProfileView[];
   hasCredential: boolean;
-  keyStatus: 'unknown' | 'valid' | 'invalid' | 'billing' | 'forbidden' | string;
+  /** Last key check or turn outcome: valid / invalid (401) / unverified (endpoint has no model list) / error / unknown. */
+  keyStatus: 'unknown' | 'valid' | 'invalid' | 'unverified' | 'error' | string;
+  keyCheckedAt: string;
+  budget: BudgetView;
+  /** The preset has a balance endpoint (provider.balance.get). */
+  balanceSupported: boolean;
   configured: boolean;
 }
 
@@ -260,6 +303,9 @@ export interface VerificationView {
   calibrationLabels?: number;
   learnedCalibration?: boolean;
   features?: number[];
+  repaired?: boolean;
+  /** The first answer, kept when a repair replaced it, so the two can be compared. */
+  preRepairText?: string;
   attempts?: VerificationAttemptView[];
   repairAttempted?: boolean;
   repaired?: boolean;
@@ -300,9 +346,9 @@ export interface SessionView {
 }
 
 export type TimelineItem =
-  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question across re-answers, when more than one. */ answers?: number; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'connecting' | 'connected' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question across re-answers, when more than one. */ answers?: number; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'connecting' | 'connected' | 'retrying' | 'queued' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
   /** Projected from the turn record (not a stored timeline row): placed right after the turn's reply, or after its user row when there is none. */
-  | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; /** Input the last main call sent (inputTokens sums every main call of a tool loop). */ lastMainInputTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
+  | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; /** Input the last main call sent (inputTokens sums every main call of a tool loop). */ lastMainInputTokens?: number; /** Rate-limit / overload retries before output. */ providerRetries?: number; /** Estimated from the profile's prices, all calls of the turn. */ cost?: { currency: 'USD' | 'CNY'; amount: number; partial: boolean; offPeak: boolean }; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
 
 /** One pipeline stage of a turn. Skipped stages say why (`reason`); `usage` is the stage's own model calls. */
@@ -355,11 +401,18 @@ export interface AnswerGroupView {
   answers: { turnId: string; localSessionId: string; sessionTitle: string; userSeq: number; status: string; terminalCode: string; config: Record<string, unknown>; usage: Record<string, unknown>; rating?: 1 | -1; original: boolean; startedAt: string; text?: string; verification?: { verdict: string; action: string; repaired: boolean } }[];
 }
 
-/** In-use statistics per model × context mode (finished turns in the window). */
+/** In-use statistics of finished turns in the window, grouped by stats.get's groupBy. */
 export interface StatsRowView {
-  model: string; contextMode: string;
+  /** The grouping values of this row: any of model / protocol / effort / mode. */
+  group: { model?: string; protocol?: string; effort?: string; mode?: string };
+  /** Present when the grouping includes them (older field names). */
+  model?: string; contextMode?: string;
   turns: number; ok: number; failed: number; cancelled: number;
-  avgFirstOutputMs?: number; avgDurationMs?: number; avgTokens?: number;
+  medianFirstOutputMs?: number; medianDurationMs?: number; avgTokens?: number;
+  /** cachedInputTokens / cacheHitBaseTokens over the turns that reported both. */
+  cacheHitRate?: number;
+  /** Estimated cost per currency; partialCostTurns had calls without usage (the real cost is higher). */
+  cost?: Partial<Record<'USD' | 'CNY', number>>; costedTurns?: number; partialCostTurns?: number;
   mainTokens: number; helperTokens: number; helperShare?: number;
   routed: number; checkpointed: number; webUsed: number; verified: number; repaired: number;
   ratedUp: number; ratedDown: number;
@@ -433,6 +486,8 @@ export interface AccountForm {
   /** Creation only; fixed afterwards. */
   presetId?: string;
   displayName?: string;
+  /** Replaces the account budget; {} clears it. */
+  budget?: { currency?: 'USD' | 'CNY'; daily?: number | string; monthly?: number | string };
   routes?: {
     routeId?: string;
     presetRouteId?: string;

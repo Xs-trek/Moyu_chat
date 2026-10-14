@@ -177,13 +177,21 @@ function mockAnswers(turnId) {
 }
 
 /** Plausible per model × mode rows for the stats page. */
-function mockStats(days) {
+/** Same row shape as TurnStats: group + medians, cache rate and cost; grouping is approximated by relabelling. */
+function mockStats(days, groupBy = 'model,mode') {
   const k = days / 7;
-  return { days, rows: [
+  const dims = String(groupBy || 'model,mode').split(',');
+  const rows = [
     { model: 'Claude Sonnet 5.5', contextMode: 'smart', turns: Math.round(42 * k), ok: Math.round(40 * k), failed: 2, cancelled: 0, avgFirstOutputMs: 1850, avgDurationMs: 14200, avgTokens: 23800, helperShare: 0.27, routed: Math.round(6 * k), webUsed: Math.round(15 * k), verified: Math.round(18 * k), repaired: 3, ratedUp: 9, ratedDown: 2 },
     { model: 'GPT-5.2', contextMode: 'standard', turns: Math.round(31 * k), ok: Math.round(31 * k), failed: 0, cancelled: 1, avgFirstOutputMs: 950, avgDurationMs: 8100, avgTokens: 15400, helperShare: 0.06, routed: 0, webUsed: Math.round(9 * k), verified: 0, repaired: 0, ratedUp: 5, ratedDown: 1 },
     { model: 'DeepSeek Chat', contextMode: 'minimal', turns: Math.round(12 * k), ok: Math.round(12 * k), failed: 0, cancelled: 0, avgFirstOutputMs: 620, avgDurationMs: 5200, avgTokens: 9100, routed: 0, webUsed: 0, verified: 0, repaired: 0, ratedUp: 0, ratedDown: 0 },
-  ] };
+  ].map((row, i) => {
+    const full = { model: row.model, mode: row.contextMode, protocol: ['anthropic-messages', 'openai-responses', 'openai-chat-completions'][i], effort: ['high', 'default', 'max'][i] };
+    const group = Object.fromEntries(dims.map((d) => [d, full[d]]));
+    return { ...row, group, medianFirstOutputMs: row.avgFirstOutputMs, medianDurationMs: row.avgDurationMs, cacheHitRate: [0.82, 0.64, 0.91][i],
+      cost: [{ USD: 1.84 * k }, { USD: 0.92 * k }, { CNY: 0.31 * k }][i], costedTurns: row.turns, partialCostTurns: i === 0 ? 1 : 0 };
+  });
+  return { days, groupBy, rows };
 }
 
 function notice(text) { window.dispatchEvent(new CustomEvent('moyu:notice', { detail: { level: 'info', text: `[mock] ${text}` } })); }
@@ -368,7 +376,28 @@ window.MoyuHost = {
       catch (error) { result(message.requestId, false, error.message); }
       return;
     }
-    if (message.type === 'stats.get') { result(message.requestId, true, '', mockStats(Number(message.payload?.days) || 7)); return; }
+    if (message.type === 'stats.get') { result(message.requestId, true, '', mockStats(Number(message.payload?.days) || 7, message.payload?.groupBy)); return; }
+    // Account checks answer after a short delay, like a real network call.
+    const later = (data) => setTimeout(() => { emitView(); result(message.requestId, true, '', data); }, 700);
+    if (message.type === 'provider.key.verify') {
+      const provider = world.providers.find((p) => p.providerId === message.payload?.providerId);
+      const account = world.accounts.find((a) => a.providerId === message.payload?.providerId);
+      if (account) { account.keyStatus = 'valid'; account.keyCheckedAt = now(); }
+      later({ ok: true, keyStatus: 'valid', checkedAt: now(), routeLabel: provider?.routes?.[0]?.label || '', models: (provider?.models || []).map((m) => ({ id: m.modelId, contextTokens: m.contextTokens })) });
+      return;
+    }
+    if (message.type === 'route.models.list') {
+      const provider = world.providers.find((p) => (p.routes || []).some((r) => r.routeId === message.payload?.routeId));
+      later({ ok: true, routeId: message.payload?.routeId, models: [...(provider?.models || []).map((m) => ({ id: m.modelId, contextTokens: m.contextTokens, maxOutputTokens: m.maxOutputTokens })), { id: 'mock-extra-model', contextTokens: 64000 }] });
+      return;
+    }
+    if (message.type === 'provider.balance.get') { later({ ok: true, available: true, checkedAt: now(), balances: [{ currency: 'CNY', total: '86.40', granted: '0.00', toppedUp: '86.40' }] }); return; }
+    if (message.type === 'model.probe') {
+      const probe = { checkedAt: now(), ok: true, totalMs: 1630, firstOutputMs: 910, usageReported: true, reasoningSeen: false, reply: 'OK' };
+      for (const a of world.accounts) for (const m of a.models || []) if (m.modelProfileId === message.payload?.modelProfileId) m.probe = probe;
+      later(probe);
+      return;
+    }
     if (message.type === 'turn.payload.get') {
       try { result(message.requestId, true, '', mockPayload(findSession(message.payload?.localSessionId), message.payload?.turnId, message.payload?.callIndex)); }
       catch (error) { result(message.requestId, false, error.message); }

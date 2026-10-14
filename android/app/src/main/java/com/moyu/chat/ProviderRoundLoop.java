@@ -20,6 +20,15 @@ final class ProviderRoundLoop {
     static final int MAX_PROVIDER_CONTINUATION_CHARS = 1_048_576;
     static final int MAX_CLIENT_TOOL_ROUNDS = 4;
     static final long STREAM_PROJECTION_INTERVAL_MS = 50L;
+    /** Rate-limit / overload / 5xx failures that produced no output are retried at most this many times per turn. */
+    static final int MAX_PROVIDER_RETRIES = 2;
+    /** Backoff when the provider gives no Retry-After: 2 s, then 6 s. */
+    static final long[] RETRY_BACKOFF_MS = {2_000L, 6_000L};
+    private static final java.util.concurrent.ScheduledExecutorService RETRY_TIMER = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "moyu-provider-retry");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private final TurnPipeline p;
     private final TurnPipeline.Env env;
@@ -63,6 +72,9 @@ final class ProviderRoundLoop {
     private int roundInput, roundOutput, roundCached, roundCacheWrite, roundCacheBase, roundReasoning;
     private int mainInput, mainOutput, mainCached, mainCacheWrite, mainCacheBase, mainReasoning;
     private final ChatTransport.Sink sink = new RoundSink();
+    private volatile long retryAfterMs = 0L;
+    private int providerRetries = 0;
+    private final JSONArray retryCodes = new JSONArray();
 
     ProviderRoundLoop(TurnPipeline pipeline, TurnRun run) throws Exception {
         this.p = pipeline;
@@ -183,7 +195,52 @@ final class ProviderRoundLoop {
     private JSONObject generateDetail() throws Exception {
         return new JSONObject().put("rounds", clientToolBatchCount.get() + 1).put("clientToolBatches", clientToolBatchCount.get())
                 .put("subagents", subagentCount).put("usedClientWeb", usedClientWeb).put("sources", webSources.size())
-                .put("outputChars", textOut.length()).put("reasoningChars", reasoningOut.length());
+                .put("outputChars", textOut.length()).put("reasoningChars", reasoningOut.length())
+                .put("retries", providerRetries).put("retryCodes", retryCodes);
+    }
+
+    /** Wait before retry {@code attempt} (0-based), or -1 when the provider asked for longer than we wait. */
+    static long retryDelayMs(int attempt, long retryAfterMs) {
+        if (retryAfterMs > ProviderErrors.MAX_RETRY_AFTER_MS) return -1L;
+        if (retryAfterMs > 0L) return retryAfterMs;
+        return RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)];
+    }
+
+    /**
+     * A retryable failure (rate limit, overload, 5xx) before this round produced any text, reasoning or image
+     * is retried after a bounded wait, at most MAX_PROVIDER_RETRIES times per turn. Stopping during the wait
+     * ends the turn at once. Returns false when the failure must end the turn.
+     */
+    private boolean retryRound(String code, boolean retryable) {
+        long asked = retryAfterMs;
+        retryAfterMs = 0L;
+        boolean produced = textOut.length() > roundTextStart || reasoningOut.length() > roundReasoningStart || outputMedia.length() > roundMediaStart;
+        if (!retryable || produced || providerRetries >= MAX_PROVIDER_RETRIES || turnControl.isCancelled() || !env.ownsTurn(id, turnControl)) return false;
+        long delay = retryDelayMs(providerRetries, asked);
+        if (delay < 0L) return false;
+        providerRetries++;
+        retryCodes.put(code == null ? "" : code);
+        try { usageState.put("providerRetries", providerRetries); } catch (Exception ignored) { }
+        streamStage.set("retrying");
+        markProjectionDirty();
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.ScheduledFuture<?>[] timer = new java.util.concurrent.ScheduledFuture<?>[1];
+        ChatTransport.Turn waiting = () -> {
+            if (!done.compareAndSet(false, true)) return;
+            if (timer[0] != null) timer[0].cancel(false);
+            env.authority().execute(() -> { settle(); finish(new String[]{"cancelled", "已停止生成"}); });
+        };
+        env.putActiveTurn(id, waiting);
+        turnControl.bindTransport(waiting);
+        timer[0] = RETRY_TIMER.schedule(() -> env.authority().execute(() -> {
+            if (!done.compareAndSet(false, true)) return;
+            turnControl.clearTransport(waiting);
+            if (turnControl.isCancelled() || !env.ownsTurn(id, turnControl)) { settle(); finish(new String[]{"cancelled", "已停止生成"}); return; }
+            streamTerminal.set(false);
+            startRound(activeRoundOptions.get());
+        }), delay, TimeUnit.MILLISECONDS);
+        if (turnControl.isCancelled()) waiting.cancel();
+        return true;
     }
 
     /** The wait between a round's finish marker and its terminal callback is not turn time. */
@@ -280,12 +337,14 @@ final class ProviderRoundLoop {
             providerRoundGeneration.incrementAndGet();
             env.authority().execute(ProviderRoundLoop.this::completeGeneration);
         }
+        @Override public void onRetryAfter(long millis) { retryAfterMs = Math.max(0L, millis); }
         @Override public void onError(String code, String summary, boolean retryable) {
             endFinishGrace();
             streamTerminal.set(true);
             providerRoundGeneration.incrementAndGet();
             env.authority().execute(() -> {
                 try { commitRoundUsage(); persistUsageProjection(); } catch (Exception ignored) { }
+                if (retryRound(code, retryable)) return;
                 settle();
                 finish(new String[]{code, summary});
             });

@@ -30,8 +30,16 @@ final class RouteDialect {
     final String reasoningReplay;
     final boolean store;
     final boolean autoCache;
+    /** Concurrent main generation calls allowed on this route (any protocol); 0 = no cap. */
+    final int maxConcurrent;
+    static final int MAX_CONCURRENT_LIMIT = 16;
 
     private RouteDialect(String outputCap, boolean streamUsage, String thinkingParam, String reasoningReplay, boolean store, boolean autoCache) {
+        this(outputCap, streamUsage, thinkingParam, reasoningReplay, store, autoCache, 0);
+    }
+
+    private RouteDialect(String outputCap, boolean streamUsage, String thinkingParam, String reasoningReplay, boolean store, boolean autoCache, int maxConcurrent) {
+        this.maxConcurrent = maxConcurrent;
         this.outputCap = outputCap;
         this.streamUsage = streamUsage;
         this.thinkingParam = thinkingParam;
@@ -72,8 +80,13 @@ final class RouteDialect {
         if (!(REPLAY_NEVER.equals(replay) || REPLAY_WITH_TOOLS.equals(replay) || REPLAY_ALWAYS.equals(replay))) {
             throw new IllegalArgumentException("推理回传方式无效：" + replay);
         }
+        int concurrent;
+        Object rawConcurrent = in.opt("maxConcurrent");
+        try { concurrent = rawConcurrent == null || String.valueOf(rawConcurrent).trim().isEmpty() ? 0 : Integer.parseInt(String.valueOf(rawConcurrent).trim()); }
+        catch (NumberFormatException error) { throw new IllegalArgumentException("并发上限必须是 0–" + MAX_CONCURRENT_LIMIT + " 的整数（0 = 不限）"); }
+        if (concurrent < 0 || concurrent > MAX_CONCURRENT_LIMIT) throw new IllegalArgumentException("并发上限必须是 0–" + MAX_CONCURRENT_LIMIT + " 的整数（0 = 不限）");
         return new RouteDialect(cap, in.optBoolean("streamUsage", base.streamUsage), thinking, replay,
-                in.optBoolean("store", base.store), in.optBoolean("autoCache", base.autoCache));
+                in.optBoolean("store", base.store), in.optBoolean("autoCache", base.autoCache), concurrent);
     }
 
     static RouteDialect parse(String protocol, String json) {
@@ -82,6 +95,7 @@ final class RouteDialect {
     }
 
     private static boolean allowedKey(String protocol, String key) {
+        if ("maxConcurrent".equals(key)) return true;
         if (OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(protocol)) {
             return "outputCap".equals(key) || "streamUsage".equals(key) || "thinkingParam".equals(key) || "reasoningReplay".equals(key);
         }
@@ -101,6 +115,7 @@ final class RouteDialect {
             } else if (AnthropicMessagesTransport.PROTOCOL.equals(protocol)) {
                 out.put("autoCache", autoCache);
             }
+            if (maxConcurrent > 0) out.put("maxConcurrent", maxConcurrent);
             return out;
         } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }

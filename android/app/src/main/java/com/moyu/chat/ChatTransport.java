@@ -28,6 +28,8 @@ interface ChatTransport {
             onUsage(inputTokens, outputTokens);
         }
         void onCompleted();
+        /** The provider asked to wait this long before retrying (Retry-After); sent just before the matching onError. */
+        default void onRetryAfter(long millis) { }
         void onError(String code, String summary, boolean retryable);
         /**
          * Redacted wire record for the protocol inspector ({@link WireCapture}): direction is "request"

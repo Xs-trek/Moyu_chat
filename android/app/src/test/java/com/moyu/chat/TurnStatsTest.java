@@ -42,8 +42,9 @@ public class TurnStatsTest {
         assertEquals(2, row.getInt("turns"));
         assertEquals(1, row.getInt("ok"));
         assertEquals(1, row.getInt("failed"));
-        assertEquals(1000, row.getLong("avgFirstOutputMs"));
-        assertEquals(5000, row.getLong("avgDurationMs"));
+        assertEquals("median of 800 and 1200", 1000, row.getLong("medianFirstOutputMs"));
+        assertEquals(5000, row.getLong("medianDurationMs"));
+        assertEquals("smart", row.getJSONObject("group").getString("mode"));
         assertEquals("route 1000 + verify 2000 + repair 1500", 4500, row.getLong("helperTokens"));
         assertEquals(13500, row.getLong("mainTokens"));
         assertEquals(4500d / 18000d, row.getDouble("helperShare"), 1e-9);
@@ -54,5 +55,33 @@ public class TurnStatsTest {
         assertEquals(1, row.getInt("ratedUp"));
         assertEquals(1, row.getInt("ratedDown"));
         assertFalse("no tokens, no share", rows.getJSONObject(1).has("helperShare"));
+    }
+
+    @Test public void groupsByAnyDimensionWithMediansCacheRateAndCostPerCurrency() throws Exception {
+        TurnStats stats = new TurnStats(TurnStats.grouping("protocol"));
+        JSONObject chat = new JSONObject().put("modelName", "A").put("protocol", "openai-chat-completions").put("reasoningEffort", "high");
+        JSONObject messages = new JSONObject().put("modelName", "B").put("protocol", "anthropic-messages");
+        for (long ms : new long[]{100, 900, 300}) {
+            stats.add(chat, new JSONObject().put("requestDurationMs", ms).put("cachedInputTokens", 50).put("cacheHitBaseTokens", 100)
+                    .put("cost", new JSONObject().put("currency", "USD").put("amount", 0.5).put("partial", ms == 900)), "ok", null, Collections.emptyList());
+        }
+        stats.add(messages, new JSONObject().put("cost", new JSONObject().put("currency", "CNY").put("amount", 2.0)), "ok", null, Collections.emptyList());
+        JSONArray rows = stats.toJson();
+        assertEquals(2, rows.length());
+        JSONObject first = rows.getJSONObject(0);
+        assertEquals("openai-chat-completions", first.getJSONObject("group").getString("protocol"));
+        assertFalse("only the requested dimension", first.getJSONObject("group").has("model"));
+        assertEquals("median, not mean", 300, first.getLong("medianDurationMs"));
+        assertEquals(0.5, first.getDouble("cacheHitRate"), 1e-9);
+        assertEquals(1.5, first.getJSONObject("cost").getDouble("USD"), 1e-9);
+        assertEquals(1, first.getInt("partialCostTurns"));
+        assertEquals(2.0, rows.getJSONObject(1).getJSONObject("cost").getDouble("CNY"), 1e-9);
+
+        TurnStats byEffort = new TurnStats(TurnStats.grouping("effort"));
+        byEffort.add(chat, new JSONObject(), "ok", null, Collections.emptyList());
+        byEffort.add(messages, new JSONObject(), "ok", null, Collections.emptyList());
+        assertEquals(2, byEffort.toJson().length());
+        assertArrayEquals("unknown grouping falls back to model × mode", new String[]{"model", "mode"}, TurnStats.grouping("nonsense"));
+        assertEquals(Long.valueOf(2), TurnStats.median(Arrays.asList(1L, 3L)));
     }
 }

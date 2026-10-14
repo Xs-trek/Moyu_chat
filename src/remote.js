@@ -31,6 +31,20 @@ export function loadRemote(key, type, payload) {
 
 export function forgetRemote(key) { cache.delete(key); }
 
+/** Runs the request again for the key (an account check the user started); resolves with the data as it is cached. */
+export function refreshRemote(key, type, payload) {
+  const entry = { state: 'loading' };
+  cache.set(key, entry);
+  if (cache.size > MAX_CACHED) cache.delete(cache.keys().next().value);
+  return requestIntent(type, payload).then((data) => {
+    if (cache.get(key) === entry) { cache.set(key, { state: 'ready', data }); listener(); }
+    return data;
+  }, (error) => {
+    if (cache.get(key) === entry) { cache.set(key, { state: 'error', error: String(error?.message || error || '读取失败') }); listener(); }
+    throw error;
+  });
+}
+
 export const traceKey = (turnId) => (turnId ? `trace:${turnId}` : '');
 export function loadTrace(sessionId, turnId) { return loadRemote(traceKey(turnId), 'turn.trace.get', { localSessionId: sessionId, turnId }); }
 export function peekTrace(turnId) { return peekRemote(traceKey(turnId)); }

@@ -80,12 +80,14 @@ export function projectProviders(accounts) {
       const r = resolve(a, route, m.modelId, m.overrides);
       return { modelProfileId: m.modelProfileId, routeId: route.routeId, routeLabel: route.label, modelId: m.modelId, displayName: m.displayName || r.catalog?.name || m.modelId,
         enabled: m.enabled !== false, protocol: route.protocol, ...r.values, retention: r.catalog?.retention || '', sources: r.sources, overrides: { ...(m.overrides || {}) },
-        catalogKey: r.catalog ? `${a.presetId}/${route.presetRouteId}/${m.modelId}` : '', catalogVerified: Boolean(r.catalog?.verified) };
+        catalogKey: r.catalog ? `${a.presetId}/${route.presetRouteId}/${m.modelId}` : '', catalogVerified: Boolean(r.catalog?.verified), probe: m.probe || null, listed: null };
     });
     const preset = data.presets.find((p) => p.id === a.presetId);
     const enabled = models.filter((m) => m.enabled);
     return { providerId: a.providerId, displayName: a.displayName, presetId: a.presetId, presetName: preset?.name || a.presetId, presetKind: preset?.kind || 'custom',
-      hasCredential: Boolean(a.hasCredential), keyStatus: 'unknown', model: enabled[0]?.modelId || '', configured: Boolean(a.hasCredential) && enabled.length > 0, routes, models };
+      hasCredential: Boolean(a.hasCredential), keyStatus: a.keyStatus || 'unknown', keyCheckedAt: a.keyCheckedAt || '',
+      budget: a.budget ? { ...a.budget, spentToday: a.budget.daily ? 0.42 : undefined, spentMonth: a.budget.monthly ? 6.1 : undefined } : {},
+      balanceSupported: preset?.routes?.some((r) => r.balancePath) || false, model: enabled[0]?.modelId || '', configured: Boolean(a.hasCredential) && enabled.length > 0, routes, models };
   });
 }
 
@@ -106,6 +108,7 @@ export function makeConfigIntents(world) {
         if (!p.routes) p.routes = preset.routes.filter((r) => r.baseUrl).map((r) => ({ presetRouteId: r.id, label: r.label, protocol: r.protocol, baseUrl: r.baseUrl, authMode: r.authMode, dialect: r.dialect }));
       }
       a.displayName = String(p.displayName || '').trim() || data.presets.find((x) => x.id === a.presetId)?.name || a.displayName;
+      if (p.budget) { const b = {}; if (p.budget.daily) b.daily = Number(p.budget.daily); if (p.budget.monthly) b.monthly = Number(p.budget.monthly); a.budget = Object.keys(b).length ? { currency: p.budget.currency || 'USD', ...b } : undefined; }
       if (p.routes) {
         if (!p.routes.length) throw new Error('账号至少需要一条路线');
         const claimed = new Set(p.routes.map((r) => r.routeId).filter(Boolean));
