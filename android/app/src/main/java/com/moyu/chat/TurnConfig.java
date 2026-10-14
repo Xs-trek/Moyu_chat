@@ -14,6 +14,8 @@ final class TurnConfig {
     /** The user's global custom instruction (settings) when the turn was accepted; "" when none. */
     final String customInstruction;
     static final int MAX_CUSTOM_INSTRUCTION_CHARS = 4000;
+    /** Helper modules the user had switched off when the turn was accepted (HelperSwitches ids). */
+    final java.util.Set<String> helpersOff;
 
     TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
                ChatDatabase.Session session, ChatDatabase.ModelProfile profile) {
@@ -22,6 +24,13 @@ final class TurnConfig {
 
     TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
                ChatDatabase.Session session, ChatDatabase.ModelProfile profile, String customInstruction) {
+        this(provider, apiKey, deploymentFingerprint, session, profile, customInstruction, java.util.Collections.emptySet());
+    }
+
+    TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
+               ChatDatabase.Session session, ChatDatabase.ModelProfile profile, String customInstruction,
+               java.util.Set<String> helpersOff) {
+        this.helpersOff = HelperSwitches.canonical(helpersOff);
         String instruction = customInstruction == null ? "" : customInstruction.trim();
         this.customInstruction = instruction.length() > MAX_CUSTOM_INSTRUCTION_CHARS ? instruction.substring(0, MAX_CUSTOM_INSTRUCTION_CHARS) : instruction;
         this.provider = provider;
@@ -52,6 +61,9 @@ final class TurnConfig {
         this.reasoningAvailable = !ReasoningPolicy.normalizeLevels(session.reasoningLevels).isEmpty();
         this.pricing = !sameDeployment || profile.pricing == null || profile.pricing.trim().isEmpty() ? "{}" : profile.pricing;
     }
+
+    /** False when the user switched this helper module off (the context mode still decides whether it would run). */
+    boolean helperOn(String helper) { return !helpersOff.contains(helper); }
 
     /** The profile still names the model id and route the session froze. */
     static boolean describes(ChatDatabase.ModelProfile profile, ChatDatabase.Session session) {

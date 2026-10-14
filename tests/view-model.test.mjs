@@ -89,3 +89,33 @@ test('a repaired answer keeps the first version for comparison', () => {
   assert.equal(vm.verificationState({ status: 'valid', repaired: true, preRepairText: '旧答案' }).preRepairText, '旧答案');
   assert.equal(vm.verificationState({ status: 'valid', repaired: false, preRepairText: 'x' }).preRepairText, '');
 });
+
+test('helper switches: all on by default, labels for what a turn had off', () => {
+  assert.deepEqual(vm.helperSwitches({ ui: {} }).map((h) => h.on), [true, true, true, true, true]);
+  const rows = vm.helperSwitches({ ui: { helpersOff: ['verify'] } });
+  assert.equal(rows.find((h) => h.id === 'verify').on, false);
+  assert.equal(vm.helpersOffLabel([]), '');
+  assert.equal(vm.helpersOffLabel(['router', 'verify']), '已关闭：路由、校验与修正');
+});
+
+test('a retried turn names its attempt and the outcome of the one before', () => {
+  const view = vm.traceView({
+    status: 'ok', terminalCode: '', spans: [{ stage: 'verify', status: 'skipped', reason: 'user_off' }],
+    config: { attempt: 2, retryOf: 't1', helpersOff: ['verify'] },
+    previousAttempt: { turnId: 't1', status: 'failed', terminalCode: 'http_429', usage: { cost: { amount: 0.002, currency: 'USD' } } },
+  });
+  assert.equal(view.rows[0].note, '已在设置中关闭');
+  assert.deepEqual(view.notes, ['第 2 次尝试，上一次：失败 · HTTP 429 · $0.0020', '已关闭：校验与修正']);
+  assert.deepEqual(vm.traceView({ status: 'ok', spans: [], config: {} }).notes, []);
+});
+
+test('statistics show archived turns and helper-switch groups', () => {
+  const [all, off] = vm.statsView({ rows: [
+    { group: { helpers: 'all_on' }, turns: 3, ok: 2, failed: 1, cancelled: 0, archived: 1 },
+    { group: { model: 'M', helpers: 'router+webPlan' }, turns: 1, ok: 1, failed: 0, cancelled: 0, archived: 0 },
+  ] });
+  assert.equal(all.title, '辅助全开');
+  assert.equal(all.cells[0][1], '3 · 失败 1 · 已回退 1');
+  assert.equal(off.title, 'M · 已关闭：路由、联网规划');
+  assert.equal(off.cells[0][1], '1');
+});

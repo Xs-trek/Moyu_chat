@@ -94,15 +94,21 @@ export type MoyuChatIntent =
   | UiIntent<'notify.background.set', { enabled: boolean }>
   /** Global custom instruction (≤ 4000 chars, '' clears): appended to every turn's system instructions and given to Smart verify/repair; recorded in the turn config. */
   | UiIntent<'instruction.global.set', { text: string }>
+  /** Global helper switch (settings). Off removes a helper the context mode would run; never adds one. Frozen into each turn's config.helpersOff. */
+  | UiIntent<'helper.switch.set', { helper: HelperId; enabled: boolean }>
   /** 1 = good answer, -1 = bad answer, 0 clears. */
   | UiIntent<'turn.rate', { localSessionId: string; turnId: string; rating: 1 | -1 | 0 }>
   /** Re-ask the user message at localSeq in a new branch; result `data: { localSessionId, text }`, then send `text` there. */
   | UiIntent<'turn.rerun', { localSessionId: string; localSeq: number; modelProfileId?: string; contextMode?: ContextMode }>
   /** Read-only; result `data: AnswerGroupView`. */
   | UiIntent<'turn.answers.get', { localSessionId: string; turnId: string }>
-  /** Read-only; result `data: { days, since, rows: StatsRowView[] }`. */
-  /** groupBy: 'model,mode' (default) | 'model' | 'protocol' | 'effort' | 'mode' | 'model,effort'. */
-  | UiIntent<'stats.get', { days: number; groupBy?: string }>;
+  /** Read-only; result `data: { days, since, groupBy, includeArchived, rows: StatsRowView[] }`. */
+  /** groupBy: 'model,mode' (default) | 'model' | 'protocol' | 'effort' | 'mode' | 'model,effort' | 'helpers' | 'model,helpers'. */
+  /** includeArchived (default true): also count turns since retried, rewound or deleted (turn_archive). */
+  | UiIntent<'stats.get', { days: number; groupBy?: string; includeArchived?: boolean }>;
+
+/** Helper modules with a global on/off switch. */
+export type HelperId = 'router' | 'compaction' | 'webPlan' | 'verify' | 'subagent';
 
 export interface MediaView {
   mediaId: string;
@@ -376,8 +382,13 @@ export interface TurnTraceView {
   endedAt: string | null;
   status: 'running' | 'ok' | 'failed' | 'cancelled';
   terminalCode: string;
-  /** The turn's frozen configuration: model, protocol, context mode, harness preset, Web mode, effort, limits. */
+  /**
+   * The turn's frozen configuration: model, protocol, context mode, harness preset, Web mode, effort, limits,
+   * helpersOff (HelperId[]), and for a retry retryOf (the archived failed turn) and attempt (2, 3, ...).
+   */
   config: Record<string, unknown>;
+  /** For a retry: the outcome of the attempt it replaced (from turn_archive). */
+  previousAttempt?: { turnId: string; startedAt: string; endedAt: string | null; status: string; terminalCode: string; attempt: number; usage: Record<string, unknown>; reason: string };
   usage: Record<string, unknown>;
   spans: TurnSpanView[];
   /** Model calls with recorded wire payloads (metadata only); empty when capture was off or the turn is old. */
@@ -405,8 +416,8 @@ export interface AnswerGroupView {
 
 /** In-use statistics of finished turns in the window, grouped by stats.get's groupBy. */
 export interface StatsRowView {
-  /** The grouping values of this row: any of model / protocol / effort / mode. */
-  group: { model?: string; protocol?: string; effort?: string; mode?: string };
+  /** The grouping values of this row: any of model / protocol / effort / mode / helpers ('all_on' or switched-off ids joined by '+'). */
+  group: { model?: string; protocol?: string; effort?: string; mode?: string; helpers?: string };
   /** Present when the grouping includes them (older field names). */
   model?: string; contextMode?: string;
   turns: number; ok: number; failed: number; cancelled: number;
@@ -418,6 +429,8 @@ export interface StatsRowView {
   mainTokens: number; helperTokens: number; helperShare?: number;
   routed: number; checkpointed: number; webUsed: number; verified: number; repaired: number;
   ratedUp: number; ratedDown: number;
+  /** Of `turns`, how many have since been retried, rewound or deleted from their Chat. */
+  archived: number;
 }
 
 export interface SessionDetailView extends SessionView {
@@ -470,7 +483,7 @@ export interface AppViewModel {
   sessions: SessionView[];
   activeLocalSessionId?: string;
   activeSession?: SessionDetailView;
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; customInstruction: string; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; customInstruction: string; helpersOff: HelperId[]; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {

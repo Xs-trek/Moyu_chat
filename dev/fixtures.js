@@ -193,7 +193,7 @@ function mainSessions() {
   ];
 }
 
-const baseUi = { pendingRequestIds: [], showReasoning: true, crossChatMemoryEnabled: true, notifyInBackground: true, customInstruction: '', defaultContextMode: 'standard', defaultWebMode: 'auto', standardSubagentMode: 'off' };
+const baseUi = { pendingRequestIds: [], showReasoning: true, crossChatMemoryEnabled: true, notifyInBackground: true, customInstruction: '', helpersOff: [], defaultContextMode: 'standard', defaultWebMode: 'auto', standardSubagentMode: 'off' };
 
 /** Each fixture returns a fresh mutable world for the mock host. */
 export const fixtures = {

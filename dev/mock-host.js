@@ -178,7 +178,7 @@ function mockAnswers(turnId) {
 
 /** Plausible per model × mode rows for the stats page. */
 /** Same row shape as TurnStats: group + medians, cache rate and cost; grouping is approximated by relabelling. */
-function mockStats(days, groupBy = 'model,mode') {
+function mockStats(days, groupBy = 'model,mode', includeArchived = true) {
   const k = days / 7;
   const dims = String(groupBy || 'model,mode').split(',');
   const rows = [
@@ -186,12 +186,13 @@ function mockStats(days, groupBy = 'model,mode') {
     { model: 'GPT-5.2', contextMode: 'standard', turns: Math.round(31 * k), ok: Math.round(31 * k), failed: 0, cancelled: 1, avgFirstOutputMs: 950, avgDurationMs: 8100, avgTokens: 15400, helperShare: 0.06, routed: 0, webUsed: Math.round(9 * k), verified: 0, repaired: 0, ratedUp: 5, ratedDown: 1 },
     { model: 'DeepSeek Chat', contextMode: 'minimal', turns: Math.round(12 * k), ok: Math.round(12 * k), failed: 0, cancelled: 0, avgFirstOutputMs: 620, avgDurationMs: 5200, avgTokens: 9100, routed: 0, webUsed: 0, verified: 0, repaired: 0, ratedUp: 0, ratedDown: 0 },
   ].map((row, i) => {
-    const full = { model: row.model, mode: row.contextMode, protocol: ['anthropic-messages', 'openai-responses', 'openai-chat-completions'][i], effort: ['high', 'default', 'max'][i] };
+    const full = { model: row.model, mode: row.contextMode, protocol: ['anthropic-messages', 'openai-responses', 'openai-chat-completions'][i], effort: ['high', 'default', 'max'][i], helpers: ['all_on', 'verify', 'router+webPlan'][i] };
     const group = Object.fromEntries(dims.map((d) => [d, full[d]]));
-    return { ...row, group, medianFirstOutputMs: row.avgFirstOutputMs, medianDurationMs: row.avgDurationMs, cacheHitRate: [0.82, 0.64, 0.91][i],
+    const archived = includeArchived ? [3, 1, 0][i] : 0;
+    return { ...row, turns: row.turns - (includeArchived ? 0 : [3, 1, 0][i]), archived, group, medianFirstOutputMs: row.avgFirstOutputMs, medianDurationMs: row.avgDurationMs, cacheHitRate: [0.82, 0.64, 0.91][i],
       cost: [{ USD: 1.84 * k }, { USD: 0.92 * k }, { CNY: 0.31 * k }][i], costedTurns: row.turns, partialCostTurns: i === 0 ? 1 : 0 };
   });
-  return { days, groupBy, rows };
+  return { days, groupBy, includeArchived, rows };
 }
 
 function notice(text) { window.dispatchEvent(new CustomEvent('moyu:notice', { detail: { level: 'info', text: `[mock] ${text}` } })); }
@@ -284,6 +285,12 @@ function handle(type, p) {
     case 'memory.global.set': world.ui.crossChatMemoryEnabled = Boolean(p.enabled); break;
     case 'inspector.capture.set': world.ui.wireCapture = Boolean(p.enabled); break;
     case 'notify.background.set': world.ui.notifyInBackground = Boolean(p.enabled); break;
+    case 'helper.switch.set': {
+      const off = new Set(world.ui.helpersOff || []);
+      if (p.enabled) off.delete(p.helper); else off.add(p.helper);
+      world.ui.helpersOff = ['router', 'compaction', 'webPlan', 'verify', 'subagent'].filter((id) => off.has(id));
+      break;
+    }
     case 'instruction.global.set': world.ui.customInstruction = String(p.text || '').trim(); break;
     case 'context.mode.default.set': world.ui.defaultContextMode = p.mode; break;
     case 'web.mode.default.set': world.ui.defaultWebMode = p.mode; break;
@@ -377,7 +384,7 @@ window.MoyuHost = {
       catch (error) { result(message.requestId, false, error.message); }
       return;
     }
-    if (message.type === 'stats.get') { result(message.requestId, true, '', mockStats(Number(message.payload?.days) || 7, message.payload?.groupBy)); return; }
+    if (message.type === 'stats.get') { result(message.requestId, true, '', mockStats(Number(message.payload?.days) || 7, message.payload?.groupBy, message.payload?.includeArchived !== false)); return; }
     // Account checks answer after a short delay, like a real network call.
     const later = (data) => setTimeout(() => { emitView(); result(message.requestId, true, '', data); }, 700);
     if (message.type === 'provider.key.verify') {

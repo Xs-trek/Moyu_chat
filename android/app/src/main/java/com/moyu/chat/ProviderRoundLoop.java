@@ -513,12 +513,13 @@ final class ProviderRoundLoop {
         settle();
         try { r.trace().end(span, TurnTrace.OK, generateDetail()); } catch (Exception ignored) { }
         boolean usedExternalEvidence = webPrepared.hasContext() || usedClientWeb || !webSources.isEmpty();
-        boolean shouldVerify = r.contextPolicy.verifierEnabled && r.adaptivePolicy.verifierAvailable
+        boolean verifyOn = r.config.helperOn(HelperSwitches.VERIFY);
+        boolean shouldVerify = r.contextPolicy.verifierEnabled && r.adaptivePolicy.verifierAvailable && verifyOn
                 && HarnessPolicyResolver.shouldVerify(r.session, r.taskProfile, usedExternalEvidence,
                 mainPrompt.truncated, subagentCount > 0);
         if (!shouldVerify) {
             r.trace().skip(TurnTrace.VERIFY, !r.contextPolicy.verifierEnabled ? "mode_off"
-                    : !r.adaptivePolicy.verifierAvailable ? "harness_off" : "not_needed");
+                    : !r.adaptivePolicy.verifierAvailable ? "harness_off" : !verifyOn ? HelperSwitches.USER_OFF : "not_needed");
             // Client-tool turns depend on hidden tool_call/tool_result history that is intentionally
             // not durable Chat history. Do not persist partial native continuation across user turns.
             if (clientToolBatchCount.get() == 0) try { p.attachProviderContinuation(r.live, r.config, providerContinuationItems); } catch (Exception ignored) { }

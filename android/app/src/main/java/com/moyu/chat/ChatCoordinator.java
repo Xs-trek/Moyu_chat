@@ -49,6 +49,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
     /** Branch session → the turn its next turn re-answers (set by turn.rerun, consumed when that turn starts). */
     private final Map<String, String> pendingReruns = new ConcurrentHashMap<>();
+    /** Retry link of a session's next accepted turn: {retryOf: archived turn id, attempt: n}. */
+    private final Map<String, JSONObject> pendingRetries = new ConcurrentHashMap<>();
     private final Map<String, String> pendingKeptDrafts = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
@@ -68,6 +70,8 @@ final class ChatCoordinator implements AutoCloseable {
     private volatile boolean notifyInBackground;
     /** Global custom instruction (settings), frozen into each accepted turn's config. */
     private String customInstruction;
+    /** Helper modules the user switched off (HelperSwitches ids, settings), frozen into each accepted turn's config. */
+    private java.util.Set<String> helpersOff;
     private boolean wireCapture;
     private String defaultContextMode;
     private String defaultWebMode;
@@ -95,6 +99,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
         this.notifyInBackground = !"false".equals(db.setting("notifyInBackground", "true"));
         this.customInstruction = db.setting("customInstruction", "");
+        this.helpersOff = HelperSwitches.parse(db.setting(HelperSwitches.SETTING_KEY, "[]"));
         this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
@@ -158,6 +163,15 @@ final class ChatCoordinator implements AutoCloseable {
                     String text = p.optString("text", "").trim();
                     if (text.length() > TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS) throw new IllegalArgumentException("自定义指令不能超过 " + TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS + " 字");
                     customInstruction = text; db.putSetting("customInstruction", text);
+                    break;
+                }
+                case "helper.switch.set": {
+                    String helper = required(p, "helper");
+                    if (!HelperSwitches.known(helper)) throw new IllegalArgumentException("未知的辅助模块");
+                    java.util.Set<String> next = new java.util.HashSet<>(helpersOff);
+                    if (p.optBoolean("enabled", true)) next.remove(helper); else next.add(helper);
+                    helpersOff = HelperSwitches.canonical(next);
+                    db.putSetting(HelperSwitches.SETTING_KEY, HelperSwitches.toJson(helpersOff).toString());
                     break;
                 }
                 case "context.mode.default.set": defaultContextMode = ContextMode.normalize(required(p, "mode")); db.putSetting("defaultContextMode", defaultContextMode); break;
@@ -241,7 +255,8 @@ final class ChatCoordinator implements AutoCloseable {
                     int days = Math.max(1, Math.min(365, p.optInt("days", 7)));
                     String since = Instant.now().minus(java.time.Duration.ofDays(days)).toString();
                     String[] groupBy = TurnStats.grouping(p.optString("groupBy", ""));
-                    result(requestId, true, null, new JSONObject().put("days", days).put("since", since).put("groupBy", String.join(",", groupBy)).put("rows", db.turnStats(since, groupBy)));
+                    result(requestId, true, null, new JSONObject().put("days", days).put("since", since).put("groupBy", String.join(",", groupBy)).put("includeArchived", p.optBoolean("includeArchived", true))
+                            .put("rows", db.turnStats(since, groupBy, p.optBoolean("includeArchived", true))));
                     return; // read-only: no view change
                 }
                 case "turn.payload.get": {
@@ -294,6 +309,8 @@ final class ChatCoordinator implements AutoCloseable {
         // The composer is cleared only after the runtime lease makes this an accepted turn.
         db.setDraft(sessionId, keptDraft);
         if (keptDraft.isEmpty()) pendingKeptDrafts.remove(sessionId); else pendingKeptDrafts.put(sessionId, keptDraft);
+        JSONObject retry = p.optJSONObject("retry"); // set only after acceptance, so a refused retry never labels a later turn
+        if (retry == null) pendingRetries.remove(sessionId); else pendingRetries.put(sessionId, retry);
         startingSessions.add(sessionId);
         // The first accepted turn is when a result notification starts to matter.
         if (notifyInBackground) host.requestNotificationPermission(true);
@@ -487,7 +504,7 @@ final class ChatCoordinator implements AutoCloseable {
         if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("不支持这个账号的协议");
         ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
         ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort);
-        return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile, customInstruction);
+        return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile, customInstruction, helpersOff);
     }
 
     private boolean sessionBusy(String id) {
@@ -551,6 +568,7 @@ final class ChatCoordinator implements AutoCloseable {
         @Override public boolean ownsTurn(String sessionId, TurnControl control) { return turnControls.get(sessionId) == control; }
         @Override public boolean wireCaptureEnabled() { return wireCapture; }
         @Override public String takeRerunOf(String sessionId) { return pendingReruns.remove(sessionId); }
+        @Override public JSONObject takeRetryOf(String sessionId) { return pendingRetries.remove(sessionId); }
         @Override public String takeKeptDraft(String sessionId) { String kept = pendingKeptDrafts.remove(sessionId); return kept == null ? "" : kept; }
         @Override public void releaseTurn(String id) {
             activeTurns.remove(id);
@@ -651,7 +669,8 @@ final class ChatCoordinator implements AutoCloseable {
 
     /**
      * Retry rewinds the last turn when it failed or did not finish and sends the same question again with the
-     * session's current settings. Like edit, the failed turn's record goes with it; text typed in the composer stays.
+     * session's current settings. Like edit, the failed turn's record moves to the archive
+     * (statistics and budgets keep it) and the new turn links to it; text typed in the composer stays.
      */
     private void retryTurn(String requestId, String sessionId, boolean budgetConfirmed) throws Exception {
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
@@ -665,10 +684,13 @@ final class ChatCoordinator implements AutoCloseable {
         String keptDraft = session.draft == null ? "" : session.draft;
         String text = question.optString("text", "");
         JSONArray attachments = question.optJSONArray("attachments");
-        db.truncateTimelineFrom(sessionId, question.optInt("localSeq"));
+        String failedTurnId = db.truncateTimelineFrom(sessionId, question.optInt("localSeq"), ChatDatabase.ARCHIVE_RETRY);
         db.replaceDraftMedia(sessionId, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
         db.setDraft(sessionId, keptDraft);
-        startTurn(requestId, sessionId, text, new JSONObject().put("budgetConfirmed", budgetConfirmed), keptDraft, keptDraft.trim().isEmpty() ? text : text + "\n\n" + keptDraft);
+        JSONObject send = new JSONObject().put("budgetConfirmed", budgetConfirmed);
+        JSONObject failed = failedTurnId == null ? null : db.archivedTurn(failedTurnId);
+        if (failed != null) send.put("retry", new JSONObject().put("retryOf", failedTurnId).put("attempt", failed.optInt("attempt", 1) + 1));
+        startTurn(requestId, sessionId, text, send, keptDraft, keptDraft.trim().isEmpty() ? text : text + "\n\n" + keptDraft);
     }
 
     /** The last local question when its turn failed or did not finish (error row, unfinished or missing answer), else null. */
@@ -819,6 +841,7 @@ final class ChatCoordinator implements AutoCloseable {
             }
             view.put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
                     .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture).put("notifyInBackground", notifyInBackground).put("customInstruction", customInstruction)
+                    .put("helpersOff", HelperSwitches.toJson(helpersOff))
                     .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
                     .put("standardSubagentMode", standardSubagentMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));

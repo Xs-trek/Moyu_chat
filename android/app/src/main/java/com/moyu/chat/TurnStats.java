@@ -20,10 +20,12 @@ final class TurnStats {
     static final java.util.Set<String> HELPER_STAGES = new java.util.HashSet<>(java.util.Arrays.asList(
             TurnTrace.ROUTE, TurnTrace.CHECKPOINT, TurnTrace.WEB_PLAN, TurnTrace.VERIFY, TurnTrace.REPAIR, "subagent"));
 
-    static final String BY_MODEL = "model", BY_PROTOCOL = "protocol", BY_EFFORT = "effort", BY_MODE = "mode";
+    static final String BY_MODEL = "model", BY_PROTOCOL = "protocol", BY_EFFORT = "effort", BY_MODE = "mode", BY_HELPERS = "helpers";
+    /** Helper-switch group of a turn with every helper on (or recorded before the switches existed). */
+    static final String ALL_HELPERS_ON = "all_on";
     /** Grouping keys a request may ask for; the default is model × context mode. */
     static final String[][] GROUPINGS = {
-            {BY_MODEL, BY_MODE}, {BY_MODEL}, {BY_PROTOCOL}, {BY_EFFORT}, {BY_MODE}, {BY_MODEL, BY_EFFORT}};
+            {BY_MODEL, BY_MODE}, {BY_MODEL}, {BY_PROTOCOL}, {BY_EFFORT}, {BY_MODE}, {BY_MODEL, BY_EFFORT}, {BY_HELPERS}, {BY_MODEL, BY_HELPERS}};
 
     /** "model,mode" → the matching grouping; anything else falls back to model × mode. */
     static String[] grouping(String raw) {
@@ -40,6 +42,8 @@ final class TurnStats {
         final Map<String, Double> cost = new LinkedHashMap<>();
         int costedTurns, partialCostTurns;
         int routed, checkpointed, webUsed, verified, repaired;
+        /** Turns counted here that have since been retried, rewound or deleted from their Chat. */
+        int archived;
         Row(JSONObject group) { this.group = group; }
 
         JSONObject toJson() throws org.json.JSONException {
@@ -49,7 +53,7 @@ final class TurnStats {
                     .put("mainTokens", mainTokens).put("helperTokens", helperTokens)
                     .put("routed", routed).put("checkpointed", checkpointed).put("webUsed", webUsed)
                     .put("verified", verified).put("repaired", repaired)
-                    .put("ratedUp", ratedUp).put("ratedDown", ratedDown);
+                    .put("ratedUp", ratedUp).put("ratedDown", ratedDown).put("archived", archived);
             // Old field names stay for the current UI bundle while it switches to `group`.
             if (group.has(BY_MODEL)) out.put("model", group.optString(BY_MODEL));
             if (group.has(BY_MODE)) out.put("contextMode", group.optString(BY_MODE));
@@ -87,12 +91,27 @@ final class TurnStats {
             case BY_MODEL: return nonEmpty(config.optString("modelName", ""), config.optString("model", "unknown"));
             case BY_PROTOCOL: return nonEmpty(config.optString("protocol", ""), "unknown");
             case BY_EFFORT: return ReasoningPolicy.normalizeEffort(config.optString("reasoningEffort", ReasoningPolicy.DEFAULT));
+            case BY_HELPERS: {
+                JSONArray off = config.optJSONArray("helpersOff");
+                StringBuilder ids = new StringBuilder();
+                if (off != null) for (int i = 0; i < off.length(); i++) { if (ids.length() > 0) ids.append('+'); ids.append(off.optString(i)); }
+                return ids.length() == 0 ? ALL_HELPERS_ON : ids.toString();
+            }
             default: return nonEmpty(config.optString("effectiveContextMode", ""), config.optString("contextMode", "standard"));
         }
     }
 
     /** One finished turn: its stored config / usage / status / rating and its spans. */
     void add(JSONObject config, JSONObject usage, String status, Integer rating, List<JSONObject> spans) throws org.json.JSONException {
+        row(config, usage, status, rating, spans);
+    }
+
+    /** A turn since removed from its Chat (turn_archive): counted like any other, and also as archived. */
+    void addArchived(JSONObject config, JSONObject usage, String status, Integer rating, List<JSONObject> spans) throws org.json.JSONException {
+        row(config, usage, status, rating, spans).archived++;
+    }
+
+    private Row row(JSONObject config, JSONObject usage, String status, Integer rating, List<JSONObject> spans) throws org.json.JSONException {
         JSONObject group = new JSONObject();
         StringBuilder key = new StringBuilder();
         for (String dim : dims) { String value = dimension(config, dim); group.put(dim, value); key.append(value).append('\n'); }
@@ -128,6 +147,7 @@ final class TurnStats {
             else if (TurnTrace.WEB_PLAN.equals(stage) && detail != null && detail.optBoolean("useWeb", false)) row.webUsed++;
             else if (TurnTrace.VERIFY.equals(stage)) { row.verified++; if (detail != null && detail.optBoolean("repaired", false)) row.repaired++; }
         }
+        return row;
     }
 
     /** Rows by turn count, most used first. */

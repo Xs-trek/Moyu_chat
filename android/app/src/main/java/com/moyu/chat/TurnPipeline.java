@@ -44,6 +44,8 @@ final class TurnPipeline {
         boolean ownsTurn(String sessionId, TurnControl control);
         /** The turn this session's next turn re-answers (from turn.rerun), or null; consumed on read. */
         String takeRerunOf(String sessionId);
+        /** {retryOf, attempt} when this turn retries a failed one, else null. */
+        JSONObject takeRetryOf(String sessionId);
         /** What the composer keeps once this turn starts (a retry keeps text typed meanwhile), or ""; consumed on read. */
         default String takeKeptDraft(String sessionId) { return ""; }
         /** Whether redacted request / response text is recorded for the protocol inspector. */
@@ -166,10 +168,12 @@ final class TurnPipeline {
         ChatDatabase.Snapshot originSnapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         r.contextPolicy = ContextMode.resolve(session, originSnapshot);
         r.adaptivePolicy = HarnessPolicyResolver.resolve(session);
-        r.taskProfile = TaskProfile.fromStored(session.taskProfile);
-        r.needsRouter = r.contextPolicy.routerEnabled && r.taskProfile == null;
-        // Deterministic Standard/Smart compaction cannot be disabled by the model-authored TaskProfile.
-        r.checkpointAllowed = r.contextPolicy.checkpointEnabled;
+        // With the Router switched off, its earlier output is not used either, so the turn runs as if it never existed.
+        boolean routerOn = turnConfig.helperOn(HelperSwitches.ROUTER);
+        r.taskProfile = routerOn ? TaskProfile.fromStored(session.taskProfile) : null;
+        r.needsRouter = r.contextPolicy.routerEnabled && routerOn && r.taskProfile == null;
+        // Deterministic Standard/Smart compaction cannot be disabled by the model-authored TaskProfile, only by the user.
+        r.checkpointAllowed = r.contextPolicy.checkpointEnabled && turnConfig.helperOn(HelperSwitches.COMPACTION);
         r.mayPrepare = r.needsRouter || r.checkpointAllowed;
 
         // Request behavior comes from the immutable TurnConfig, not mutable UI/session/profile state.
@@ -196,6 +200,8 @@ final class TurnPipeline {
         JSONObject config = turnConfigJson(r);
         String rerunOf = env.takeRerunOf(id);
         if (rerunOf != null) config.put("rerunOf", rerunOf);
+        JSONObject retry = env.takeRetryOf(id);
+        if (retry != null) config.put("retryOf", retry.optString("retryOf")).put("attempt", retry.optInt("attempt", 2));
         db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(id));
         turnControl.usageState = new JSONObject().put("createdAt", Instant.now().toString());
         env.setStarting(id, true);
@@ -221,7 +227,7 @@ final class TurnPipeline {
                 .put("continuationMode", c.continuationMode).put("clientToolCalling", c.clientToolCalling)
                 .put("contextTokens", c.contextTokens).put("inputTokens", c.inputTokens).put("maxOutputTokens", c.maxOutputTokens)
                 .put("routeId", r.provider.routeId == null ? "" : r.provider.routeId)
-                .put("customInstruction", c.customInstruction);
+                .put("customInstruction", c.customInstruction).put("helpersOff", HelperSwitches.toJson(c.helpersOff));
     }
 
     // ---------- context ----------
@@ -268,7 +274,8 @@ final class TurnPipeline {
     private boolean prepareContext(TurnRun r) throws Exception {
         TurnConfig c = r.config;
         ChatDatabase.Session session = r.session;
-        if (!r.needsRouter) r.trace().skip(TurnTrace.ROUTE, r.contextPolicy.routerEnabled ? "task_profile_cached" : "mode_off");
+        if (!r.needsRouter) r.trace().skip(TurnTrace.ROUTE, !r.contextPolicy.routerEnabled ? "mode_off"
+                : !c.helperOn(HelperSwitches.ROUTER) ? HelperSwitches.USER_OFF : "task_profile_cached");
         TurnTrace.Span stage = null;
         try {
             if (r.needsRouter) {
@@ -284,7 +291,9 @@ final class TurnPipeline {
                         .put("domain", r.taskProfile.domain).put("taskType", r.taskProfile.taskType)
                         .put("depth", r.taskProfile.depth).put("confidence", r.taskProfile.confidence)));
             }
-            if (!r.needsCheckpoint) r.trace().skip(TurnTrace.CHECKPOINT, r.checkpointAllowed ? "within_budget" : "mode_off");
+            // Switched off, no new checkpoint is written; one written earlier stays in the context (already paid for).
+            if (!r.needsCheckpoint) r.trace().skip(TurnTrace.CHECKPOINT, r.checkpointAllowed ? "within_budget"
+                    : r.contextPolicy.checkpointEnabled ? HelperSwitches.USER_OFF : "mode_off");
             if (r.needsCheckpoint) {
                 stage = r.trace().begin(TurnTrace.CHECKPOINT);
                 ContextCheckpointService.Update update = checkpointService.update(r.checkpointTransport, r.provider, r.key, session.model, r.compactionPlan.baseline,
@@ -315,7 +324,8 @@ final class TurnPipeline {
         // information; only then choose the execution wire. Provider capability controls HOW Web runs,
         // never WHETHER a semantically fresh/current request deserves Web.
         r.webFollowUp = webFollowUpContext(db.timeline(r.id));
-        r.webPlanning = webOrchestrator.shouldRunPlanner(r.config.webMode, r.input, r.webFollowUp);
+        boolean plannerOn = r.config.helperOn(HelperSwitches.WEB_PLAN);
+        r.webPlanning = plannerOn && webOrchestrator.shouldRunPlanner(r.config.webMode, r.input, r.webFollowUp);
         if (r.webPlanning) {
             env.setWebStage(r.id, "web_planning");
             try { r.live.put("streamStage", "web_planning"); db.replaceTimelineBody(r.streamKey, r.live); } catch (Exception ignored) { }
@@ -324,13 +334,13 @@ final class TurnPipeline {
         TurnTrace.Span span = r.trace().begin(TurnTrace.WEB_PLAN);
         try {
             r.webPlan = webOrchestrator.plan(r.config.webMode, r.input, r.prompt, r.webPlanTransport, r.provider, r.key,
-                    r.config.model, r.control, r.webFollowUp);
+                    r.config.model, r.control, r.webFollowUp, plannerOn);
         } finally {
             if (r.webPlanning && env.clearWebStage(r.id)) env.emitStreamingView(r.id);
         }
         WebOrchestrator.Plan plan = r.webPlan;
         r.trace().end(span, TurnTrace.OK, withCallFailure(r, TurnTrace.WEB_PLAN, new JSONObject().put("webMode", r.config.webMode).put("useWeb", plan.useWeb)
-                .put("plannerCalled", plan.plannerAttempted).put("intent", plan.intent)
+                .put("plannerCalled", plan.plannerAttempted).put("plannerOff", !plannerOn).put("intent", plan.intent)
                 .put("queries", new JSONArray(plan.queries)).put("urls", plan.urls.size())
                 .put("followUp", r.webFollowUp != null && r.webFollowUp.previousTurnUsedWeb)));
         return !cancelled(r);
@@ -360,7 +370,7 @@ final class TurnPipeline {
             if (!r.nativeSearch) r.clientToolNames.add(ClientToolRuntime.WEB_SEARCH);
             if (!r.nativeFetch) r.clientToolNames.add(ClientToolRuntime.WEB_FETCH);
         }
-        if (r.clientCalling && HarnessPolicyResolver.SUBAGENT_AUTO.equals(r.adaptivePolicy.subagentMode)) {
+        if (r.clientCalling && HarnessPolicyResolver.SUBAGENT_AUTO.equals(r.adaptivePolicy.subagentMode) && c.helperOn(HelperSwitches.SUBAGENT)) {
             r.clientToolNames.add(ClientToolRuntime.DELEGATE_SUBTASK);
         }
 

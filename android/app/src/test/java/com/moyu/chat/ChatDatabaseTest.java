@@ -111,6 +111,47 @@ public class ChatDatabaseTest {
         assertEquals("the current layout is kept across opens", 1, db.listProviders().size());
     }
 
+    @Test public void versionOneUpgradesInPlaceAndItsSpendCarryBecomesArchiveRows() throws Exception {
+        TestDeployments.save(db, provider("p-v1"));
+        String today = java.time.LocalDate.now().toString();
+        db.putSetting(ChatDatabase.LEGACY_SPEND_CARRY_KEY, new JSONObject().put("p-v1", new JSONObject().put(today, new JSONObject().put("USD", 0.25))).toString());
+        db.getWritableDatabase().execSQL("DROP TABLE turn_archive");
+        db.getWritableDatabase().setVersion(1);
+        db.close();
+        db = new ChatDatabase(context);
+        assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
+        assertEquals("a v1 file is migrated, not reset", 1, db.listProviders().size());
+        assertTrue(tableExists("turn_archive"));
+        assertEquals("", db.setting(ChatDatabase.LEGACY_SPEND_CARRY_KEY, ""));
+        String startOfToday = java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toString();
+        assertEquals("the carried spend still counts", 0.25, db.spendSince("p-v1", startOfToday).optDouble("USD"), 1e-9);
+        assertEquals("a carry has nothing to show in statistics", 0, db.turnStats("").length());
+    }
+
+    @Test public void rewoundTurnsMoveToTheArchiveWithoutTheirInstructionText() throws Exception {
+        TestDeployments.save(db, provider("p-archive"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-archive", "model", null, null);
+        String turnId = "turn-archive";
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
+        db.beginTurn(s.id, "u:" + turnId, message("user", "question"), "live:" + turnId, live, turnId,
+                new JSONObject().put("providerId", "p-archive").put("contextMode", "standard").put("customInstruction", "secret style"));
+        db.completeTurn(turnId, "ok", "", new JSONObject().put("cost", new JSONObject().put("amount", 0.5).put("currency", "USD")), new JSONArray());
+        db.finalizeTurn(s.id, "live:" + turnId, message("assistant", "answer"), null, null, "completed");
+        assertEquals(turnId, db.truncateTimelineFrom(s.id, 1, ChatDatabase.ARCHIVE_REWIND));
+        assertEquals(0, db.turns(s.id).length());
+        JSONObject archived = db.archivedTurn(turnId);
+        assertEquals(ChatDatabase.ARCHIVE_REWIND, archived.optString("reason"));
+        assertEquals(1, archived.optInt("attempt"));
+        try (android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT config FROM turn_archive WHERE turn_id=?", new String[]{turnId})) {
+            assertTrue(c.moveToFirst());
+            assertFalse(c.getString(0).contains("secret style"));
+            assertEquals("secret style".length(), new JSONObject(c.getString(0)).optInt("customInstructionChars"));
+        }
+        assertEquals(0.5, db.spendSince("p-archive", "").optDouble("USD"), 1e-9);
+        assertEquals(1, db.turnStats("").getJSONObject(0).getInt("archived"));
+        assertEquals(0, db.turnStats("", null, false).length());
+    }
+
     @Test public void newerDatabaseIsResetInsteadOfGuessed() throws Exception {
         TestDeployments.save(db, provider("p-new"));
         db.getWritableDatabase().setVersion(99);

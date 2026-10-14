@@ -2144,4 +2144,83 @@ public class ChatCoordinatorE2eTest {
         JSONObject tooLong = awaitResult(post("instruction.global.set", new JSONObject().put("text", new String(new char[TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS + 1]).replace('\0', 'x'))));
         assertFalse(tooLong.optBoolean("ok"));
     }
+
+    @Test public void switchedOffHelpersDoNotRunAndTheTurnRecordsWhichWereOff() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) { calls.incrementAndGet(); return completion("plain answer", 7, 2); }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.harnessPreset = HarnessProfile.REINFORCED; // Smart would route and verify this turn
+        app.database().saveModelProfile(profile);
+        assertTrue(awaitResult(post("helper.switch.set", new JSONObject().put("helper", "verify").put("enabled", false))).optBoolean("ok"));
+        assertTrue(awaitResult(post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", false))).optBoolean("ok"));
+        assertFalse(awaitResult(post("helper.switch.set", new JSONObject().put("helper", "anything").put("enabled", false))).optBoolean("ok"));
+        await("switches in the view", () -> "[\"router\",\"verify\"]".equals(String.valueOf(latestView().optJSONObject("ui").optJSONArray("helpersOff"))));
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.SMART).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("smart session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Explain why the sky is blue."));
+        await("turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+        assertEquals("only the main call: no Router, no verifier", 1, calls.get());
+
+        String turnId = app.database().timeline(sessionId).getJSONObject(1).optString("turnId");
+        JSONObject trace = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data");
+        assertEquals("[\"router\",\"verify\"]", trace.getJSONObject("config").getJSONArray("helpersOff").toString());
+        JSONArray spans = trace.getJSONArray("spans");
+        for (String stage : new String[]{TurnTrace.ROUTE, TurnTrace.VERIFY}) {
+            JSONObject span = null;
+            for (int i = 0; i < spans.length(); i++) if (stage.equals(spans.getJSONObject(i).optString("stage"))) span = spans.getJSONObject(i);
+            assertNotNull(stage, span);
+            assertEquals(stage, HelperSwitches.USER_OFF, span.optString("reason"));
+        }
+        JSONObject stats = awaitResult(post("stats.get", new JSONObject().put("days", 7).put("groupBy", "helpers"))).getJSONObject("data");
+        assertEquals("router+verify", stats.getJSONArray("rows").getJSONObject(0).getJSONObject("group").optString("helpers"));
+
+        assertTrue(awaitResult(post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true))).optBoolean("ok"));
+        assertEquals("[\"verify\"]", app.database().setting(HelperSwitches.SETTING_KEY, ""));
+    }
+
+    @Test public void aRetriedTurnIsArchivedLinkedFromItsRetryAndStillCounted() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        assertTrue(awaitResult(post("instruction.global.set", new JSONObject().put("text", "private preference text"))).optBoolean("ok"));
+        String sessionId = createSession();
+        failFirstRequest();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "the question"));
+        await("turn failed", () -> "failed".equals(app.database().getSession(sessionId).state));
+        await("retry offered", () -> { JSONObject a = activeSession(latestView()); return a != null && a.optInt("retryLocalSeq") == 1 && a.optBoolean("canSend"); });
+        post("chat.turn.retry", new JSONObject().put("localSessionId", sessionId));
+        await("retried turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+
+        String turnId = app.database().timeline(sessionId).getJSONObject(1).optString("turnId");
+        JSONObject trace = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data");
+        assertEquals(2, trace.getJSONObject("config").optInt("attempt"));
+        JSONObject previous = trace.getJSONObject("previousAttempt");
+        assertEquals(trace.getJSONObject("config").optString("retryOf"), previous.optString("turnId"));
+        assertEquals("failed", previous.optString("status"));
+        assertEquals(ChatDatabase.ARCHIVE_RETRY, previous.optString("reason"));
+
+        try (android.database.Cursor c = app.database().getReadableDatabase().rawQuery("SELECT config,spans FROM turn_archive WHERE turn_id=?", new String[]{previous.optString("turnId")})) {
+            assertTrue(c.moveToFirst());
+            JSONObject config = new JSONObject(c.getString(0));
+            assertFalse("the instruction text is not archived", c.getString(0).contains("private preference text"));
+            assertEquals("private preference text".length(), config.optInt("customInstructionChars"));
+            JSONArray spans = new JSONArray(c.getString(1));
+            assertTrue(spans.length() > 0);
+            for (int i = 0; i < spans.length(); i++) {
+                JSONObject detail = spans.getJSONObject(i).getJSONObject("detail");
+                for (java.util.Iterator<String> keys = detail.keys(); keys.hasNext(); ) assertFalse("no free text in archived details", detail.get(keys.next()) instanceof String);
+            }
+        }
+        JSONObject stats = awaitResult(post("stats.get", new JSONObject().put("days", 7).put("groupBy", "model"))).getJSONObject("data");
+        JSONObject row = stats.getJSONArray("rows").getJSONObject(0);
+        assertEquals(2, row.getInt("turns"));
+        assertEquals(1, row.getInt("failed"));
+        assertEquals(1, row.getInt("archived"));
+        JSONObject live = awaitResult(post("stats.get", new JSONObject().put("days", 7).put("groupBy", "model").put("includeArchived", false))).getJSONObject("data");
+        assertEquals(1, live.getJSONArray("rows").getJSONObject(0).getInt("turns"));
+        assertEquals(0, live.getJSONArray("rows").getJSONObject(0).getInt("archived"));
+    }
 }

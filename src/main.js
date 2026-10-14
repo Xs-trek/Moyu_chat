@@ -5,7 +5,7 @@ import { openModelEditor, openProviderEditor } from './editors.js';
 import { syncSegment } from './dom.js';
 import { reducedMotion } from './morph.js';
 import { createRenderGate } from './render-gate.js';
-import { forgetStats, patchConversation, patchStreamItem, render, renderNotice, resizeTextarea, setStatsDays, setStatsGroup, syncTurnNavigator, toggleTurnDetails } from './render.js';
+import { forgetStats, patchConversation, patchStreamItem, render, renderNotice, resizeTextarea, setStatsArchived, setStatsDays, setStatsGroup, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
 import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
 import { forgetRemote, onRemoteChange, refreshRemote, traceKey } from './remote.js';
@@ -266,6 +266,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'rerun-confirm') rerun();
   else if (action === 'stats-days') { optimisticSegment(target); setStatsDays(target.dataset.days); renderGate.request(); }
   else if (action === 'stats-group') { setStatsGroup(target.dataset.group); renderGate.request(); }
+  else if (action === 'stats-archived') { setStatsArchived(target.dataset.enabled === 'true'); renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
   else if (action === 'toggle-turn-nav') {
     const nav = target.closest('.turn-nav');
@@ -347,6 +348,7 @@ document.addEventListener('click', (event) => {
       note: '对所有会话生效，放在系统提示词的最后；当前提问与它冲突时以提问为准。每一轮会记下当时用的指令（调用链的本轮配置里能看到）。清空即关闭。',
       onConfirm: (text) => postIntent('instruction.global.set', { text }) });
   }
+  else if (action === 'toggle-helper') { postIntent('helper.switch.set', { helper: target.dataset.helper, enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'toggle-notify') { postIntent('notify.background.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'open-session') {
     document.querySelectorAll('.session-item.active').forEach((item) => item.classList.remove('active'));

@@ -27,11 +27,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
      */
     static final String FILE_NAME = "moyu-beta.db";
     static final String LEGACY_FILE_NAME = "moyu-chat.db";
-    static final int VERSION = 1;
+    /** 1 = frozen at layout revision 2 (installed on devices); 2 = turn_archive. Steps live in {@link #onUpgrade}. */
+    static final int VERSION = 2;
     /**
-     * Pre-release layout of schema 1, stamped in PRAGMA application_id. While the beta schema is still
-     * folded into v1, a file with a different stamp is an older v1 layout and is reset (dropped and
-     * recreated); real migrations start once v1 is frozen. 2 = accounts with routes (provider_routes).
+     * Pre-release layout of schema 1, stamped in PRAGMA application_id. A file with a different stamp is an
+     * older pre-release v1 layout and is reset (dropped and recreated). Schema 1 froze at revision 2 (accounts
+     * with routes); every later change is a forward migration in onUpgrade and keeps this stamp.
      */
     static final int LAYOUT_REVISION = 2;
 
@@ -249,17 +250,65 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX verifier_labels_key ON verifier_labels(calibration_key,label_id)");
         // App preferences only (theme, route, defaults). Per-entity state belongs to its own table.
         db.execSQL("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
+        createTurnArchive(db);
     }
 
     /** Forward migrations from v1: one reviewed step per version, each with a static-check assertion. */
-    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { }
+    @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion < 2) { createTurnArchive(db); migrateSpendCarry(db); }
+    }
+
+    /**
+     * v2. Turn archive: the record of a turn removed from its Chat (retry, edit / rollback, deleting the Chat).
+     * Statistics and budgets keep counting it; it holds no message text and no custom instruction (see
+     * {@link #archiveTurns}). No foreign keys: the session is usually gone. provider_id is the budget filter.
+     */
+    private static void createTurnArchive(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE turn_archive(turn_id TEXT PRIMARY KEY,session_id TEXT NOT NULL,provider_id TEXT NOT NULL,"
+                + "started_at TEXT NOT NULL,ended_at TEXT,status TEXT NOT NULL,terminal_code TEXT NOT NULL DEFAULT '',"
+                + "config TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',spans TEXT NOT NULL DEFAULT '[]',rating INTEGER,"
+                + "reason TEXT NOT NULL,archived_at TEXT NOT NULL)");
+        db.execSQL("CREATE INDEX turn_archive_started ON turn_archive(started_at)");
+    }
+
+    /** v1 kept removed turns' spend as a per-account, per-day carry in settings; v2 turns each entry into an archive row. */
+    private static void migrateSpendCarry(SQLiteDatabase db) {
+        JSONObject carry;
+        try { carry = new JSONObject(settingIn(db, LEGACY_SPEND_CARRY_KEY, "{}")); } catch (Exception broken) { carry = new JSONObject(); }
+        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+        String now = Instant.now().toString();
+        for (java.util.Iterator<String> accounts = carry.keys(); accounts.hasNext(); ) {
+            String providerId = accounts.next();
+            JSONObject days = carry.optJSONObject(providerId);
+            if (days == null) continue;
+            for (java.util.Iterator<String> dayKeys = days.keys(); dayKeys.hasNext(); ) {
+                String day = dayKeys.next();
+                JSONObject amounts = days.optJSONObject(day);
+                if (amounts == null) continue;
+                for (java.util.Iterator<String> currencies = amounts.keys(); currencies.hasNext(); ) {
+                    String currency = currencies.next();
+                    try {
+                        ContentValues v = new ContentValues();
+                        v.put("turn_id", "carry:" + providerId + ":" + day + ":" + currency);
+                        v.put("session_id", ""); v.put("provider_id", providerId);
+                        v.put("started_at", java.time.LocalDate.parse(day).atStartOfDay(zone).toInstant().toString());
+                        v.put("status", ARCHIVE_CARRIED); v.put("reason", ARCHIVE_CARRIED); v.put("archived_at", now);
+                        v.put("config", new JSONObject().put("providerId", providerId).toString());
+                        v.put("usage", new JSONObject().put("cost", new JSONObject().put("amount", amounts.optDouble(currency, 0d)).put("currency", currency)).toString());
+                        db.insertWithOnConflict("turn_archive", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+                    } catch (Exception skipped) { /* a damaged entry is dropped; it only ever held an estimate */ }
+                }
+            }
+        }
+        db.delete("settings", "key=?", new String[]{LEGACY_SPEND_CARRY_KEY});
+    }
 
     /** A beta build may meet a file from a newer experimental build; the beta line resets rather than guessing. */
     @Override public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }
 
     /** Child tables first so foreign keys never block the drop (PRAGMA foreign_keys cannot change inside the upgrade transaction). */
     private static void dropAll(SQLiteDatabase db) {
-        for (String table : new String[]{"knowledge_fts", "snapshot_items", "turn_payloads", "turn_spans", "turns", "timeline", "handoffs", "sessions", "snapshots",
+        for (String table : new String[]{"turn_archive", "knowledge_fts", "snapshot_items", "turn_payloads", "turn_spans", "turns", "timeline", "handoffs", "sessions", "snapshots",
                 "model_profiles", "provider_routes", "providers", "verifier_labels", "settings"}) {
             db.execSQL("DROP TABLE IF EXISTS " + table);
         }
@@ -447,7 +496,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(id)});
-            carrySpend(db, "session_id=?", new String[]{id}); // its turns go with it (ON DELETE CASCADE); their spend stays
+            archiveTurns(db, "session_id=?", new String[]{id}, ARCHIVE_DELETED); // its turns go with it (ON DELETE CASCADE); their record stays
             if (db.delete("sessions", "local_id=?", new String[]{id}) != 1) throw new IllegalStateException("session delete failed");
             if (originSnapshotId != null) {
                 boolean referenced;
@@ -556,7 +605,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     /** Deletes the timeline item at localSeq and everything after it (edit/rollback). */
-    public synchronized void truncateTimelineFrom(String sessionId, int localSeq) {
+    public synchronized void truncateTimelineFrom(String sessionId, int localSeq) { truncateTimelineFrom(sessionId, localSeq, ARCHIVE_REWIND); }
+
+    /**
+     * Deletes the timeline item at localSeq and everything after it; the removed turns move to the archive
+     * with {@code reason}. Returns the id of the first removed turn (the one being retried), or null.
+     */
+    public synchronized String truncateTimelineFrom(String sessionId, int localSeq, String reason) {
         if (sessionId == null || sessionId.trim().isEmpty() || localSeq < 1) throw new IllegalArgumentException("invalid rollback target");
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
@@ -567,7 +622,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 if (c.moveToFirst() && !c.isNull(0)) firstRemovedTurn = c.getInt(0);
             }
             String[] removed = {sessionId, String.valueOf(firstRemovedTurn == null ? localSeq : firstRemovedTurn)};
-            carrySpend(db, "session_id=? AND user_seq>=?", removed);
+            String firstTurnId = null;
+            try (Cursor c = db.rawQuery("SELECT turn_id FROM turns WHERE session_id=? AND user_seq=?", removed)) { if (c.moveToFirst()) firstTurnId = c.getString(0); }
+            archiveTurns(db, "session_id=? AND user_seq>=?", removed, reason);
             db.delete("turns", "session_id=? AND user_seq>=?", removed);
             db.delete("timeline", "session_id=? AND local_seq>=?", new String[]{sessionId, String.valueOf(localSeq)});
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(sessionId)});
@@ -589,10 +646,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 }
             }
             db.setTransactionSuccessful();
+            return firstTurnId;
         } finally { db.endTransaction(); }
     }
 
-    /** Atomically commits the user's turn and one unique live assistant projection before network streaming starts. */
     /** Atomically commits the user's turn, one unique live assistant projection and the turn record before network streaming starts. */
     public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody,
                                        String turnId, JSONObject config) {
@@ -918,8 +975,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** Per model × context mode statistics of turns started at or after {@code sinceIso}. */
     public synchronized JSONArray turnStats(String sinceIso) { return turnStats(sinceIso, null); }
 
-    /** Finished turns since {@code sinceIso}, grouped by {@code dims} (see TurnStats.GROUPINGS). */
-    public synchronized JSONArray turnStats(String sinceIso, String[] dims) {
+    /** Finished turns since {@code sinceIso}, grouped by {@code dims} (see TurnStats.GROUPINGS), archived turns included. */
+    public synchronized JSONArray turnStats(String sinceIso, String[] dims) { return turnStats(sinceIso, dims, true); }
+
+    /** Finished turns since {@code sinceIso}, grouped by {@code dims}; with {@code includeArchived}, also turns since retried, rewound or deleted. */
+    public synchronized JSONArray turnStats(String sinceIso, String[] dims, boolean includeArchived) {
         TurnStats stats = new TurnStats(dims);
         SQLiteDatabase db = getReadableDatabase();
         String sql = "SELECT t.turn_id,t.config,t.usage,t.status,t.rating,s.stage,s.status,s.input_tokens,s.output_tokens,s.detail"
@@ -942,6 +1002,21 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 spans.add(span);
             }
             if (current != null) stats.add(config, usage, status, rating, spans);
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
+        if (includeArchived) {
+            String archived = "SELECT config,usage,status,rating,spans FROM turn_archive WHERE started_at>=? AND reason<>? AND status<>'running'";
+            try (Cursor c = db.rawQuery(archived, new String[]{sinceIso == null ? "" : sinceIso, ARCHIVE_CARRIED})) {
+                while (c.moveToNext()) {
+                    try {
+                        JSONArray stored = new JSONArray(c.getString(4));
+                        java.util.ArrayList<JSONObject> spans = new java.util.ArrayList<>();
+                        for (int i = 0; i < stored.length(); i++) { JSONObject span = stored.optJSONObject(i); if (span != null) spans.add(span); }
+                        stats.addArchived(new JSONObject(c.getString(0)), new JSONObject(c.getString(1)), c.getString(2), c.isNull(3) ? null : c.getInt(3), spans);
+                    } catch (org.json.JSONException skipped) { }
+                }
+            }
+        }
+        try {
             return stats.toJson();
         } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }
@@ -958,6 +1033,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                         .put("endedAt", c.isNull(3) ? JSONObject.NULL : c.getString(3)).put("status", c.getString(4))
                         .put("terminalCode", c.getString(5)).put("config", new JSONObject(c.getString(6))).put("usage", new JSONObject(c.getString(7)));
             }
+            String retryOf = turn.getJSONObject("config").optString("retryOf", "");
+            JSONObject previous = retryOf.isEmpty() ? null : archivedTurn(retryOf);
+            if (previous != null) turn.put("previousAttempt", previous);
             JSONArray spans = new JSONArray();
             try (Cursor c = db.rawQuery("SELECT stage,status,started_at_ms,duration_ms,reason,calls,input_tokens,output_tokens,detail FROM turn_spans WHERE turn_id=? ORDER BY ordinal", new String[]{turnId})) {
                 while (c.moveToNext()) {
@@ -1023,78 +1101,113 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return getWritableDatabase().update("providers", v, "provider_id=?", new String[]{providerId}) == 1;
     }
 
-    /** Settings key of spend carried over from turns that were rewound or deleted: {providerId: {localDate: {currency: amount}}}. */
-    static final String SPEND_CARRY_KEY = "spendCarry";
-    /** Days of carried spend kept: enough for the monthly budget window. */
-    static final int SPEND_CARRY_DAYS = 62;
+    /** Settings key of the v1 spend carry, migrated into turn_archive by the v2 step and then removed. */
+    static final String LEGACY_SPEND_CARRY_KEY = "spendCarry";
+    /** Why a turn was archived: retried, rewound by an edit / rollback, its Chat deleted, or a migrated v1 spend carry. */
+    static final String ARCHIVE_RETRY = "retry", ARCHIVE_REWIND = "rewind", ARCHIVE_DELETED = "session_deleted", ARCHIVE_CARRIED = "carried";
+    /** Archive rows kept beyond the budget window; older rows past this count are dropped, oldest first. */
+    static final int ARCHIVE_KEEP_ROWS = 5000;
+    /** Rows this recent are never dropped: enough for the monthly budget window. */
+    static final int ARCHIVE_BUDGET_DAYS = 62;
 
     /**
-     * Spend already incurred must outlive the transcript: before turns are deleted (retry, edit, rollback,
-     * deleting a Chat), their estimated cost is added to a per-account, per-local-day carry that budgets count.
+     * Moves the record of the turns matching {@code where} into turn_archive before they are deleted, so statistics
+     * and budgets still count them. Only attribution and measurements are kept: the custom instruction becomes its
+     * length, and each stage keeps its status, duration, token counts, a reason code and numeric / yes-no details.
      */
-    private void carrySpend(SQLiteDatabase db, String where, String[] args) {
-        JSONObject carry;
-        try { carry = new JSONObject(settingIn(db, SPEND_CARRY_KEY, "{}")); } catch (Exception broken) { carry = new JSONObject(); }
-        boolean changed = false;
-        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
-        try (Cursor c = db.rawQuery("SELECT config,usage,started_at FROM turns WHERE " + where + " AND instr(usage,'\"cost\"')>0", args)) {
+    private void archiveTurns(SQLiteDatabase db, String where, String[] args, String reason) {
+        String now = Instant.now().toString();
+        List<ContentValues> rows = new ArrayList<>();
+        try (Cursor c = db.rawQuery("SELECT turn_id,session_id,started_at,ended_at,status,terminal_code,config,usage,rating FROM turns WHERE " + where, args)) {
             while (c.moveToNext()) {
                 try {
-                    String providerId = new JSONObject(c.getString(0)).optString("providerId", "");
-                    JSONObject cost = new JSONObject(c.getString(1)).optJSONObject("cost");
-                    if (providerId.isEmpty() || cost == null || !cost.has("amount")) continue;
-                    String day = Instant.parse(c.getString(2)).atZone(zone).toLocalDate().toString();
-                    JSONObject account = carry.optJSONObject(providerId); if (account == null) { account = new JSONObject(); carry.put(providerId, account); }
-                    JSONObject amounts = account.optJSONObject(day); if (amounts == null) { amounts = new JSONObject(); account.put(day, amounts); }
-                    String currency = cost.optString("currency", "USD");
-                    amounts.put(currency, amounts.optDouble(currency, 0d) + cost.optDouble("amount", 0d));
-                    changed = true;
-                } catch (Exception ignored) { }
+                    JSONObject config = archivedConfig(new JSONObject(c.getString(6)));
+                    ContentValues v = new ContentValues();
+                    v.put("turn_id", c.getString(0)); v.put("session_id", c.getString(1));
+                    v.put("provider_id", config.optString("providerId", ""));
+                    v.put("started_at", c.getString(2));
+                    if (!c.isNull(3)) v.put("ended_at", c.getString(3));
+                    v.put("status", c.getString(4)); v.put("terminal_code", c.getString(5));
+                    v.put("config", config.toString()); v.put("usage", c.getString(7));
+                    if (!c.isNull(8)) v.put("rating", c.getInt(8));
+                    v.put("reason", reason); v.put("archived_at", now);
+                    rows.add(v);
+                } catch (Exception skipped) { /* an unreadable record cannot be attributed; it goes with its turn */ }
             }
         }
-        if (!changed) return;
-        String oldest = java.time.LocalDate.now(zone).minusDays(SPEND_CARRY_DAYS).toString();
-        for (java.util.Iterator<String> accounts = carry.keys(); accounts.hasNext(); ) {
-            JSONObject account = carry.optJSONObject(accounts.next());
-            if (account == null) continue;
-            java.util.List<String> stale = new java.util.ArrayList<>();
-            for (java.util.Iterator<String> days = account.keys(); days.hasNext(); ) { String day = days.next(); if (day.compareTo(oldest) < 0) stale.add(day); }
-            for (String day : stale) account.remove(day);
+        for (ContentValues v : rows) {
+            v.put("spans", archivedSpans(db, v.getAsString("turn_id")).toString());
+            db.insertWithOnConflict("turn_archive", null, v, SQLiteDatabase.CONFLICT_REPLACE);
         }
-        ContentValues v = new ContentValues(); v.put("key", SPEND_CARRY_KEY); v.put("value", carry.toString());
-        db.insertWithOnConflict("settings", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+        if (rows.isEmpty()) return;
+        String keepSince = Instant.now().minus(java.time.Duration.ofDays(ARCHIVE_BUDGET_DAYS)).toString();
+        db.execSQL("DELETE FROM turn_archive WHERE started_at<? AND turn_id IN (SELECT turn_id FROM turn_archive ORDER BY started_at DESC LIMIT -1 OFFSET ?)",
+                new Object[]{keepSince, ARCHIVE_KEEP_ROWS});
+    }
+
+    /** The turn config without the custom instruction text (kept as its length). */
+    static JSONObject archivedConfig(JSONObject config) throws org.json.JSONException {
+        JSONObject out = new JSONObject(config.toString());
+        String instruction = out.optString("customInstruction", "");
+        out.remove("customInstruction");
+        if (!instruction.isEmpty()) out.put("customInstructionChars", instruction.length());
+        return out;
+    }
+
+    private static final java.util.regex.Pattern REASON_CODE = java.util.regex.Pattern.compile("[a-z0-9_]{1,64}");
+
+    /** Stage summaries of a turn: no free text (queries, judgements, error messages) survives, only codes and numbers. */
+    private static JSONArray archivedSpans(SQLiteDatabase db, String turnId) {
+        JSONArray out = new JSONArray();
+        try (Cursor c = db.rawQuery("SELECT stage,status,duration_ms,reason,calls,input_tokens,output_tokens,detail FROM turn_spans WHERE turn_id=? ORDER BY ordinal", new String[]{turnId})) {
+            while (c.moveToNext()) {
+                try {
+                    JSONObject span = new JSONObject().put("stage", c.getString(0)).put("status", c.getString(1)).put("durationMs", c.getLong(2));
+                    if (REASON_CODE.matcher(c.getString(3)).matches()) span.put("reason", c.getString(3));
+                    if (c.getInt(4) > 0) span.put("calls", c.getInt(4));
+                    if (!c.isNull(5)) span.put("inputTokens", c.getLong(5));
+                    if (!c.isNull(6)) span.put("outputTokens", c.getLong(6));
+                    JSONObject detail = new JSONObject(c.getString(7)), kept = new JSONObject();
+                    for (java.util.Iterator<String> keys = detail.keys(); keys.hasNext(); ) {
+                        String key = keys.next(); Object value = detail.opt(key);
+                        if (value instanceof Boolean || value instanceof Number) kept.put(key, value);
+                    }
+                    span.put("detail", kept);
+                    out.put(span);
+                } catch (Exception skipped) { }
+            }
+        }
+        return out;
     }
 
     private static String settingIn(SQLiteDatabase db, String key, String fallback) {
         try (Cursor c = db.rawQuery("SELECT value FROM settings WHERE key=?", new String[]{key})) { return c.moveToFirst() ? c.getString(0) : fallback; }
     }
 
+    /** An archived turn's outcome for the trace of the turn that retried it; null when unknown. */
+    public synchronized JSONObject archivedTurn(String turnId) {
+        if (turnId == null) return null;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT turn_id,started_at,ended_at,status,terminal_code,config,usage,reason FROM turn_archive WHERE turn_id=?", new String[]{turnId})) {
+            if (!c.moveToFirst()) return null;
+            JSONObject config = new JSONObject(c.getString(5));
+            return new JSONObject().put("turnId", c.getString(0)).put("startedAt", c.getString(1))
+                    .put("endedAt", c.isNull(2) ? JSONObject.NULL : c.getString(2)).put("status", c.getString(3))
+                    .put("terminalCode", c.getString(4)).put("attempt", Math.max(1, config.optInt("attempt", 1)))
+                    .put("usage", new JSONObject(c.getString(6))).put("reason", c.getString(7));
+        } catch (org.json.JSONException error) { return null; }
+    }
+
     /**
-     * Estimated spend of an account's turns started at or after {@code sinceIso}, per currency (turns.config
-     * names the account; turns.usage carries the estimate), plus spend carried over from turns that were
-     * rewound or deleted since. Turns without a price add nothing.
+     * Estimated spend of an account's turns started at or after {@code sinceIso}, per currency: live turns
+     * (turns.config names the account; turns.usage carries the estimate) and archived ones. Turns without a
+     * price add nothing.
      */
     public synchronized JSONObject spendSince(String providerId, String sinceIso) {
         JSONObject out = new JSONObject();
         if (providerId == null || sinceIso == null) return out;
-        try {
-            JSONObject account = new JSONObject(setting(SPEND_CARRY_KEY, "{}")).optJSONObject(providerId);
-            if (account != null) {
-                Instant since = Instant.parse(sinceIso);
-                java.time.ZoneId zone = java.time.ZoneId.systemDefault();
-                for (java.util.Iterator<String> days = account.keys(); days.hasNext(); ) {
-                    String day = days.next();
-                    if (java.time.LocalDate.parse(day).atStartOfDay(zone).toInstant().isBefore(since)) continue;
-                    JSONObject amounts = account.optJSONObject(day);
-                    if (amounts == null) continue;
-                    for (java.util.Iterator<String> currencies = amounts.keys(); currencies.hasNext(); ) {
-                        String currency = currencies.next();
-                        out.put(currency, out.optDouble(currency, 0d) + amounts.optDouble(currency, 0d));
-                    }
-                }
-            }
-        } catch (Exception brokenCarry) { /* a damaged carry never blocks budgets; live turns still count */ }
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT config,usage FROM turns WHERE started_at>=? AND instr(usage,'\"cost\"')>0", new String[]{sinceIso})) {
+        String sql = "SELECT config,usage FROM turns WHERE started_at>=? AND instr(usage,'\"cost\"')>0"
+                + " UNION ALL SELECT config,usage FROM turn_archive WHERE started_at>=? AND provider_id=? AND instr(usage,'\"cost\"')>0";
+        try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sinceIso, sinceIso, providerId})) {
             while (c.moveToNext()) {
                 try {
                     if (!providerId.equals(new JSONObject(c.getString(0)).optString("providerId", ""))) continue;

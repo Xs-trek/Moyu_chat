@@ -117,12 +117,19 @@ final class WebOrchestrator {
     Plan plan(String webMode, String userText, CanonicalPrompt context,
               ChatTransport transport, ChatDatabase.Provider provider, String apiKey, String model,
               ClientToolRuntime.TurnCancellation cancellation, MoyuWebService.FollowUpContext previous) {
+        return plan(webMode, userText, context, transport, provider, apiKey, model, cancellation, previous, true);
+    }
+
+    /** With {@code plannerAllowed} false (the user switched the Web planner off) only the rules decide; no model call. */
+    Plan plan(String webMode, String userText, CanonicalPrompt context,
+              ChatTransport transport, ChatDatabase.Provider provider, String apiKey, String model,
+              ClientToolRuntime.TurnCancellation cancellation, MoyuWebService.FollowUpContext previous, boolean plannerAllowed) {
         ZonedDateTime now = ZonedDateTime.now();
         Plan deterministic = deterministicPlan(userText, webMode, previous, now);
         if (ChatTurnOptions.WEB_OFF.equals(ChatTurnOptions.normalizeWebMode(webMode)) || PURE_DEVICE_DATE.matcher(userText == null ? "" : userText.trim()).matches()) {
             return Plan.none();
         }
-        if (!shouldRunPlanner(webMode, userText, previous)) return deterministic;
+        if (!plannerAllowed || !shouldRunPlanner(webMode, userText, previous)) return deterministic;
         if (cancellation != null && cancellation.isCancelled()) return deterministic;
 
         Plan modelPlan = null;

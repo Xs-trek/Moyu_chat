@@ -1,6 +1,6 @@
 # Moyu Chat architecture
 
-Current source: v0.0.6-beta; SQLite `moyu-beta.db` schema 1 (beta numbering restarts at 1).
+Current source: v0.0.6-beta; SQLite `moyu-beta.db` schema 2 (beta numbering restarts at 1; v2 adds `turn_archive` by a forward migration).
 
 ## 1. Product boundary
 

@@ -274,7 +274,7 @@ export function secs(ms) { return ms === null || ms === undefined ? '—' : `${(
 
 const STAGE_LABELS = { accept: '接收', context: '上下文', route: '路由', checkpoint: '压缩', web_plan: '联网规划', tools: '工具选择', web_retrieve: '联网检索', generate: '生成', verify: '校验', repair: '修正', subagent: '子任务' };
 const STATUS_LABELS = { ok: '完成', skipped: '跳过', failed: '失败', cancelled: '已停止', open: '未结束' };
-const SKIP_REASONS = { mode_off: '当前模式未启用', task_profile_cached: '沿用本会话的路由结果', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验' };
+const SKIP_REASONS = { mode_off: '当前模式未启用', task_profile_cached: '沿用本会话的路由结果', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验', user_off: '已在设置中关闭' };
 const WEB_EXECUTION = { host: '本机检索', provider: '模型侧联网', client_tools: '工具调用联网', none: '不联网' };
 const VERDICTS = { pass: '通过', fail: '不通过', partial: '部分通过' };
 const ACTIONS = { accept: '采纳', repair: '需修正', abstain: '存疑' };
@@ -286,9 +286,34 @@ const CALL_FAILURES = { timeout: '调用超时', cancelled: '调用被停止', r
 /** Why a helper's model call failed, as shown after the stage note. */
 export function callFailureLabel(code) {
   const value = String(code || '');
-  if (!value) return '';
-  const http = value.match(/^http_(\d{3})$/);
-  return `调用失败：${CALL_FAILURES[value] || (http ? `HTTP ${http[1]}` : value)}`;
+  return value ? `调用失败：${failureCodeLabel(value)}` : '';
+}
+
+function failureCodeLabel(code) {
+  const http = String(code).match(/^http_(\d{3})$/);
+  return CALL_FAILURES[code] || (http ? `HTTP ${http[1]}` : String(code));
+}
+
+/** Helper modules the user can switch off globally (HelperSwitches on the native side), with settings copy. */
+export const HELPER_SWITCHES = [
+  ['router', '路由', '智能模式下，第一轮先判断任务类型，用来决定要不要校验。关闭后不分类，也不用这个会话之前的分类结果。'],
+  ['compaction', '历史压缩', '标准 / 智能模式下，上下文用到一半时，让模型把较早的历史写成摘要。关闭后不再写新摘要（已有的继续用），超长时直接舍弃最早的历史。'],
+  ['webPlan', '联网规划', '联网为“自动”时，让模型判断要不要搜、搜什么。关闭后只按规则判断，不调用模型。'],
+  ['verify', '校验与修正', '智能模式下，回答后让模型再检查一遍，必要时改写。'],
+  ['subagent', '子任务', '模型支持工具调用时，允许它把子问题交给同一模型的独立调用。'],
+];
+const HELPER_NAMES = Object.fromEntries(HELPER_SWITCHES.map(([id, name]) => [id, name]));
+
+/** Settings rows for the helper switches: every helper is on unless the native view lists it as off. */
+export function helperSwitches(view) {
+  const off = new Set(Array.isArray(view?.ui?.helpersOff) ? view.ui.helpersOff : []);
+  return HELPER_SWITCHES.map(([id, label, description]) => ({ id, label, description, on: !off.has(id) }));
+}
+
+/** "已关闭：路由、校验与修正" for a turn config's helpersOff; '' when every helper was on. */
+export function helpersOffLabel(ids) {
+  const names = (Array.isArray(ids) ? ids : []).map((id) => HELPER_NAMES[id] || id);
+  return names.length ? `已关闭：${names.join('、')}` : '';
 }
 
 function stageNote(span) {
@@ -346,7 +371,17 @@ export function traceView(trace) {
     };
   });
   const total = helperTokens + mainTokens;
-  return { rows, status: trace.status, statusLabel: STATUS_LABELS[trace.status] || trace.status, terminalCode: trace.terminalCode || '', helperShare: total > 0 && helperTokens > 0 ? helperTokens / total : null };
+  const notes = [];
+  const attempt = Number(trace.config?.attempt);
+  const previous = trace.previousAttempt;
+  if (attempt > 1 || previous) {
+    const cost = previous?.usage?.cost && Number.isFinite(Number(previous.usage.cost.amount)) ? money(previous.usage.cost.amount, previous.usage.cost.currency || 'USD') : '';
+    const outcome = previous ? [STATUS_LABELS[previous.status] || previous.status, previous.terminalCode ? failureCodeLabel(previous.terminalCode) : '', cost].filter(Boolean).join(' · ') : '';
+    notes.push(`第 ${attempt > 1 ? attempt : 2} 次尝试${outcome ? `，上一次：${outcome}` : ''}`);
+  }
+  const off = helpersOffLabel(trace.config?.helpersOff);
+  if (off) notes.push(off);
+  return { rows, notes, status: trace.status, statusLabel: STATUS_LABELS[trace.status] || trace.status, terminalCode: trace.terminalCode || '', helperShare: total > 0 && helperTokens > 0 ? helperTokens / total : null };
 }
 
 /** Recorded model calls of a traced turn, labelled by the stage that made them ("校验 2" when a stage called twice). */
@@ -417,7 +452,7 @@ export function answersView(group) {
 export const PROTOCOL_LABELS = { 'openai-chat-completions': 'Chat Completions', 'openai-responses': 'Responses', 'anthropic-messages': 'Messages' };
 
 /** Statistics groupings the native side accepts (TurnStats.GROUPINGS), with their picker labels. */
-export const STATS_GROUPINGS = [['model,mode', '模型 × 模式'], ['model', '模型'], ['protocol', '协议'], ['effort', '推理深度'], ['mode', '模式'], ['model,effort', '模型 × 深度']];
+export const STATS_GROUPINGS = [['model,mode', '模型 × 模式'], ['model', '模型'], ['protocol', '协议'], ['effort', '推理深度'], ['mode', '模式'], ['model,effort', '模型 × 深度'], ['helpers', '辅助开关'], ['model,helpers', '模型 × 辅助开关']];
 
 /** "$0.0123" / "¥1.20": enough digits that small turns are not rounded to zero. */
 export function money(amount, currency = 'USD') {
@@ -438,6 +473,7 @@ function groupTitle(group = {}) {
   if (group.model) parts.push(group.model);
   if (group.protocol) parts.push(PROTOCOL_LABELS[group.protocol] || group.protocol);
   if (group.effort) parts.push(`推理 ${effortLabel(group.effort)}`);
+  if (group.helpers) parts.push(group.helpers === 'all_on' ? '辅助全开' : helpersOffLabel(group.helpers.split('+')));
   return parts.join(' · ');
 }
 
@@ -453,7 +489,7 @@ export function statsView(data) {
       title: groupTitle(group) || mode || '—',
       mode: groupTitle(group) ? mode : '',
       cells: [
-        ['回合', `${row.turns}${row.failed ? ` · 失败 ${row.failed}` : ''}${row.cancelled ? ` · 停止 ${row.cancelled}` : ''}`],
+        ['回合', `${row.turns}${row.failed ? ` · 失败 ${row.failed}` : ''}${row.cancelled ? ` · 停止 ${row.cancelled}` : ''}${row.archived ? ` · 已回退 ${row.archived}` : ''}`],
         ['首字中位', row.medianFirstOutputMs !== undefined ? secs(row.medianFirstOutputMs) : '—'],
         ['耗时中位', row.medianDurationMs !== undefined ? secs(row.medianDurationMs) : '—'],
         ['平均 token', row.avgTokens !== undefined ? compact(row.avgTokens) : '—'],

@@ -10,7 +10,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## 0. 首次安装须知
 
-- beta 线使用新的库文件 `moyu-beta.db`（schema 1）。旧的 beta 数据（`moyu-chat.db`）在首次启动时删除，需要重新添加 Provider、填 API Key、建 Model Profile。
+- beta 线使用新的库文件 `moyu-beta.db`（当前 schema 2；v1 原地升级，不清数据）。旧的 beta 数据（`moyu-chat.db`）在首次启动时删除，需要重新添加 Provider、填 API Key、建 Model Profile。
 - 启动时会清掉没有对应 Provider 的 API Key 和没有引用的图片。
 
 ## 1. 外观与窗口
@@ -96,3 +96,6 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 - [ ] 数学公式：让模型写含 $…$ 和 $$…$$ 的推导，公式正常排版；“$5 到 $10” 这类价格不变形；断网时公式照样显示（本地字体）。
 - [ ] 全局自定义指令：设置里写一条（例如“回答末尾加一句总结”），新回合生效；清空后不再生效。
 - [ ] 跨会话记忆（设置里打开）：在另一个会话里问之前长回答末尾提到的细节，能被找回。
+- [ ] 升级到 schema 2（覆盖安装，不卸载）：账号、模型、会话和历史都还在；预算页的今日 / 本月花费和升级前一致。
+- [ ] 失败后重试：新回答的回复详情 → 调用链末尾显示“第 2 次尝试，上一次：失败 · …”；统计页回合数里出现“已回退 1”，关掉“包含已回退的回合”后数字减少。
+- [ ] 辅助模块开关：设置里关掉“校验与修正”，智能模式会话发一轮，调用链里校验显示“已在设置中关闭”；统计按“辅助开关”分组能看到两组。

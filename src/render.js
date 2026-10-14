@@ -211,6 +211,10 @@ function settings(view) {
         settingRow('后台完成通知', '应用在后台时，回答完成或失败会发一条系统通知，点开直接进入对应会话。你自己停止的回合不通知。Android 13 及以上需要允许通知权限。', switchControl('后台完成通知', notify, 'toggle-notify', { enabled: notify ? 'false' : 'true' })),
         settingRow('记录协议报文', '保存最近 30 个回合里每次模型调用的请求和响应原文，在回复详情的调用链里查看。不含请求头和 API Key，图片等长串只保留长度。', switchControl('记录协议报文', wireCapture, 'toggle-wire-capture', { enabled: wireCapture ? 'false' : 'true' })),
         settingRow('跨 Chat 用户记忆', '总开关只决定用户级 Memory/RAG 是否允许使用。关闭时所有模式都不跨 Chat；开启时标准/智能可检索相关本地历史，极简没有 Memory 调用。', switchControl('跨 Chat 用户记忆', memoryEnabled, 'toggle-memory', { enabled: memoryEnabled ? 'false' : 'true' }))),
+      h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '辅助模块' }),
+        h('p', { class: 'setting-desc', text: '对所有会话生效。关闭只会去掉当前模式本来会运行的辅助，不会给极简模式加功能；每轮都记下当时的开关，可在统计里按“辅助开关”对比。' }),
+        vm.helperSwitches(view).map((helper) => settingRow(helper.label, helper.description,
+          switchControl(helper.label, helper.on, 'toggle-helper', { helper: helper.id, enabled: helper.on ? 'false' : 'true' })))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '新会话默认' }),
         settingRow('上下文模式', '极简：薄提示词 + 原始完整轮次。标准：原始上下文优先，允许用户记忆，50% 主动压缩到约 30%。智能：标准全部能力 + Task Router、reviewed prompt modules、evidence policy 与同模型二次 verifier。', segmentedSetting('上下文模式', 'default-context', 'mode', [['minimal', '极简'], ['standard', '标准'], ['smart', '智能']], view.ui?.defaultContextMode || 'standard'), true),
         settingRow('联网', '自动：先由 Web Planner 判断是否需要联网，再按已声明能力选择 Provider hosted Web、Moyu Host 检索或 client Web tools。开启：本轮强制实际联网取证。', segmentedSetting('联网', 'default-web', 'mode', [['off', '关闭'], ['auto', '自动'], ['on', '开启']], view.ui?.defaultWebMode || 'auto'), true),
@@ -224,14 +228,18 @@ function settings(view) {
 const STATS_PERIODS = [[7, '7 天'], [30, '30 天'], [90, '90 天']];
 let statsDays = 7;
 let statsGroup = vm.STATS_GROUPINGS[0][0];
+let statsArchived = true;
 let lastStats = null;
 export function setStatsDays(days) { statsDays = STATS_PERIODS.some(([d]) => d === Number(days)) ? Number(days) : 7; }
 export function setStatsGroup(group) { statsGroup = vm.STATS_GROUPINGS.some(([g]) => g === group) ? group : vm.STATS_GROUPINGS[0][0]; }
+export function setStatsArchived(include) { statsArchived = Boolean(include); }
 /** Statistics are re-read every time the page is opened. */
-export function forgetStats() { for (const [days] of STATS_PERIODS) for (const [group] of vm.STATS_GROUPINGS) forgetRemote(`stats:${days}:${group}`); }
+export function forgetStats() {
+  for (const [days] of STATS_PERIODS) for (const [group] of vm.STATS_GROUPINGS) for (const archived of [true, false]) forgetRemote(`stats:${days}:${group}:${archived}`);
+}
 
 function stats() {
-  const entry = loadRemote(`stats:${statsDays}:${statsGroup}`, 'stats.get', { days: statsDays, groupBy: statsGroup });
+  const entry = loadRemote(`stats:${statsDays}:${statsGroup}:${statsArchived}`, 'stats.get', { days: statsDays, groupBy: statsGroup, includeArchived: statsArchived });
   if (entry?.state === 'ready') lastStats = entry.data;
   const loading = !entry || entry.state === 'loading';
   let content;
@@ -249,6 +257,7 @@ function stats() {
       segmentedSetting('统计周期', 'stats-days', 'days', STATS_PERIODS.map(([d, label]) => [String(d), label]), String(statsDays)),
       h('div', { class: 'chip-set', role: 'radiogroup', 'aria-label': '分组' }, vm.STATS_GROUPINGS.map(([group, label]) => h('button', {
         type: 'button', role: 'radio', 'aria-checked': group === statsGroup ? 'true' : 'false', class: 'chip-toggle', dataset: { action: 'stats-group', group }, text: label }))),
+      settingRow('包含已回退的回合', '重试、编辑、回退或删除会话时被移除的回合。默认计入，它们同样花了时间和费用。', switchControl('包含已回退的回合', statsArchived, 'stats-archived', { enabled: statsArchived ? 'false' : 'true' })),
       h('p', { class: 'setting-desc', text: '耗时取中位数。费用按模型配置里的价格估算（含辅助调用），没有价格的模型不计；带“起”表示有调用没报用量，实际更高。辅助占比 = 路由、压缩、联网规划、校验、修正、子任务消耗的 token 占比；路由 / 联网 / 校验是实际执行的回合比例。' }),
       content));
 }
@@ -448,6 +457,7 @@ function traceSection(sessionId, turnId) {
       row.note || row.usage ? h('span', { class: 'trace-note', text: [row.status !== 'ok' && row.status !== 'skipped' ? row.statusLabel : '', row.note, row.usage].filter(Boolean).join(' · ') }) : null);
   })));
   if (view.terminalCode) section.append(h('p', { class: 'trace-empty', text: `结束：${view.statusLabel} · ${view.terminalCode}` }));
+  for (const note of view.notes) section.append(h('p', { class: 'trace-empty', text: note }));
   const calls = vm.traceCalls(entry.data);
   if (calls.length) section.append(h('div', { class: 'trace-calls' }, h('span', { text: '报文' }),
     calls.map((call) => button(call.label, 'open-payload', { sessionId, turnId, callIndex: call.callIndex, title: `${call.label} · 协议报文` }, 'btn small ghost'))));
