@@ -157,7 +157,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         createWebView();
     }
 
-    private static String mime(String path) { if (path.endsWith(".html")) return "text/html"; if (path.endsWith(".js")) return "application/javascript"; if (path.endsWith(".css")) return "text/css"; return "application/octet-stream"; }
+    private static String mime(String path) { if (path.endsWith(".html")) return "text/html"; if (path.endsWith(".js")) return "application/javascript"; if (path.endsWith(".css")) return "text/css"; if (path.endsWith(".woff2")) return "font/woff2"; return "application/octet-stream"; }
 
     @Override public void dispatch(JSONObject envelope) { String script = "window.dispatchEvent(new CustomEvent('moyu:view',{detail:JSON.parse(" + JSONObject.quote(envelope.toString()) + ")}));"; runOnUiThread(() -> { if (webView != null) webView.evaluateJavascript(script, null); }); }
     /** Messages are shown by the WebView's own toast, so the app has one notification style. */

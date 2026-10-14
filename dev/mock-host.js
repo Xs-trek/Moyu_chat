@@ -284,6 +284,7 @@ function handle(type, p) {
     case 'memory.global.set': world.ui.crossChatMemoryEnabled = Boolean(p.enabled); break;
     case 'inspector.capture.set': world.ui.wireCapture = Boolean(p.enabled); break;
     case 'notify.background.set': world.ui.notifyInBackground = Boolean(p.enabled); break;
+    case 'instruction.global.set': world.ui.customInstruction = String(p.text || '').trim(); break;
     case 'context.mode.default.set': world.ui.defaultContextMode = p.mode; break;
     case 'web.mode.default.set': world.ui.defaultWebMode = p.mode; break;
     case 'subagent.standard.default.set': world.ui.standardSubagentMode = p.mode; break;

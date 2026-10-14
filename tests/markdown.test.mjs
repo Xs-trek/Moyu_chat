@@ -130,3 +130,23 @@ test('streaming a nested list with a code block ends in the same DOM as a full r
   flatten(container);
   assert.equal(strip(container.outerHTML), strip(expected.outerHTML));
 });
+
+test('math: inline, display and prices', async () => {
+  const { inlineMath, displayMath } = await import('../src/math.js');
+  assert.deepEqual(inlineMath(String.raw`面积 $\pi r^2$ 平方米`, 3), { tex: String.raw`\pi r^2`, end: 12 });
+  assert.equal(inlineMath('costs $5 and $10 today', 6), null, 'a price is not math');
+  assert.equal(inlineMath('$ x$', 0), null, 'no space after the opening $');
+  assert.deepEqual(inlineMath(String.raw`\(a+b\)`, 0), { tex: 'a+b', end: 7 });
+  assert.deepEqual(displayMath(['$$', 'E = mc^2', '$$', 'after'], 0), { tex: 'E = mc^2', next: 3 });
+  assert.deepEqual(displayMath([String.raw`\[ x^2 \]`], 0), { tex: 'x^2', next: 1 });
+  assert.equal(displayMath(['$$', 'never closed'], 0), null);
+
+  const root = render(['勾股定理：$a^2+b^2=c^2$。', '', '$$', String.raw`\int_0^1 x\,dx`, '$$', '', '价格 $5 到 $10。', '', '`$not math$`'].join('\n'));
+  const inline = root.querySelectorAll('.md-math');
+  assert.equal(inline.length, 2);
+  assert.equal(inline[0].dataset.tex, 'a^2+b^2=c^2');
+  assert.equal(inline[1].dataset.display, '1');
+  assert.equal(inline[1].dataset.tex, String.raw`\int_0^1 x\,dx`);
+  assert.match(root.textContent, /价格 \$5 到 \$10/);
+  assert.equal(root.querySelector('code').textContent, '$not math$');
+});

@@ -4,12 +4,18 @@ import org.json.JSONObject;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Ensures one provider stream produces at most one terminal callback. */
+/**
+ * Ensures one provider stream produces at most one terminal callback, and that a failure summary never carries
+ * the API key (a misconfigured endpoint may echo request headers back in its error body).
+ */
 final class TerminalSink implements ChatTransport.Sink {
     private final ChatTransport.Sink delegate;
     private final AtomicBoolean terminal = new AtomicBoolean(false);
 
-    TerminalSink(ChatTransport.Sink delegate) { this.delegate = delegate; }
+    private final String apiKey;
+
+    TerminalSink(ChatTransport.Sink delegate) { this(delegate, null); }
+    TerminalSink(ChatTransport.Sink delegate, String apiKey) { this.delegate = delegate; this.apiKey = apiKey; }
 
     @Override public void onStage(String stage) { if (!terminal.get()) delegate.onStage(stage); }
     @Override public void onReasoningDelta(String delta) { if (!terminal.get()) delegate.onReasoningDelta(delta); }
@@ -26,7 +32,7 @@ final class TerminalSink implements ChatTransport.Sink {
     }
     @Override public void onRetryAfter(long millis) { if (!terminal.get()) delegate.onRetryAfter(millis); }
     @Override public void onCompleted() { if (terminal.compareAndSet(false, true)) delegate.onCompleted(); }
-    @Override public void onError(String code, String summary, boolean retryable) { if (terminal.compareAndSet(false, true)) delegate.onError(code, summary, retryable); }
+    @Override public void onError(String code, String summary, boolean retryable) { if (terminal.compareAndSet(false, true)) delegate.onError(code, WireCapture.scrub(summary, apiKey), retryable); }
     /** Wire records are diagnostics, not stream semantics: they pass even after the terminal callback. */
     @Override public void onWire(String direction, String text) { delegate.onWire(direction, text); }
 }

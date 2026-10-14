@@ -73,37 +73,39 @@ The protocol inspector records, per model call, the request body and the raw res
 
 Comparison and feedback stay on the same records. `turn.rerun` branches the session just before a user message (optionally switching model and/or context mode, with a fresh routing decision) and the next turn in that branch is stored with `rerun_of`; `turn.answers.get` returns the original answer and every re-answer of it. `turn.rate` stores a good / bad mark on the turn. `stats.get` aggregates finished turns per model × context mode with `TurnStats`: latency, tokens, the helper stages' share of tokens and how often each helper actually acted. These are in-use trends, not benchmarks.
 
-## 3. Provider / Model / Session separation
+## 3. Account / Route / Model Profile / Session
 
-### Provider
+Full description: `docs/provider-config.md`.
 
-Shared account/connection only:
+### Account (Provider)
+
+One API Key (native secure store, never SQLite) shared by its routes, plus key status and an optional spend budget:
 
 ```text
-providerId
-displayName
-baseUrl
-API key (secure store, not SQLite)
+providerId, displayName, presetId (fixed at creation)
+API key (secure store) + keyStatus / keyCheckedAt
+budget {currency, daily?, monthly?}
+```
+
+### Route
+
+One endpoint of the account; the protocol is fixed at creation:
+
+```text
+protocol + Base URL (as the protocol's official SDK takes it) + authMode
+dialect (endpoint wire knobs, incl. maxConcurrent) + extra non-secret headers
+confirmed host (the key is only sent to a confirmed host)
 ```
 
 ### Model Profile
 
-One concrete deployment:
+One concrete deployment (account + route + Model ID). Every capability value is resolved field by field and records its source:
 
 ```text
-modelId
-protocol
-authMode
-reasoningWire + reasoningLevels
-context/input/output limits
-input/output modalities
-hosted-Web capability declaration
-thinking mode/budget
-provider continuation mode
-client-tool calling wire
-Harness preset
-Catalog provenance/config mode
+default < discovered (the endpoint's model list) < catalog (reviewed preset entry) < probe (reserved) < manual
 ```
+
+Fields: context/input/output limits, modalities, reasoning wire and levels, thinking mode/budget, hosted-Web declaration, client-tool wire, continuation, Harness preset, service tier, prices. Discovered values and probe results belong to the endpoint they were read from and are dropped when the route points elsewhere.
 
 ### Session
 
@@ -111,15 +113,9 @@ Freezes the resolved deployment fields on creation/model switch. Changing the Mo
 
 `Protocol != Capability`: the protocol names define wire format and never imply reasoning, thinking, images, hosted Web, continuation or client-tool support.
 
-## 4. Model Catalog
+## 4. Presets and model catalog
 
-Auto configuration is a reviewed deployment-overlay mechanism, not model-name inference.
-
-- Base-model entries may provide only reviewed behavior/Harness priors.
-- Protocol/auth/reasoning/tool/continuation properties require a reviewed endpoint + model overlay.
-- Context/input/output limits remain explicit user/deployment inputs.
-- If Auto does not resolve a concrete deployment, saving requires Advanced/manual configuration.
-- Provider endpoint changes revalidate affected Auto profiles in the same save transaction. A change that makes an Auto deployment unresolved is rejected.
+`provider-presets.json` holds the vendor presets (routes, dialects) and the reviewed model catalog. A catalog entry applies only to an unmodified preset route and the exact Model ID; edited or custom routes get nothing from it. Manual values are stored separately and survive catalog updates. Nothing is inferred from a model name.
 
 ## 5. Context and Harness
 
@@ -178,15 +174,13 @@ Fetched/search material is untrusted ephemeral context, not durable user text.
 
 ## 9. Endpoint ownership
 
-Provider stores the shared API root. Transports own final paths:
+A route stores the API root exactly as the protocol's official SDK takes it; transports append the final path:
 
 ```text
-openai-chat-completions -> /chat/completions
-openai-responses        -> /responses
-anthropic-messages      -> /messages
+openai-chat-completions  https://api.openai.com/v1      -> /chat/completions
+openai-responses         https://api.openai.com/v1      -> /responses
+anthropic-messages       https://api.anthropic.com      -> /v1/messages
 ```
-
-Official Anthropic shared root is `https://api.anthropic.com/v1`.
 
 ## 10. Security and execution exclusions
 
@@ -194,11 +188,12 @@ Official Anthropic shared root is `https://api.anthropic.com/v1`.
 - Provider API keys use native secure storage.
 - Cloud endpoints require HTTPS; approved loopback HTTP is treated separately by endpoint validation.
 - Branch snapshots are immutable and bounded.
-- Failed model inputs are not autonomously resent.
+- A main call that fails with a rate-limit / overload / 5xx error before producing any output is retried at most twice (Retry-After honoured up to 60 s). Nothing else is resent without the user asking (the Retry action).
+- Transports and account checks never follow redirects; error summaries are scrubbed of the key.
 - No shell, computer use, arbitrary filesystem mutation, Android device control, recursive subagents or autonomous agent planning loop is part of the Chat runtime.
 
 ## 11. Turn usage and media bounds
 
-`TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category and by the pipeline stage that issued them. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is an ordinary timeline item (`kind = usage`).
+`TurnUsage` decorates each turn's transport calls by main/auxiliary/subagent category and by the pipeline stage that issued them. It accumulates reported cumulative usage once per request, preserves reported usage from failed or cancelled helpers, and writes final totals after Smart post-processing. Unknown dimensions remain absent and `usageIncomplete` marks partial totals. Main cache/reasoning/speed metrics retain their existing scope. Usage is an ordinary timeline item (`kind = usage`). Each call is priced from the prices frozen with the turn (`cost`, an estimate); spend of turns that are later rewound or deleted is carried over per account and day, so budgets keep counting it.
 
 `ChatMediaStore` reads image bounds without decoding pixels, rejects excessive dimensions/area, and only then creates the private media file. Byte/draft-image limits remain in force.

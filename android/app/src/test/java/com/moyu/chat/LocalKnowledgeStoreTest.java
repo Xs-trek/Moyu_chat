@@ -76,6 +76,70 @@ public class LocalKnowledgeStoreTest {
         assertEquals(0, countScope(LocalKnowledgeStore.snapshotScope(origin.id)));
     }
 
+    @Test public void theEndOfALongChineseAnswerIsFindableAndCommonCharactersAreNotMemory() throws Exception {
+        ChatDatabase db = app.database();
+        ChatDatabase.ModelProfile profile = profile(db);
+        ChatDatabase.Session source = db.createSession(profile, "source", null, null, ReasoningPolicy.DEFAULT);
+        ChatDatabase.Session other = db.createSession(profile, "other", null, null, ReasoningPolicy.DEFAULT);
+        ChatDatabase.Session current = db.createSession(profile, "current", null, null, ReasoningPolicy.DEFAULT);
+        StringBuilder answer = new StringBuilder();
+        for (int i = 0; i < 40; i++) answer.append("这是一个关于日常安排的普通段落，没有什么特别的内容。\n");
+        answer.append("最后补充：我家的猫叫阿橘，每天早上七点要喂罐头。");
+        db.appendTimeline(source.id, "a", message("assistant", answer.toString()));
+        db.appendTimeline(other.id, "b", message("user", "今天的天气是不是很好，我们是不是可以出去走走？"));
+        LocalKnowledgeStore store = new LocalKnowledgeStore(db);
+
+        List<LocalKnowledgeStore.Hit> cat = store.searchUserMemory(current.id, "我的猫叫什么名字", 4);
+        assertFalse("text far past the first 32 characters is indexed", cat.isEmpty());
+        assertTrue(cat.get(0).text.contains("阿橘"));
+        assertTrue("a hit is a chunk, not the whole long answer", cat.get(0).text.length() <= KnowledgeLexicon.CHUNK_CHARS);
+        for (LocalKnowledgeStore.Hit hit : store.searchUserMemory(current.id, "阿橘早上喂罐头了吗", 4)) {
+            assertNotEquals("a chat sharing only filler words does not come back", "other", hit.sourceTitle);
+        }
+        assertTrue("an unrelated question sharing only single characters retrieves nothing", store.searchUserMemory(current.id, "量子计算机的原理", 4).isEmpty());
+        assertFalse("a one-character question still finds its memory", store.searchUserMemory(current.id, "猫", 4).isEmpty());
+    }
+
+    @Test public void chatsAreIndexedIncrementallyAndUnfinishedAnswersWait() throws Exception {
+        ChatDatabase db = app.database();
+        ChatDatabase.ModelProfile profile = profile(db);
+        ChatDatabase.Session source = db.createSession(profile, "source", null, null, ReasoningPolicy.DEFAULT);
+        ChatDatabase.Session current = db.createSession(profile, "current", null, null, ReasoningPolicy.DEFAULT);
+        db.appendTimeline(source.id, "u1", message("user", "first question about quaternion rotation"));
+        db.appendTimeline(source.id, "a1", message("assistant", "streaming answer about gimbal lock").put("streaming", true));
+        LocalKnowledgeStore store = new LocalKnowledgeStore(db);
+        assertFalse(store.searchUserMemory(current.id, "quaternion rotation", 4).isEmpty());
+        assertEquals("the marker stops before the unfinished answer", "v2:1", db.knowledgeIndexedAt(source.id));
+        assertTrue(store.searchUserMemory(current.id, "gimbal lock", 4).isEmpty());
+
+        try (Cursor c = db.getReadableDatabase().rawQuery("SELECT item_key FROM timeline WHERE session_id=? AND local_seq=2", new String[]{source.id})) {
+            assertTrue(c.moveToFirst());
+            db.replaceTimelineBody(c.getString(0), message("assistant", "final answer about gimbal lock").put("localSeq", 2));
+        }
+        int before = countScope(LocalKnowledgeStore.chatScope(source.id));
+        assertFalse("the finished answer is picked up", store.searchUserMemory(current.id, "gimbal lock", 4).isEmpty());
+        assertEquals("only the new row was added", before + 1, countScope(LocalKnowledgeStore.chatScope(source.id)));
+        assertEquals("v2:2", db.knowledgeIndexedAt(source.id));
+
+        db.markKnowledgeIndexed(source.id, "2026-10-01T00:00:00Z"); // an index from the old format
+        store.searchUserMemory(current.id, "quaternion", 4);
+        assertEquals("an old-format index is rebuilt once, not duplicated", before + 1, countScope(LocalKnowledgeStore.chatScope(source.id)));
+    }
+
+    @Test public void queryTermsKeepWordsAndBigramsAndChunksBreakNaturally() {
+        List<String> terms = KnowledgeLexicon.queryTerms("DMA 中断所有权 猫");
+        assertTrue(terms.contains("dma"));
+        assertTrue("bigram", terms.contains("b" + Integer.toHexString('中') + "x" + Integer.toHexString('断')));
+        assertFalse("no unigram for a character inside a run", terms.contains("u" + Integer.toHexString('中')));
+        assertTrue("a lone character keeps its unigram", terms.contains("u" + Integer.toHexString('猫')));
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 30; i++) text.append("第").append(i).append("句话写在这里。");
+        List<String> chunks = KnowledgeLexicon.chunks(text.toString());
+        assertTrue(chunks.size() >= 1);
+        for (String chunk : chunks) assertTrue(chunk.length() <= KnowledgeLexicon.CHUNK_CHARS);
+        assertEquals(text.toString(), String.join("", chunks));
+    }
+
     private ChatDatabase.ModelProfile profile(ChatDatabase db) {
         ChatDatabase.Provider provider = new ChatDatabase.Provider();
         provider.id = "p"; provider.displayName = "P"; provider.baseUrl = "https://example.test/v1";

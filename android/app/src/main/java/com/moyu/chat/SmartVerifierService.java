@@ -133,9 +133,25 @@ final class SmartVerifierService {
     }
 
     static JSONArray evidence(String currentUserText, CanonicalPrompt prompt, JSONArray webSources, String webContext) {
+        return evidence(currentUserText, prompt, webSources, webContext, null, null);
+    }
+
+    /**
+     * The evidence ledger for verify and repair. Besides the request and recent turns it carries what the main
+     * call saw outside the message list: the context checkpoint standing in for omitted older turns, and the
+     * user's global custom instructions. A ledger that has to clip them is reported as incomplete coverage.
+     */
+    static JSONArray evidence(String currentUserText, CanonicalPrompt prompt, JSONArray webSources, String webContext,
+                              ContextCheckpoint checkpoint, String customInstruction) {
         JSONArray out = new JSONArray();
         try {
             out.put(new JSONObject().put("id", "user:current").put("type", "user_request").put("text", currentUserText == null ? "" : currentUserText));
+            if (customInstruction != null && !customInstruction.trim().isEmpty()) {
+                out.put(new JSONObject().put("id", "user:instructions").put("type", "user_custom_instructions").put("text", customInstruction.trim()));
+            }
+            if (checkpoint != null) {
+                out.put(new JSONObject().put("id", "context:checkpoint").put("type", "conversation_checkpoint").put("text", checkpoint.toJson().toString()));
+            }
             String context = renderContext(prompt);
             if (!context.isEmpty()) out.put(new JSONObject().put("id", "context:recent").put("type", "conversation_context").put("text", context));
             if (webContext != null && !webContext.trim().isEmpty()) {

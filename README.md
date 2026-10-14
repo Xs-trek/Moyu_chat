@@ -23,23 +23,16 @@ This runs the frontend static checks (`npm run build`) and then `:app:testDebugU
 - The runtime supports bounded client `web_search`, `web_fetch`, and isolated same-model `delegate_subtask` when the concrete deployment explicitly supports the corresponding client-tool wire.
 - Moyu Chat is not an Android agent runtime: no shell, computer use, arbitrary filesystem mutation, device control, recursive subagents or autonomous background task loop is exposed.
 
-## Provider, Model and Session
+## Accounts, routes, models and sessions
 
-`Protocol != Capability` is a hard invariant.
+`Protocol != Capability` is a hard invariant. Details: `docs/provider-config.md`.
 
-- **Provider** is shared connection/account data: display name, Base URL and API key.
-- **Model Profile** describes one concrete deployment: Model ID, protocol, auth mode, reasoning wire/levels, modalities, hosted-Web declaration, thinking, continuation, client-tool wire, Harness preset and context/input/output limits.
-- **Session** freezes the resolved deployment fields when it is created or explicitly switched to another Model Profile. Editing a profile later does not silently relabel an existing Chat.
+- **Account** holds one API Key (native secure store only), its key status and an optional daily / monthly budget.
+- **Route** is one endpoint of the account: protocol + Base URL + auth mode + wire knobs (dialect, including an optional concurrency cap) + non-secret headers. The key is only sent to hosts confirmed for the account; redirects are never followed.
+- **Model Profile** is one concrete deployment on a route. Each capability is resolved field by field — default < discovered (the endpoint's own model list) < reviewed catalog < manual — and the source of every value is shown.
+- **Session** freezes the resolved deployment when it is created or switched to another model. Editing a profile later does not relabel an existing Chat; the Chat offers to apply the edited profile.
 
-Supported protocol families are `openai-chat-completions`, `openai-responses` and `anthropic-messages`. They define wire shape only. Reasoning, thinking, hosted Web, images, native continuation and client tools must be explicitly declared by the concrete deployment.
-
-## Model Catalog and configuration
-
-Moyu Chat provides a small reviewed Model Catalog for known deployment overlays. Auto mode is allowed only when the endpoint + model matches a reviewed overlay. An unknown or same-named third-party route must use **Advanced** configuration rather than guessing a protocol or capability.
-
-Context window, maximum input and maximum output remain explicit deployment/user inputs even in Auto mode. The catalog does not infer these limits from a model name.
-
-Changing a Provider Base URL revalidates and re-resolves affected Auto profiles atomically. A change that would leave an Auto profile without a reviewed deployment overlay is rejected and requires that profile to be switched to Advanced first.
+Supported protocol families are `openai-chat-completions`, `openai-responses` and `anthropic-messages`. They define wire shape only.
 
 ## Context modes and adaptive Harness
 
@@ -78,17 +71,14 @@ Fallback search/fetch material is ephemeral untrusted context and is not written
 
 ## Endpoint roots
 
-Provider Base URL is the shared API root; transports append the protocol endpoint:
+Base URLs are written as each protocol's official SDK takes them; transports append the path:
 
-- Chat Completions: `/chat/completions`
-- Responses: `/responses`
-- Messages: `/messages`
-
-For the official Anthropic endpoint the shared root is therefore `https://api.anthropic.com/v1`.
+- Chat Completions / Responses: the root includes the version segment (`https://api.openai.com/v1`) and gets `/chat/completions` or `/responses`.
+- Messages: the root has no `/v1` (`https://api.anthropic.com`) and gets `/v1/messages`.
 
 ## Usage and local media limits
 
-Turn usage includes reported main, auxiliary (Router, Checkpoint, Web planner, verifier/repair), and subagent requests. Provider-reported usage is retained even when a helper fails, times out, or is cancelled. Missing usage stays unknown; partial totals are labeled accordingly. Hosted tool fees and money prices are not inferred from token counts.
+Turn usage includes reported main, auxiliary (Router, Checkpoint, Web planner, verifier/repair), and subagent requests. Provider-reported usage is retained even when a helper fails, times out, or is cancelled. Missing usage stays unknown; partial totals are labeled accordingly. Turn cost is an estimate from the prices declared on the model profile (frozen when the turn starts); hosted tool fees are not included.
 
 Call counts refer to logical transport invocations; Anthropic internal `pause_turn` HTTP continuations belong to one such invocation and retain transport-accumulated usage. These counters are not an invoice or a raw HTTP request count.
 

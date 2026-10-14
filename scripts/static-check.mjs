@@ -27,9 +27,35 @@ function walk(path, suffix, visit) {
 
 const forbiddenUi = [/\bfetch\s*\(/, /new\s+WebSocket\s*\(/, /localStorage/, /indexedDB/, /api[_-]?key/i, /authorization/i];
 for (const file of readdirSync(uiRoot).filter((name) => name.endsWith('.js'))) assertJsSyntax(`src/${file}`);
+const vendorRoot = join(uiRoot, 'vendor');
 walk(uiRoot, '.js', (file, text) => {
+  if (file.startsWith(vendorRoot)) return; // pinned third-party code, checked below
   for (const pattern of forbiddenUi) if (pattern.test(text)) fail(`${file}: forbidden WebView surface ${pattern}`);
 });
+
+// Third-party UI code is local, pinned by hash and reviewed before it changes (CLAUDE.md: CSP, local files only).
+// It may not reach the network or browser storage: only global calls count (KaTeX's parser defines and calls its own fetch() method).
+const VENDOR_SHA256 = {
+  'vendor/katex/katex.min.js': '103a53763cc033bba8d175bf3f0ba597c3505c9b6747dd3f2c7bc2a6bfcc8ae7',
+  'vendor/katex/katex.min.css': 'd4ab5b8ee16989b070cdb0ea24bd6ad48fc8df1b787f280f29d3ae4f959f2c00',
+};
+const forbiddenVendor = [/(?<![.\w$])fetch\s*\((?!\)\s*\{)/, /XMLHttpRequest/, /WebSocket/, /sendBeacon/, /importScripts/, /localStorage/, /indexedDB/, /\beval\s*\(/, /new\s+Function\s*\(/];
+{
+  const { createHash } = await import('node:crypto');
+  const pinned = new Set(Object.keys(VENDOR_SHA256));
+  walk(vendorRoot, '', (file) => {
+    const relative = file.slice(uiRoot.length + 1).replace(/\\/g, '/');
+    if (relative.startsWith('vendor/katex/fonts/') && relative.endsWith('.woff2')) return;
+    if (relative === 'vendor/katex/LICENSE') return;
+    if (!pinned.has(relative)) fail(`src/${relative}: unreviewed vendored file (add its sha256 to VENDOR_SHA256 after review)`);
+  });
+  for (const [relative, sha] of Object.entries(VENDOR_SHA256)) {
+    const bytes = readFileSync(join(uiRoot, relative));
+    if (createHash('sha256').update(bytes).digest('hex') !== sha) fail(`src/${relative}: vendored file changed (sha256 mismatch)`);
+    if (relative.endsWith('.js')) for (const pattern of forbiddenVendor) if (pattern.test(bytes.toString('utf8'))) fail(`src/${relative}: vendored code reaches ${pattern}`);
+  }
+  if (!read('src/math.js').includes("const KATEX_BASE = './src/vendor/katex/'")) fail('KaTeX must load from the bundled local copy only');
+}
 
 const forbiddenRuntime = [/\bEasyTier\b/, /\bBackendClient\b/, /\bOverlayService\b/, /com\.moyu\.remote/, /RemoteDataBridge/, /ConversationImportService/];
 walk(javaRoot, '.java', (file, text) => {
@@ -125,7 +151,7 @@ if (!db.includes('rating INTEGER CHECK(rating IN (-1,1))') || !db.includes('reru
 if (!coordinatorOnly.includes('case "turn.rerun"') || !coordinatorOnly.includes('snapshots.createLocal(sourceSessionId, userSeq - 1)') || !turnPipeline.includes('env.takeRerunOf(id)')) fail('a re-answer must branch before the re-asked message and record which turn it re-answers');
 if (!db.includes('CREATE TABLE turn_payloads(') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
 if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
-if (!coordinator.includes('contexts.buildCommitted(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
+if (!coordinator.includes('r.prompt = committedPrompt(r, r.session);') || !coordinator.includes('contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "")')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
 if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_id')) fail('deployment-scoped model profile/session binding missing');
 if (!db.includes('input_modalities') || !db.includes('output_modalities') || !db.includes('draft_media')) fail('model/session multimodal capability persistence missing');

@@ -54,4 +54,16 @@ public class SmartVerifierServiceTest {
         return "{\"rule\":\"" + rule + "\",\"result\":\"" + result + "\",\"severity\":\"" + severity +
                 "\",\"evidenceIds\":[\"" + evidenceId + "\"],\"note\":\"ok\"}";
     }
+
+    @Test public void theEvidenceLedgerCarriesTheCheckpointAndTheUserInstructionsTheMainCallSaw() throws Exception {
+        ContextCheckpoint checkpoint = new ContextCheckpoint("Earlier the user fixed the budget at 300 USD.", new JSONArray().put("budget <= 300 USD"),
+                new JSONArray(), new JSONArray(), new JSONArray());
+        JSONArray ledger = SmartVerifierService.evidence("What can I buy?", null, null, null, checkpoint, "Answer in English.");
+        java.util.Map<String, String> byId = new java.util.HashMap<>();
+        for (int i = 0; i < ledger.length(); i++) byId.put(ledger.getJSONObject(i).getString("id"), ledger.getJSONObject(i).optString("text"));
+        assertTrue(byId.get("context:checkpoint").contains("300 USD"));
+        assertEquals("Answer in English.", byId.get("user:instructions"));
+        JSONArray plain = SmartVerifierService.evidence("What can I buy?", null, null, null);
+        assertEquals("no checkpoint, no instructions: only the request", 1, plain.length());
+    }
 }

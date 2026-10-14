@@ -387,9 +387,11 @@ export function openConfirmDialog({ title, message, confirmText = '确认', dang
   confirm.focus();
 }
 
-export function openTextDialog({ title, value = '', confirmText = '保存', note = '', inputmode = '', maxLength = 400, onConfirm }) {
+export function openTextDialog({ title, value = '', confirmText = '保存', note = '', inputmode = '', maxLength = 400, multiline = false, allowEmpty = false, onConfirm }) {
   closeDialog(true);
-  const input = h('input', { class: 'modal-input', type: 'text', value, maxlength: String(maxLength), inputmode: inputmode || undefined, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': title || '输入内容' });
+  const input = multiline
+    ? h('textarea', { class: 'modal-input modal-textarea', rows: '8', maxlength: String(maxLength), value, 'aria-label': title || '输入内容' })
+    : h('input', { class: 'modal-input', type: 'text', value, maxlength: String(maxLength), inputmode: inputmode || undefined, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': title || '输入内容' });
   const cancel = button('取消', 'modal-cancel', {}, 'btn');
   const confirm = button(confirmText, 'modal-confirm', {}, 'btn primary');
   const overlay = h('div', { class: 'modal-backdrop', dataset: { moyuModal: '1' } },
@@ -397,12 +399,13 @@ export function openTextDialog({ title, value = '', confirmText = '保存', note
       h('h2', { text: title || '编辑' }), note ? h('p', { class: 'modal-note', text: note }) : null, input, h('div', { class: 'modal-actions' }, cancel, confirm)));
   const submit = () => {
     const next = String(input.value || '').trim();
-    if (!next) { input.focus(); return; }
+    if (!next && !allowEmpty) { input.focus(); return; }
     closeDialog(); onConfirm?.(next);
   };
   cancel.addEventListener('click', () => closeDialog());
   confirm.addEventListener('click', submit);
-  input.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } });
+  // A multi-line field keeps Enter for new lines; the Save button submits it.
+  if (!multiline) input.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } });
   overlay.addEventListener('click', (event) => { if (event.target === overlay) closeDialog(); });
   document.body.append(overlay);
   input.focus(); input.select();

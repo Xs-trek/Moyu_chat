@@ -66,6 +66,8 @@ final class ChatCoordinator implements AutoCloseable {
     private boolean crossChatMemoryEnabled;
     /** Read by turn threads when a turn settles. */
     private volatile boolean notifyInBackground;
+    /** Global custom instruction (settings), frozen into each accepted turn's config. */
+    private String customInstruction;
     private boolean wireCapture;
     private String defaultContextMode;
     private String defaultWebMode;
@@ -92,6 +94,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.crossChatMemoryEnabled = "true".equals(db.setting("crossChatMemoryEnabled", "false"));
         this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
         this.notifyInBackground = !"false".equals(db.setting("notifyInBackground", "true"));
+        this.customInstruction = db.setting("customInstruction", "");
         this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
@@ -151,6 +154,12 @@ final class ChatCoordinator implements AutoCloseable {
                 case "inspector.capture.set": wireCapture = p.optBoolean("enabled", true); db.putSetting("wireCapture", wireCapture ? "true" : "false"); break;
                 case "memory.global.set": crossChatMemoryEnabled = p.optBoolean("enabled", false); db.putSetting("crossChatMemoryEnabled", crossChatMemoryEnabled ? "true" : "false"); break;
                 case "notify.background.set": notifyInBackground = p.optBoolean("enabled", true); db.putSetting("notifyInBackground", notifyInBackground ? "true" : "false"); if (notifyInBackground) host.requestNotificationPermission(false); break;
+                case "instruction.global.set": {
+                    String text = p.optString("text", "").trim();
+                    if (text.length() > TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS) throw new IllegalArgumentException("自定义指令不能超过 " + TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS + " 字");
+                    customInstruction = text; db.putSetting("customInstruction", text);
+                    break;
+                }
                 case "context.mode.default.set": defaultContextMode = ContextMode.normalize(required(p, "mode")); db.putSetting("defaultContextMode", defaultContextMode); break;
                 case "web.mode.default.set": defaultWebMode = ChatTurnOptions.normalizeWebMode(required(p, "mode")); db.putSetting("defaultWebMode", defaultWebMode); break;
                 case "subagent.standard.default.set": standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(required(p, "mode")); db.putSetting("standardSubagentMode", standardSubagentMode); break;
@@ -478,7 +487,7 @@ final class ChatCoordinator implements AutoCloseable {
         if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("不支持这个账号的协议");
         ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
         ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort);
-        return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile);
+        return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile, customInstruction);
     }
 
     private boolean sessionBusy(String id) {
@@ -809,7 +818,7 @@ final class ChatCoordinator implements AutoCloseable {
                 }
             }
             view.put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
-                    .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture).put("notifyInBackground", notifyInBackground)
+                    .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture).put("notifyInBackground", notifyInBackground).put("customInstruction", customInstruction)
                     .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
                     .put("standardSubagentMode", standardSubagentMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));
@@ -955,7 +964,7 @@ final class ChatCoordinator implements AutoCloseable {
         String visibleState = active ? "running" : ("running".equals(s.state) ? "failed" : s.state);
         JSONObject o = new JSONObject().put("localSessionId", s.id).put("title", s.title).put("providerId", s.providerId).put("providerName", p == null ? s.providerId : p.displayName)
                 .put("modelProfileId", s.modelProfileId == null ? JSONObject.NULL : s.modelProfileId).put("model", s.model)
-                .put("modelName", modelProfile == null ? s.model : modelProfile.displayName)
+                .put("modelName", TurnConfig.describes(modelProfile, s) ? modelProfile.displayName : s.model)
                 .put("reasoningLevels", ReasoningPolicy.normalizeLevels(s.reasoningLevels))
                 .put("reasoningEffort", s.reasoningEffort == null ? ReasoningPolicy.DEFAULT : s.reasoningEffort)
                 .put("thinkingMode", ReasoningPolicy.normalizeThinkingMode(s.thinkingMode)).put("thinkingBudgetTokens", Math.max(0, s.thinkingBudgetTokens))

@@ -69,7 +69,7 @@ final class ProviderErrors {
             case 403:
                 if (region(lower)) return "当前网络出口地区不受该服务支持，请检查代理节点";
                 return "没有权限访问这个模型或功能";
-            case 404: return "端点或模型不存在：检查 Base URL 和 Model ID";
+            case 404: return "端点或模型不存在：检查 Base URL、协议和 Model ID";
             case 408: return "请求超时";
             case 413: return "请求体过大";
             case 429: return quota(detail) ? "额度已用完或余额不足" : "请求过于频繁，被限流";

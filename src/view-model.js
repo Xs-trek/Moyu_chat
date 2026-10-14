@@ -113,6 +113,8 @@ export function modelGroups(view) {
 
 /** Native and dialog agree on this limit (ChatCoordinator.renameSession). */
 export const SESSION_TITLE_MAX = 200;
+/** Native limit (TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS). */
+export const CUSTOM_INSTRUCTION_MAX = 4000;
 
 /** Message time: just the clock today, the date before that, and the year once it is not this year. */
 export function messageTime(value, now = new Date()) {

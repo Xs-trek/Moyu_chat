@@ -92,6 +92,8 @@ export type MoyuChatIntent =
   | UiIntent<'inspector.capture.set', { enabled: boolean }>
   /** Result notification while the app is in the background (completed or failed turns; not ones the user stopped). */
   | UiIntent<'notify.background.set', { enabled: boolean }>
+  /** Global custom instruction (≤ 4000 chars, '' clears): appended to every turn's system instructions and given to Smart verify/repair; recorded in the turn config. */
+  | UiIntent<'instruction.global.set', { text: string }>
   /** 1 = good answer, -1 = bad answer, 0 clears. */
   | UiIntent<'turn.rate', { localSessionId: string; turnId: string; rating: 1 | -1 | 0 }>
   /** Re-ask the user message at localSeq in a new branch; result `data: { localSessionId, text }`, then send `text` there. */
@@ -468,7 +470,7 @@ export interface AppViewModel {
   sessions: SessionView[];
   activeLocalSessionId?: string;
   activeSession?: SessionDetailView;
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; customInstruction: string; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {

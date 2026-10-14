@@ -310,11 +310,11 @@ document.addEventListener('click', (event) => {
   else if (action === 'provider-key') postIntent('provider.credential.edit', { providerId: target.dataset.providerId });
   else if (action === 'provider-verify') guardCheck(`verify:${target.dataset.providerId}`, 'provider.key.verify', { providerId: target.dataset.providerId }, (data) => {
     const text = { valid: 'Key 可用', invalid: 'Key 无效', unverified: '这个端点没有模型列表接口，发送一次消息即可确认 Key', error: `检查失败：${data.summary || ''}` }[data.keyStatus] || '已检查';
-    return { level: data.keyStatus === 'valid' ? 'info' : data.keyStatus === 'unverified' ? 'info' : 'error', text };
+    return { level: data.keyStatus === 'valid' ? 'info' : data.keyStatus === 'unverified' ? 'info' : 'error', text: data.host ? `${text}（${data.host}）` : text };
   });
   else if (action === 'provider-balance') guardCheck(`balance:${target.dataset.providerId}`, 'provider.balance.get', { providerId: target.dataset.providerId });
   else if (action === 'model-probe') guardCheck(`probe:${target.dataset.modelProfileId}`, 'model.probe', { modelProfileId: target.dataset.modelProfileId },
-    (data) => ({ level: data.ok ? 'info' : 'error', text: data.ok ? `连接正常${data.reply ? `：${data.reply}` : ''}` : `测试失败：${data.summary || data.code || ''}` }));
+    (data) => ({ level: data.ok ? 'info' : 'error', text: `${data.ok ? `连接正常${data.reply ? `：${data.reply}` : ''}` : `测试失败：${data.summary || data.code || ''}`}${data.host ? `（${data.host}）` : ''}` }));
   else if (action === 'route-host-confirm') {
     const routeId = target.dataset.routeId;
     openConfirmDialog({ title: '确认新的域名', confirmText: '确认发送',
@@ -342,6 +342,11 @@ document.addEventListener('click', (event) => {
   else if (action === 'toggle-reasoning') { postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' }); if (target.classList.contains('switch')) optimisticSwitch(target); }
   else if (action === 'toggle-memory') { postIntent('memory.global.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'toggle-wire-capture') { postIntent('inspector.capture.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
+  else if (action === 'edit-instruction') {
+    openTextDialog({ title: '自定义指令', value: currentView()?.ui?.customInstruction || '', multiline: true, allowEmpty: true, maxLength: vm.CUSTOM_INSTRUCTION_MAX,
+      note: '对所有会话生效，放在系统提示词的最后；当前提问与它冲突时以提问为准。每一轮会记下当时用的指令（调用链的本轮配置里能看到）。清空即关闭。',
+      onConfirm: (text) => postIntent('instruction.global.set', { text }) });
+  }
   else if (action === 'toggle-notify') { postIntent('notify.background.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'open-session') {
     document.querySelectorAll('.session-item.active').forEach((item) => item.classList.remove('active'));

@@ -11,7 +11,9 @@ import org.json.JSONObject;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -445,6 +447,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(id)});
+            carrySpend(db, "session_id=?", new String[]{id}); // its turns go with it (ON DELETE CASCADE); their spend stays
             if (db.delete("sessions", "local_id=?", new String[]{id}) != 1) throw new IllegalStateException("session delete failed");
             if (originSnapshotId != null) {
                 boolean referenced;
@@ -563,7 +566,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             try (Cursor c = db.rawQuery("SELECT MAX(user_seq) FROM turns WHERE session_id=? AND user_seq<=?", new String[]{sessionId, String.valueOf(localSeq)})) {
                 if (c.moveToFirst() && !c.isNull(0)) firstRemovedTurn = c.getInt(0);
             }
-            db.delete("turns", "session_id=? AND user_seq>=?", new String[]{sessionId, String.valueOf(firstRemovedTurn == null ? localSeq : firstRemovedTurn)});
+            String[] removed = {sessionId, String.valueOf(firstRemovedTurn == null ? localSeq : firstRemovedTurn)};
+            carrySpend(db, "session_id=? AND user_seq>=?", removed);
+            db.delete("turns", "session_id=? AND user_seq>=?", removed);
             db.delete("timeline", "session_id=? AND local_seq>=?", new String[]{sessionId, String.valueOf(localSeq)});
             db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(sessionId)});
             ContentValues state = new ContentValues();
@@ -974,6 +979,26 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }
 
+    /** Timeline rows after {@code afterSeq}, in order (incremental knowledge indexing). */
+    public synchronized JSONArray timelineAfter(String sessionId, int afterSeq) {
+        JSONArray out = new JSONArray();
+        if (sessionId == null) return out;
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT body FROM timeline WHERE session_id=? AND local_seq>? ORDER BY local_seq",
+                new String[]{sessionId, String.valueOf(afterSeq)})) {
+            while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
+        }
+        return out;
+    }
+
+    /** Newest timeline sequence of every session that has one. */
+    public synchronized Map<String, Integer> latestTimelineSeqs() {
+        Map<String, Integer> out = new HashMap<>();
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT session_id,MAX(local_seq) FROM timeline GROUP BY session_id", null)) {
+            while (c.moveToNext()) out.put(c.getString(0), c.getInt(1));
+        }
+        return out;
+    }
+
     public synchronized JSONArray timelineThrough(String sessionId, Integer throughSeq) {
         JSONArray out = new JSONArray();
         if (sessionId == null) return out;
@@ -998,13 +1023,77 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return getWritableDatabase().update("providers", v, "provider_id=?", new String[]{providerId}) == 1;
     }
 
+    /** Settings key of spend carried over from turns that were rewound or deleted: {providerId: {localDate: {currency: amount}}}. */
+    static final String SPEND_CARRY_KEY = "spendCarry";
+    /** Days of carried spend kept: enough for the monthly budget window. */
+    static final int SPEND_CARRY_DAYS = 62;
+
+    /**
+     * Spend already incurred must outlive the transcript: before turns are deleted (retry, edit, rollback,
+     * deleting a Chat), their estimated cost is added to a per-account, per-local-day carry that budgets count.
+     */
+    private void carrySpend(SQLiteDatabase db, String where, String[] args) {
+        JSONObject carry;
+        try { carry = new JSONObject(settingIn(db, SPEND_CARRY_KEY, "{}")); } catch (Exception broken) { carry = new JSONObject(); }
+        boolean changed = false;
+        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+        try (Cursor c = db.rawQuery("SELECT config,usage,started_at FROM turns WHERE " + where + " AND instr(usage,'\"cost\"')>0", args)) {
+            while (c.moveToNext()) {
+                try {
+                    String providerId = new JSONObject(c.getString(0)).optString("providerId", "");
+                    JSONObject cost = new JSONObject(c.getString(1)).optJSONObject("cost");
+                    if (providerId.isEmpty() || cost == null || !cost.has("amount")) continue;
+                    String day = Instant.parse(c.getString(2)).atZone(zone).toLocalDate().toString();
+                    JSONObject account = carry.optJSONObject(providerId); if (account == null) { account = new JSONObject(); carry.put(providerId, account); }
+                    JSONObject amounts = account.optJSONObject(day); if (amounts == null) { amounts = new JSONObject(); account.put(day, amounts); }
+                    String currency = cost.optString("currency", "USD");
+                    amounts.put(currency, amounts.optDouble(currency, 0d) + cost.optDouble("amount", 0d));
+                    changed = true;
+                } catch (Exception ignored) { }
+            }
+        }
+        if (!changed) return;
+        String oldest = java.time.LocalDate.now(zone).minusDays(SPEND_CARRY_DAYS).toString();
+        for (java.util.Iterator<String> accounts = carry.keys(); accounts.hasNext(); ) {
+            JSONObject account = carry.optJSONObject(accounts.next());
+            if (account == null) continue;
+            java.util.List<String> stale = new java.util.ArrayList<>();
+            for (java.util.Iterator<String> days = account.keys(); days.hasNext(); ) { String day = days.next(); if (day.compareTo(oldest) < 0) stale.add(day); }
+            for (String day : stale) account.remove(day);
+        }
+        ContentValues v = new ContentValues(); v.put("key", SPEND_CARRY_KEY); v.put("value", carry.toString());
+        db.insertWithOnConflict("settings", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    private static String settingIn(SQLiteDatabase db, String key, String fallback) {
+        try (Cursor c = db.rawQuery("SELECT value FROM settings WHERE key=?", new String[]{key})) { return c.moveToFirst() ? c.getString(0) : fallback; }
+    }
+
     /**
      * Estimated spend of an account's turns started at or after {@code sinceIso}, per currency (turns.config
-     * names the account; turns.usage carries the estimate). Turns without a price add nothing.
+     * names the account; turns.usage carries the estimate), plus spend carried over from turns that were
+     * rewound or deleted since. Turns without a price add nothing.
      */
     public synchronized JSONObject spendSince(String providerId, String sinceIso) {
         JSONObject out = new JSONObject();
         if (providerId == null || sinceIso == null) return out;
+        try {
+            JSONObject account = new JSONObject(setting(SPEND_CARRY_KEY, "{}")).optJSONObject(providerId);
+            if (account != null) {
+                Instant since = Instant.parse(sinceIso);
+                java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+                for (java.util.Iterator<String> days = account.keys(); days.hasNext(); ) {
+                    String day = days.next();
+                    if (java.time.LocalDate.parse(day).atStartOfDay(zone).toInstant().isBefore(since)) continue;
+                    JSONObject amounts = account.optJSONObject(day);
+                    if (amounts == null) continue;
+                    for (java.util.Iterator<String> currencies = amounts.keys(); currencies.hasNext(); ) {
+                        String currency = currencies.next();
+                        out.put(currency, out.optDouble(currency, 0d) + amounts.optDouble(currency, 0d));
+                    }
+                }
+            }
+        } catch (Exception brokenCarry) { /* a damaged carry never blocks budgets; live turns still count */ }
         try (Cursor c = getReadableDatabase().rawQuery("SELECT config,usage FROM turns WHERE started_at>=? AND instr(usage,'\"cost\"')>0", new String[]{sinceIso})) {
             while (c.moveToNext()) {
                 try {

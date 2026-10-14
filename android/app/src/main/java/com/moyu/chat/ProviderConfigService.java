@@ -22,19 +22,34 @@ final class ProviderConfigService {
 
     /** Latest model list read from each route's endpoint (ProviderGuard), in memory only: routeId → modelId → fields. */
     private final Map<String, Map<String, JSONObject>> discoveredByRoute = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The endpoint (endpointKey) each cached list was read from. */
+    private final Map<String, String> discoveredEndpoint = new java.util.concurrent.ConcurrentHashMap<>();
 
     ProviderConfigService(ChatDatabase db, ChatSecretStore secrets, ChatTransportRegistry transports) {
         this.db = db; this.secrets = secrets; this.transports = transports;
     }
 
-    void rememberDiscovered(String routeId, Map<String, JSONObject> models) {
-        if (routeId != null && models != null) discoveredByRoute.put(routeId, new java.util.LinkedHashMap<>(models));
+    /** Identity of the endpoint a route points at; evidence read from one endpoint never describes another. */
+    static String endpointKey(ChatDatabase.Route route) {
+        if (route == null) return "";
+        String base = route.baseUrl == null ? "" : route.baseUrl.trim();
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return ChatDatabase.normalizeProtocol(route.protocol) + "|" + base;
+    }
+
+    /** Keeps a model list only when the route still points at the endpoint it was read from. */
+    void rememberDiscovered(String routeId, String endpoint, Map<String, JSONObject> models) {
+        if (routeId == null || models == null) return;
+        if (!endpoint.equals(endpointKey(db.getRoute(routeId)))) return;
+        discoveredByRoute.put(routeId, new java.util.LinkedHashMap<>(models));
+        discoveredEndpoint.put(routeId, endpoint);
     }
 
     /** What the route's model list said about {@code modelId} ("discovered" layer), or "{}" when it was not read. */
     String discoveredFor(String routeId, String modelId) {
         Map<String, JSONObject> models = routeId == null ? null : discoveredByRoute.get(routeId);
         if (models == null || modelId == null || modelId.trim().isEmpty()) return "{}";
+        if (!endpointKey(db.getRoute(routeId)).equals(discoveredEndpoint.get(routeId))) { discoveredByRoute.remove(routeId); return "{}"; }
         JSONObject fields = models.get(modelId.trim());
         try { return fields == null ? new JSONObject().put("listed", false).toString() : new JSONObject(fields.toString()).put("listed", true).toString(); }
         catch (org.json.JSONException error) { return "{}"; }
@@ -70,8 +85,10 @@ final class ProviderConfigService {
         if (routesIn == null && created) routesIn = presetRoutes(preset);
         List<ChatDatabase.Route> routes = routesIn == null ? null : buildRoutes(account, preset, routesIn);
         Map<String, String> confirmedBefore = new HashMap<>();
+        Map<String, String> endpointBefore = new HashMap<>();
         HashSet<String> trustedHosts = new HashSet<>();
         for (ChatDatabase.Route existing : db.listRoutes(account.id)) {
+            endpointBefore.put(existing.id, endpointKey(existing));
             String confirmed = db.confirmedHost(existing.id);
             confirmedBefore.put(existing.id, confirmed);
             if (!confirmed.isEmpty() && confirmed.equals(ProviderEndpoint.host(existing.baseUrl))) trustedHosts.add(confirmed);
@@ -84,6 +101,11 @@ final class ProviderConfigService {
             for (ChatDatabase.ModelProfile m : db.listModelProfiles(account.id)) {
                 ChatDatabase.Route route = byId.get(m.routeId);
                 if (route == null) continue; // deleted with its route
+                if (!endpointKey(route).equals(endpointBefore.get(route.id))) {
+                    // Evidence describes an endpoint: a route now pointing elsewhere keeps none of the old one's.
+                    m.discovered = "{}"; m.probe = "{}";
+                    discoveredByRoute.remove(route.id);
+                }
                 try {
                     DeploymentResolver.apply(route, m);
                     ModelProfileValidator.validateResolvedProfile(route, m);

@@ -81,38 +81,53 @@ final class TurnPipeline {
     /**
      * The main generation starts at once, or, when the route's concurrency cap is reached, waits in the route's
      * queue showing "queued" (stopping it there ends the turn). The slot is released in finish().
+     * Gate entry, the queued mark and the stop handle are all set on the authority thread, which is also where a
+     * freed slot resumes a queued turn: a resume can therefore never run between queueing and binding the handle
+     * (it would otherwise start the real request and then have its stop handle replaced by the waiting one).
      */
     private void startGeneration(TurnRun r) throws Exception {
-        String routeId = r.provider.routeId;
         int limit = r.provider.dialect == null ? 0 : r.provider.dialect.maxConcurrent;
+        if (limit <= 0 || r.provider.routeId == null) { new ProviderRoundLoop(this, r).start(); return; }
+        env.authority().execute(() -> enterRoute(r, r.provider.routeId, limit));
+    }
+
+    /** Runs on the authority thread only. */
+    private void enterRoute(TurnRun r, String routeId, int limit) {
+        if (r.control.isCancelled() || !env.ownsTurn(r.id, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
         java.util.concurrent.atomic.AtomicBoolean settled = new java.util.concurrent.atomic.AtomicBoolean(false);
         ChatTransport.Turn[] waiting = new ChatTransport.Turn[1];
-        Runnable[] resume = new Runnable[1];
-        resume[0] = () -> env.authority().execute(() -> {
+        Runnable resume = () -> env.authority().execute(() -> {
             r.routeSlot.set(routeId);
             if (!settled.compareAndSet(false, true)) { releaseRouteSlot(r); return; }
             r.control.clearTransport(waiting[0]);
-            if (r.control.isCancelled() || !env.ownsTurn(r.id, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
-            try { new ProviderRoundLoop(this, r).start(); }
-            catch (Exception error) { finish(r, "", "", null, null, "", new String[]{"transport_start_failed", safe(error)}); }
+            launchGeneration(r);
         });
-        if (routeGate.enter(routeId, limit, resume[0])) {
-            if (limit > 0) r.routeSlot.set(routeId);
-            try { new ProviderRoundLoop(this, r).start(); }
-            catch (Exception error) { releaseRouteSlot(r); throw error; }
+        if (routeGate.enter(routeId, limit, resume)) {
+            settled.set(true);
+            r.routeSlot.set(routeId);
+            launchGeneration(r);
             return;
         }
         waiting[0] = () -> {
             if (!settled.compareAndSet(false, true)) return;
-            routeGate.withdraw(routeId, resume[0]);
+            routeGate.withdraw(routeId, resume);
             env.authority().execute(() -> finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}));
         };
-        r.live.put("streamStage", "queued");
-        db.replaceTimelineBody(r.streamKey, r.live);
+        try {
+            r.live.put("streamStage", "queued");
+            db.replaceTimelineBody(r.streamKey, r.live);
+        } catch (Exception ignored) { }
         env.putActiveTurn(r.id, waiting[0]);
-        r.control.bindTransport(waiting[0]);
         env.setStarting(r.id, false);
         env.emitStreamingView(r.id);
+        r.control.bindTransport(waiting[0]); // cancels at once when the user stopped meanwhile
+    }
+
+    /** Authority thread: starts the provider loop, or settles a turn that was stopped while it waited. */
+    private void launchGeneration(TurnRun r) {
+        if (r.control.isCancelled() || !env.ownsTurn(r.id, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
+        try { new ProviderRoundLoop(this, r).start(); }
+        catch (Exception error) { finish(r, "", "", null, null, "", new String[]{"transport_start_failed", safe(error)}); }
     }
 
     private void releaseRouteSlot(TurnRun r) {
@@ -205,16 +220,31 @@ final class TurnPipeline {
                 .put("reasoningEffort", c.reasoningEffort).put("thinkingMode", c.thinkingMode).put("thinkingBudgetTokens", c.thinkingBudgetTokens)
                 .put("continuationMode", c.continuationMode).put("clientToolCalling", c.clientToolCalling)
                 .put("contextTokens", c.contextTokens).put("inputTokens", c.inputTokens).put("maxOutputTokens", c.maxOutputTokens)
-                .put("routeId", r.provider.routeId == null ? "" : r.provider.routeId);
+                .put("routeId", r.provider.routeId == null ? "" : r.provider.routeId)
+                .put("customInstruction", c.customInstruction);
     }
 
     // ---------- context ----------
+
+    /** The session's prompt for this turn, with the user's global custom instruction (frozen in the turn config) last. */
+    private CanonicalPrompt committedPrompt(TurnRun r, ChatDatabase.Session session) throws Exception {
+        TurnConfig c = r.config;
+        CanonicalPrompt prompt = contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "");
+        return contexts.appendInstructionSuffix(prompt, c.contextTokens, c.inputTokens, c.maxOutputTokens, customInstructionSuffix(c.customInstruction));
+    }
+
+    /** User-authored, so it sits with the application policy rather than in history; the current request still wins. */
+    static String customInstructionSuffix(String instruction) {
+        if (instruction == null || instruction.trim().isEmpty()) return "";
+        return "\n\nThe user's custom instructions, set once in Moyu settings for every conversation. Follow them unless the current request asks otherwise:\n"
+                + instruction.trim();
+    }
 
     private boolean buildContext(TurnRun r) throws Exception {
         TurnTrace.Span span = r.trace().begin(TurnTrace.CONTEXT);
         TurnConfig c = r.config;
         try {
-            r.prompt = contexts.buildCommitted(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "");
+            r.prompt = committedPrompt(r, r.session);
             r.compactionPlan = r.checkpointAllowed ? contexts.compactionPlan(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
             r.needsCheckpoint = r.compactionPlan != null;
             r.preparing = r.needsRouter || r.needsCheckpoint;
@@ -247,7 +277,7 @@ final class TurnPipeline {
                 r.taskProfile = routed != null ? routed : new TaskProfile("general", "answer", "standard", "direct", "checkpoint_recent", new JSONArray(), 0d);
                 session.taskProfile = r.taskProfile.toJson().toString();
                 db.saveSession(session);
-                r.prompt = contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "");
+                r.prompt = committedPrompt(r, session);
                 r.compactionPlan = r.checkpointAllowed ? contexts.compactionPlan(session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
                 r.needsCheckpoint = r.compactionPlan != null;
                 r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.ROUTE, new JSONObject().put("routed", routed != null)
@@ -263,7 +293,7 @@ final class TurnPipeline {
                     session.contextCheckpoint = update.checkpoint.toJson().toString();
                     session.checkpointCoveredItems = update.coveredItems;
                     db.saveSession(session);
-                    r.prompt = contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "");
+                    r.prompt = committedPrompt(r, session);
                 }
                 r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.CHECKPOINT, new JSONObject().put("updated", update != null)
                         .put("coveredItems", update == null ? session.checkpointCoveredItems : update.coveredItems)));
@@ -479,7 +509,8 @@ final class TurnPipeline {
         boolean repaired = false;
         boolean repairLimitReached = false;
         String calibrationKey = SmartVerifierCalibration.calibrationKey(r.config.deploymentFingerprint);
-        JSONArray evidence = SmartVerifierService.evidence(currentUserText, mainPrompt, sourceArray(webSources), webContext);
+        JSONArray evidence = SmartVerifierService.evidence(currentUserText, mainPrompt, sourceArray(webSources), webContext,
+                currentCheckpoint(id), r.config.customInstruction);
         JSONArray attempts = new JSONArray();
         SmartVerifierService.Result verification = smartVerifier.verify(r.verifyTransport, r.provider, r.key, session,
                 mainPrompt, currentUserText, finalText, evidence);
@@ -551,6 +582,12 @@ final class TurnPipeline {
                     .put("repaired", repaired).put("repairLimitReached", repairLimitReached).put("attempts", attempts.length())));
         } catch (Exception ignored) { }
         finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, null);
+    }
+
+    /** The checkpoint the main prompt was built with (it may have been refreshed earlier in this turn). */
+    private ContextCheckpoint currentCheckpoint(String sessionId) {
+        ChatDatabase.Session latest = db.getSession(sessionId);
+        return latest == null ? null : ContextCheckpoint.fromStored(latest.contextCheckpoint);
     }
 
     void setPostProcessingStage(TurnRun r, String stage) {

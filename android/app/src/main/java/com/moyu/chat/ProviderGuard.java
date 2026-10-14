@@ -93,11 +93,16 @@ final class ProviderGuard {
         String protocol = ChatDatabase.normalizeProtocol(route.protocol);
         String root = ProviderEndpoint.normalize(route.baseUrl, protocol);
         String url = AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? root + "/v1/models" : root + "/models";
-        JSONObject out = new JSONObject().put("routeId", route.id);
+        String endpoint = ProviderConfigService.endpointKey(route);
+        JSONObject out = new JSONObject().put("routeId", route.id).put("host", ProviderEndpoint.host(route.baseUrl)).put("url", url);
         Call call = get(route, url);
         if (!call.ok) return out.put("ok", false).put("status", call.status).put("code", call.code).put("summary", call.summary);
         Map<String, JSONObject> models = parseModels(call.body);
-        config.rememberDiscovered(route.id, models);
+        if (!endpoint.equals(ProviderConfigService.endpointKey(db.getRoute(route.id)))) {
+            // The route was edited while the list was being read: it describes the old endpoint, so drop it.
+            return out.put("ok", false).put("code", "endpoint_changed").put("summary", "读取期间路线地址已更改，这次结果已丢弃，请重新读取");
+        }
+        config.rememberDiscovered(route.id, endpoint, models);
         applyDiscovered(route, models);
         JSONArray list = new JSONArray();
         for (Map.Entry<String, JSONObject> e : models.entrySet()) list.put(new JSONObject(e.getValue().toString()).put("id", e.getKey()));
@@ -188,7 +193,7 @@ final class ProviderGuard {
         }
         if (route == null) throw new IllegalStateException("这个服务商没有可查询的余额接口");
         String url = ProviderEndpoint.normalize(route.baseUrl, ChatDatabase.normalizeProtocol(route.protocol)) + spec.balancePath;
-        JSONObject out = new JSONObject().put("checkedAt", Instant.now().toString());
+        JSONObject out = new JSONObject().put("checkedAt", Instant.now().toString()).put("host", ProviderEndpoint.host(route.baseUrl));
         Call call = get(route, url);
         if (!call.ok) return out.put("ok", false).put("status", call.status).put("code", call.code).put("summary", call.summary);
         JSONObject body;
@@ -259,13 +264,16 @@ final class ProviderGuard {
         String[] failed = failure.get();
         if (failed == null && reply.isEmpty()) failed = new String[]{"empty_output", "请求成功，但没有收到文字输出（可能输出上限都花在了推理上）"};
         JSONObject result = new JSONObject().put("checkedAt", Instant.now().toString()).put("ok", failed == null)
+                .put("host", ProviderEndpoint.host(route.baseUrl))
                 .put("totalMs", TimeUnit.NANOSECONDS.toMillis(end - started))
                 .put("usageReported", usage.get()).put("reasoningSeen", reasoning.get())
                 .put("reply", reply.length() > 80 ? reply.substring(0, 80) : reply);
         if (first.get() > 0L) result.put("firstOutputMs", TimeUnit.NANOSECONDS.toMillis(first.get() - started));
         if (failed != null) result.put("code", failed[0] == null ? "" : failed[0]).put("summary", failed[1] == null ? "" : failed[1]);
         ChatDatabase.ModelProfile current = db.getModelProfile(profileId);
-        if (current != null && route.id.equals(current.routeId)) {
+        // Stored only while the model still points at the endpoint and model id that were tested.
+        if (current != null && route.id.equals(current.routeId) && profile.modelId.equals(current.modelId)
+                && ProviderConfigService.endpointKey(route).equals(ProviderConfigService.endpointKey(db.getRoute(route.id)))) {
             JSONObject probe = DeploymentResolver.json(current.probe).put("result", result);
             current.probe = probe.toString();
             db.saveModelProfile(current);
@@ -302,11 +310,11 @@ final class ProviderGuard {
                 return call;
             }
             call.code = "http_" + call.status;
-            call.summary = ProviderErrors.httpSummary(call.status, errorDetail(call.body), ProviderErrors.requestId(response));
+            call.summary = WireCapture.scrub(ProviderErrors.httpSummary(call.status, errorDetail(call.body), ProviderErrors.requestId(response)), key);
             return call;
         } catch (IOException error) {
             call.code = "network_error";
-            call.summary = ProviderErrors.networkSummary(error);
+            call.summary = WireCapture.scrub(ProviderErrors.networkSummary(error), key);
             return call;
         }
     }

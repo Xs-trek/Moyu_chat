@@ -110,7 +110,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
 
     @Override public Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort,
                                  CanonicalPrompt prompt, ChatTurnOptions options, Sink sink) {
-        TerminalSink guarded = new TerminalSink(sink);
+        TerminalSink guarded = new TerminalSink(sink, apiKey);
         if (provider == null || apiKey == null || apiKey.isEmpty()) { guarded.onError("provider_not_configured", "Provider 或 API Key 未配置", false); return () -> {}; }
         try {
             String url = ProviderEndpoint.requestUrl(provider.baseUrl, provider.protocol);

@@ -1,4 +1,5 @@
 import { highlightInto } from './highlight.js';
+import { displayMath, inlineMath, mathNode } from './math.js';
 
 function textNode(value) { return document.createTextNode(String(value ?? '')); }
 
@@ -71,6 +72,17 @@ function inlineFragment(value, depth = 0) {
   let i = 0;
   while (i < source.length) {
     const ch = source[i];
+
+    // Math before escapes: \( would otherwise be read as an escaped parenthesis.
+    if (ch === '$' || (ch === '\\' && source[i + 1] === '(')) {
+      if (source.startsWith('$$', i)) {
+        const close = source.indexOf('$$', i + 2);
+        if (close > i + 2 && source.slice(i + 2, close).trim()) { flush(); out.append(mathNode(source.slice(i + 2, close).trim(), true)); i = close + 2; continue; }
+      } else {
+        const math = inlineMath(source, i);
+        if (math) { flush(); out.append(mathNode(math.tex, false)); i = math.end; continue; }
+      }
+    }
 
     if (ch === '\\' && i + 1 < source.length && ESCAPABLE.test(source[i + 1])) {
       plain += source[i + 1]; i += 2; continue;
@@ -206,6 +218,8 @@ function codeBlock(language, codeText) {
 }
 
 const MAX_BLOCK_DEPTH = 8;
+/** A line opening display math: $$ or \[ (closed on the same or a later line). */
+const MATH_BLOCK = /^ {0,3}(?:\$\$|\\\[)/;
 const LIST_MARKER = /^([ \t]*)([-+*]|(\d{1,9})[.)])([ \t]+)(\S.*)$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})/;
 
@@ -346,6 +360,7 @@ function isBlockStart(lines, index) {
   if (/^\s*>/.test(line)) return true;
   if (/^\s*(?:[-+*]|\d+[.)])\s+/.test(line)) return true;
   if (isThematicBreak(line)) return true;
+  if (MATH_BLOCK.test(line) && displayMath(lines, index)) return true;
   if (renderTable(lines, index)) return true;
   return false;
 }
@@ -384,6 +399,11 @@ function renderBlocks(lines, depth) {
       while (index < lines.length && !new RegExp(`^ {0,3}${markerChar === '`' ? '`' : '~'}{${markerLength},}\\s*$`).test(lines[index])) codeLines.push(lines[index++]);
       if (index < lines.length) index += 1;
       root.append(codeBlock(language, codeLines.join('\n'))); continue;
+    }
+
+    if (MATH_BLOCK.test(line)) {
+      const math = displayMath(lines, index);
+      if (math) { root.append(mathNode(math.tex, true)); index = math.next; continue; }
     }
 
     const table = renderTable(lines, index);

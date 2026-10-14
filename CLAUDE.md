@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Moyu Chat 的开发依据。项目事实以当前源码为准；`docs/history/` 中的文档只是 Codex 时期的历史基线，可能描述已删除的功能。
+Moyu Chat 的开发依据。项目事实以当前源码为准，功能的完成状态见 `docs/status.md`；`docs/history/` 中的文档只是 Codex 时期的历史基线，可能描述已删除的功能。
 
 ## 定位
 
@@ -39,13 +39,13 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 编排中枢 | `ChatCoordinator`：intent 分发、会话生命周期、分支、视图投影；通过 `TurnPipeline.Env` 向回合提供执行器、忙碌标记和视图推送 |
 | 回合管线 | `TurnPipeline`：接收 → 上下文 → 路由 → 压缩检查点 → 联网规划 → 工具选择 → 联网检索 → 生成 → 校验/修正 → 收尾；`ProviderRoundLoop`（生成阶段：多轮主调用、客户端工具轮次、20 fps 流式投影）；`TurnRun`（回合内状态）、`TurnConfig`（冻结配置）、`TurnControl`（取消、用量、调用链） |
 | 协议适配 | `ChatTransport`、`ChatTransportRegistry`、`OpenAiCompatibleTransport`（Chat Completions + Responses）、`AnthropicMessagesTransport`、`ProviderEndpoint`（SDK 根地址约定）、`ProviderAuth`、`RouteDialect`（路线的协议细节）、`RouteHeaders`（非机密附加请求头）、`ProviderErrors`（失败分类与请求 ID） |
-| 账号与能力配置 | `ProviderConfigService`（账号 / 路线 / 模型的保存、校验、视图投影、密钥域名确认）、`ProviderPresets` + `resources/com/moyu/chat/provider-presets.json`（服务商预设与模型目录）、`DeploymentResolver`（默认 < 端点 < 目录 < 实测 < 手动，逐项记录来源）、`ModelPricing`、`ModelProfileValidator`、`ModelPreflight`、`ConfigurationValidator`、`ReasoningPolicy`、`ProviderContinuationPolicy/Identity`；说明见 `docs/provider-config.md` |
+| 账号与能力配置 | `ProviderConfigService`（账号 / 路线 / 模型的保存、校验、视图投影、密钥域名确认、预算）、`ProviderGuard`（检查 Key、端点模型列表、连接测试、余额）、`RouteGate`（路线并发上限）、`ProviderPresets` + `resources/com/moyu/chat/provider-presets.json`（服务商预设与模型目录）、`DeploymentResolver`（默认 < 端点 < 目录 < 实测 < 手动，逐项记录来源）、`ModelPricing`、`ModelProfileValidator`、`ModelPreflight`、`ConfigurationValidator`、`ReasoningPolicy`、`ProviderContinuationPolicy/Identity`；说明见 `docs/provider-config.md` |
 | 上下文 | `ContextMode`（minimal/standard/smart）、`ContextBuilder`、`ContextBudgetManager`、`ContextCheckpoint(Service)`、`CanonicalPrompt`、`PromptPolicy`、`PromptModules`、`LocalKnowledgeStore` + `KnowledgeLexicon`（FTS 记忆/检索）、`SnapshotService`（本地分支快照） |
 | Harness | `HarnessProfile`、`HarnessPolicyResolver`、`TaskRouter`、`TaskProfile`、`ReliabilityModules`、`SmartVerifierService`、`SmartVerifierCalibration`、`FocusedSubagentService` |
 | 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask）、`WebOrchestrator`（规划）、`MoyuWebService`（检索/抓取） |
 | 观察 | `TurnStats`（统计页：按模型 × 上下文模式汇总延迟、token、辅助占比、各辅助模块实际执行率和评价）、`TurnUsage`（按主调用 / 辅助调用 / 子任务分类，并按发起阶段归属每次模型调用）、`TurnTrace`（每个阶段的状态、耗时、判断摘要，跳过时记录原因）、`WireCapture`（协议检查器：脱敏后的请求 / 响应原文，不含请求头和 API Key，只保留最近 30 回合，可在设置中关闭） |
 | 存储 | `ChatDatabase`（`moyu-beta.db`，schema 1）、`ChatMediaStore`、`ChatSecretStore` |
-| 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/highlight.js`（本地轻量代码高亮）、`src/mascot.js`（像素小鱼与彩蛋）、`src/morph.js`（原地更新 DOM、一次性动效、FLIP、数值淡入）、`src/drawer-gesture.js`（侧边栏跟手拖动）、`src/editors.js`（Provider / Model Profile 编辑页）、`src/remote.js`（按需读取的数据：调用链、回答对比、统计）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
+| 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/math.js`（公式：按需加载本地 `src/vendor/katex/`，文件按 sha256 锁定在静态检查里）、`src/highlight.js`（本地轻量代码高亮）、`src/mascot.js`（像素小鱼与彩蛋）、`src/morph.js`（原地更新 DOM、一次性动效、FLIP、数值淡入）、`src/drawer-gesture.js`（侧边栏跟手拖动）、`src/editors.js`（Provider / Model Profile 编辑页）、`src/remote.js`（按需读取的数据：调用链、回答对比、统计）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
 | 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。同一页面收到新视图时用 `morph` 原地更新（保留节点、滚动位置、进行中的过渡和展开状态），只有路由或会话变化才重建页面并播放进入动画；新出现的节点用 `fx-*` 类做一次性动效（只用 transform / opacity），要退场动画的节点声明 `data-exit`调用链只通过 `turn.trace.get` 按需读取，不随视图推送；用量存在 `turns` 表，由原生按原有形状投影成 `kind: usage` 条目。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |
 | 契约 | `contract/moyu-chat-contract.d.ts`：intent 与视图模型类型，改动原生视图或 intent 时同步更新 |
 

@@ -197,6 +197,7 @@ function settings(view) {
   const memoryEnabled = Boolean(view.ui?.crossChatMemoryEnabled);
   const wireCapture = view.ui?.wireCapture !== false;
   const notify = view.ui?.notifyInBackground !== false;
+  const instruction = String(view.ui?.customInstruction || '').trim();
   return h('main', { class: 'page settings-page' }, appHeader('设置', null),
     h('div', { class: 'page-body stack' },
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '外观' }),
@@ -204,6 +205,8 @@ function settings(view) {
         settingRow('背景色调', null, segmentedSetting('背景色调', 'tone', 'tone', [['sage', '灰绿'], ['warm', '暖米'], ['neutral', '中性']], look.tone), true),
         settingRow('动效与彩蛋', '小鱼的动作、问候、校验小印以外的小彩蛋。关闭后界面完全静止。系统开启“减少动画”时动作也会停止。', switchControl('动效与彩蛋', look.delight, 'toggle-delight', { enabled: look.delight ? 'false' : 'true' }))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '对话' }),
+        settingRow('自定义指令', instruction ? `已设置 · ${instruction.length} 字：${instruction.length > 60 ? `${instruction.slice(0, 60)}…` : instruction}` : '对所有会话生效的指令，例如称呼、回答语言、格式偏好。未设置。',
+          button(instruction ? '编辑' : '设置', 'edit-instruction', {}, 'btn small')),
         settingRow('显示模型推理', '只展示 endpoint 明确返回的 reasoning/thinking 文本。可见推理不会作为普通历史回灌；Provider-private continuation 只有在 Model Profile 明确声明 native 且标准/智能模式允许时才复用。', switchControl('显示模型推理', reasoningVisible, 'toggle-reasoning', { show: reasoningVisible ? 'false' : 'true' })),
         settingRow('后台完成通知', '应用在后台时，回答完成或失败会发一条系统通知，点开直接进入对应会话。你自己停止的回合不通知。Android 13 及以上需要允许通知权限。', switchControl('后台完成通知', notify, 'toggle-notify', { enabled: notify ? 'false' : 'true' })),
         settingRow('记录协议报文', '保存最近 30 个回合里每次模型调用的请求和响应原文，在回复详情的调用链里查看。不含请求头和 API Key，图片等长串只保留长度。', switchControl('记录协议报文', wireCapture, 'toggle-wire-capture', { enabled: wireCapture ? 'false' : 'true' })),

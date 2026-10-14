@@ -66,7 +66,7 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
 
     @Override public Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort,
                                  CanonicalPrompt prompt, ChatTurnOptions options, Sink sink) {
-        TerminalSink guarded = new TerminalSink(sink);
+        TerminalSink guarded = new TerminalSink(sink, apiKey);
         if (provider == null || apiKey == null || apiKey.isEmpty()) { guarded.onError("provider_not_configured", "Provider 或 API Key 未配置", false); return () -> {}; }
         String protocol = provider.protocol;
         if (!(CHAT_COMPLETIONS.equals(protocol) || RESPONSES.equals(protocol))) { guarded.onError("unsupported_protocol", "当前 Provider 协议不受支持", false); return () -> {}; }
