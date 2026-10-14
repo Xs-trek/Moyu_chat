@@ -301,7 +301,7 @@ function conversation(view) {
   return h('main', { class: 'conversation-layout', dataset: { sessionId: session.localSessionId, configSignature: configSignature(session) } },
     h('header', { class: 'app-head conversation-head' },
       iconButton('menu', '会话列表', 'drawer-open', {}, 'icon-btn nav-toggle'),
-      h('div', { class: 'head-title grow conversation-title' }, h('strong', { class: 'truncate', text: session.title }), conversationSubtitle(session)),
+      h('div', { class: 'head-title grow conversation-title' }, h('strong', { class: 'truncate', dataset: { swap: '' }, text: session.title }), conversationSubtitle(session)),
       iconButton('more', '会话操作', 'conversation-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '' })),
     turnNavigator(session),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
@@ -735,7 +735,7 @@ export function patchConversation() {
   noteMilestones(view, session);
 
   const title = document.querySelector('.conversation-title strong');
-  if (title) title.textContent = session.title || '';
+  if (title && title.textContent !== (session.title || '')) { title.textContent = session.title || ''; swapIn(title); }
   const subtitle = document.querySelector('.conversation-title small');
   const nextSubtitle = conversationSubtitle(session);
   if (subtitle && subtitle.dataset.subtitle !== nextSubtitle.dataset.subtitle) swapIn(morph(subtitle, nextSubtitle));

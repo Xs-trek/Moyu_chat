@@ -18,7 +18,8 @@ let sheet = null;
 export function sessionItem(session, activeId) {
   const running = session.state === 'running';
   const active = session.localSessionId === activeId;
-  const preview = vm.sessionPreview(session);
+  const preview = session.blank ? '' : vm.sessionPreview(session);
+  const title = vm.sessionTitle(session);
   const meta = [];
   if (running) meta.push(fish('write', 'sm'), h('span', { text: '生成中' }));
   else if (session.state === 'failed') meta.push(h('span', { class: 'meta-warn', text: '失败' }));
@@ -27,10 +28,10 @@ export function sessionItem(session, activeId) {
   meta.push(h('span', { class: `mode-tag ${session.contextMode || 'standard'}`, title: `上下文模式：${vm.contextLabel(session.contextMode)}`, text: vm.contextLabel(session.contextMode) }));
   return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}`, dataset: { key: session.localSessionId, exit: 'collapse' } },
     h('button', { type: 'button', class: 'session-open', dataset: { action: 'open-session', sessionId: session.localSessionId } },
-      h('b', { class: 'session-title', text: session.title || '新会话' }),
+      h('b', { class: `session-title${session.blank ? ' is-draft' : ''}`, dataset: { swap: '' }, text: title }),
       preview ? h('span', { class: 'session-preview', text: preview }) : null,
       h('small', { class: 'session-meta' }, meta)),
-    iconButton('more', `${session.title || '会话'} 的操作`, 'session-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '', running: running ? '1' : '' }, 'icon-btn session-more'));
+    iconButton('more', `${title} 的操作`, 'session-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '', running: running ? '1' : '', blank: session.blank ? '1' : '' }, 'icon-btn session-more'));
 }
 
 export function sessionList(view) {

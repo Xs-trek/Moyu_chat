@@ -18,7 +18,7 @@ import java.util.Map;
 final class TurnStats {
     /** Stages that exist only to help the main call (same set as the frontend's helper share). */
     static final java.util.Set<String> HELPER_STAGES = new java.util.HashSet<>(java.util.Arrays.asList(
-            TurnTrace.ROUTE, TurnTrace.CHECKPOINT, TurnTrace.WEB_PLAN, TurnTrace.VERIFY, TurnTrace.REPAIR, "subagent"));
+            TurnTrace.ROUTE, TurnTrace.CHECKPOINT, TurnTrace.WEB_PLAN, TurnTrace.VERIFY, TurnTrace.REPAIR, "subagent", SessionTitles.STAGE));
 
     static final String BY_MODEL = "model", BY_PROTOCOL = "protocol", BY_EFFORT = "effort", BY_MODE = "mode", BY_HELPERS = "helpers";
     /** Helper-switch group of a turn with every helper on (or recorded before the switches existed). */

@@ -155,8 +155,10 @@ function sessionMenu(target) {
   const sessionId = target.dataset.sessionId;
   const title = target.dataset.sessionTitle || '会话';
   const running = target.dataset.running === '1';
+  const blank = target.dataset.blank === '1';
   openActions(title, [
     { label: '重命名', icon: 'rename', action: 'rename-session', data: { sessionId, sessionTitle: title }, disabled: running },
+    { label: '重新命名（自动）', icon: 'rename', action: 'auto-title', data: { sessionId }, disabled: running || blank, hint: blank ? '还没有回答' : '用这个会话的模型根据最近的问答起名' },
     { label: '删除', icon: 'trash', action: 'delete-session', data: { sessionId, sessionTitle: title }, danger: true, disabled: running, hint: running ? '回合进行中' : '' },
   ]);
 }
@@ -169,6 +171,7 @@ function conversationMenu(target) {
   const showing = Boolean(view.ui?.showReasoning);
   openActions(session.title || '会话', [
     { label: '重命名', icon: 'rename', action: 'rename-session', data: { sessionId: session.localSessionId, sessionTitle: session.title || '' } },
+    { label: '重新命名（自动）', icon: 'rename', action: 'auto-title', data: { sessionId: session.localSessionId }, disabled: running, hint: '用这个会话的模型根据最近的问答起名' },
     { label: '从当前位置分支', icon: 'branch', action: 'branch-local', data: { sessionId: session.localSessionId }, disabled: running, hint: running ? '等当前回合结束' : '复制到这里为止的历史，开一个新会话' },
     { label: showing ? '隐藏模型推理' : '显示模型推理', icon: 'eye', action: 'toggle-reasoning', data: { show: showing ? 'false' : 'true' } },
     { label: '删除会话', icon: 'trash', action: 'delete-session', data: { sessionId: session.localSessionId, sessionTitle: session.title || '' }, danger: true, disabled: running },
@@ -306,6 +309,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'newchat-confirm') {
     const choice = newChatChoice();
     closeSheet();
+    if (choice) flushDraft();
     if (choice) postIntent('chat.session.create', { providerId: choice.providerId, modelProfileId: choice.modelProfileId, contextMode: choice.contextMode, webMode: choice.webMode });
   }
   else if (action === 'provider-key') postIntent('provider.credential.edit', { providerId: target.dataset.providerId });
@@ -351,10 +355,18 @@ document.addEventListener('click', (event) => {
   else if (action === 'toggle-helper') { postIntent('helper.switch.set', { helper: target.dataset.helper, enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'toggle-notify') { postIntent('notify.background.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'open-session') {
+    flushDraft();
     document.querySelectorAll('.session-item.active').forEach((item) => item.classList.remove('active'));
     target.closest('.session-item')?.classList.add('active');
     closeDrawerIfOverlay();
     postIntent('chat.session.open', { localSessionId: sessionId });
+  }
+  else if (action === 'auto-title') {
+    if (!sessionId) return;
+    postIntent('chat.session.title.auto', { localSessionId: sessionId }, {
+      resolve() {},
+      reject(error) { setNotice({ level: 'error', text: error?.message || '没能生成标题' }); },
+    });
   }
   else if (action === 'rename-session') {
     const title = target.dataset.sessionTitle || currentView()?.activeSession?.title || '';
@@ -390,7 +402,7 @@ document.addEventListener('click', (event) => {
     const localSeq = seqOf(target);
     if (sessionId && localSeq) postIntent('branch.create.local', { localSessionId: sessionId, throughSeq: localSeq });
   }
-  else if (action === 'new-chat') { closeDrawerIfOverlay(); newChat(currentView()); }
+  else if (action === 'new-chat') { flushDraft(); closeDrawerIfOverlay(); newChat(currentView()); }
   else if (action === 'new-chat-model') {
     const view = currentView();
     const model = view?.providers?.find((p) => p.providerId === target.dataset.providerId)?.models?.find((m) => m.modelProfileId === target.dataset.modelProfileId);
@@ -440,6 +452,7 @@ document.addEventListener('click', (event) => {
 });
 
 let draftTimer = 0;
+let pendingDraft = null;
 const draftGenerations = new Map();
 function draftGeneration(sessionId) { return draftGenerations.get(sessionId) || 0; }
 function advanceDraftGeneration(sessionId) {
@@ -579,11 +592,22 @@ document.addEventListener('input', (event) => {
   const sessionId = form.dataset.sessionId;
   const generation = draftGeneration(sessionId);
   const text = event.target.value;
-  draftTimer = setTimeout(() => {
-    if (draftGeneration(sessionId) !== generation) return;
-    postIntent('chat.session.saveDraft', { localSessionId: sessionId, text });
-  }, 400);
+  pendingDraft = { sessionId, text, generation };
+  draftTimer = setTimeout(flushDraft, 400);
 });
+
+/**
+ * Sends a composer draft still waiting for its debounce now: leaving a Chat must not lose text typed in the last
+ * moment, and a Chat that never had a message is kept (as a draft) only when its draft reached the native side.
+ */
+function flushDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = 0;
+  const pending = pendingDraft;
+  pendingDraft = null;
+  if (!pending || draftGeneration(pending.sessionId) !== pending.generation) return;
+  postIntent('chat.session.saveDraft', { localSessionId: pending.sessionId, text: pending.text });
+}
 
 document.addEventListener('focusin', (event) => {
   if (event.target?.name === 'message') resizeComposerTextarea(event.target);

@@ -51,6 +51,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, String> pendingReruns = new ConcurrentHashMap<>();
     /** Retry link of a session's next accepted turn: {retryOf: archived turn id, attempt: n}. */
     private final Map<String, JSONObject> pendingRetries = new ConcurrentHashMap<>();
+    /** Sessions automatic naming already ran for in this process; a failed attempt is not repeated on its own. */
+    private final java.util.Set<String> namedSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, String> pendingKeptDrafts = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
@@ -88,7 +90,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.guard = new ProviderGuard(db, secrets, config, transports);
         this.pipeline = new TurnPipeline(new PipelineEnv(), db, contexts, mediaStore, transports);
         // Recovery runs on the same single worker as every intent, so it is ordered before any send.
-        worker.execute(() -> { db.recoverInterruptedSessions(); pruneOrphans(); config.refreshCatalog(); emitView(); });
+        worker.execute(() -> { db.recoverInterruptedSessions(); dropBlankSessions(empty(db.setting("activeSessionId", ""))); pruneOrphans(); config.refreshCatalog(); emitView(); });
         this.route = validRoute(db.setting("route", "home"));
         this.activeSessionId = empty(db.setting("activeSessionId", ""));
         this.theme = validTheme(db.setting("theme", "system"));
@@ -183,6 +185,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.create": createSession(p); break;
                 case "chat.session.open": openSession(required(p, "localSessionId")); break;
                 case "chat.session.rename": renameSession(required(p, "localSessionId"), required(p, "title")); break;
+                case "chat.session.title.auto": autoTitleNow(requestId, required(p, "localSessionId")); return;
                 case "chat.session.model.set": setSessionModel(required(p, "localSessionId"), required(p, "modelProfileId")); break;
                 case "chat.session.reasoning.set": setSessionReasoning(required(p, "localSessionId"), required(p, "reasoningEffort")); break;
                 case "chat.session.web.set": setSessionWebMode(required(p, "localSessionId"), required(p, "webMode")); break;
@@ -309,6 +312,8 @@ final class ChatCoordinator implements AutoCloseable {
         // The composer is cleared only after the runtime lease makes this an accepted turn.
         db.setDraft(sessionId, keptDraft);
         if (keptDraft.isEmpty()) pendingKeptDrafts.remove(sessionId); else pendingKeptDrafts.put(sessionId, keptDraft);
+        String placeholder = SessionTitles.placeholder(message); // the default title gives way to the first message at once
+        if (placeholder != null) db.replaceTitleIf(sessionId, SessionTitles.DEFAULT_TITLE, placeholder);
         JSONObject retry = p.optJSONObject("retry"); // set only after acceptance, so a refused retry never labels a later turn
         if (retry == null) pendingRetries.remove(sessionId); else pendingRetries.put(sessionId, retry);
         startingSessions.add(sessionId);
@@ -386,13 +391,39 @@ final class ChatCoordinator implements AutoCloseable {
         String contextMode = ContextMode.normalize(p.optString("contextMode", defaultContextMode));
         if (p.has("contextMode")) { defaultContextMode = contextMode; db.putSetting("defaultContextMode", defaultContextMode); }
         String webMode = ChatTurnOptions.normalizeWebMode(p.optString("webMode", defaultWebMode));
+        dropBlankSessions(null); // a new Chat replaces any unused blank one instead of piling up beside it
         ChatDatabase.Session s = db.createSession(profile, title, null, null, effort, contextMode, webMode);
         activate(s.id);
     }
 
+    /** A session that never had a message, has nothing in its composer and is not starting a turn: nothing to keep. */
+    private boolean disposable(ChatDatabase.Session s, java.util.Set<String> blanks) {
+        return s != null && blanks.contains(s.id) && (s.draft == null || s.draft.trim().isEmpty())
+                && (s.draftMedia == null || s.draftMedia.trim().isEmpty() || "[]".equals(s.draftMedia.trim())) && !sessionBusy(s.id);
+    }
+
+    /** Deletes unused blank sessions except {@code keep}; blank sessions with an unsent draft stay (listed as drafts). */
+    private void dropBlankSessions(String keep) {
+        try {
+            java.util.Set<String> blanks = db.blankSessionIds();
+            for (String id : blanks) {
+                if (id.equals(keep)) continue;
+                ChatDatabase.Session s = db.getSession(id);
+                if (disposable(s, blanks)) deleteSession(id);
+            }
+        } catch (Exception error) { host.showMessage("清理空白会话失败：" + safe(error)); }
+    }
+
     private void openSession(String id) { if (db.getSession(id) == null) throw new IllegalArgumentException("会话不存在"); activate(id); }
     private void renameSession(String id, String title) { db.renameSession(id, bounded(title, 200, "会话标题")); }
-    private void activate(String id) { activeSessionId = id; db.putSetting("activeSessionId", id); route = "conversation"; db.putSetting("route", route); }
+    private void activate(String id) {
+        String left = activeSessionId;
+        activeSessionId = id; db.putSetting("activeSessionId", id); route = "conversation"; db.putSetting("route", route);
+        if (left != null && !left.equals(id)) {
+            java.util.Set<String> blanks = db.blankSessionIds();
+            if (blanks.contains(left) && disposable(db.getSession(left), blanks)) { db.deleteSession(left); mediaStore.pruneUnreferenced(db.referencedMediaIds()); }
+        }
+    }
 
     /** Copies what a session freezes from its model profile; switching models and applying an edited profile share it. */
     static void adoptProfile(ChatDatabase.Session session, ChatDatabase.ModelProfile profile) {
@@ -580,8 +611,97 @@ final class ChatCoordinator implements AutoCloseable {
             lastStreamViewNanos.remove(id);
             host.setTurnRuntimeActive(id, false);
             notifySettled(id, control);
+            if (control != null && !control.isCancelled()) worker.execute(() -> autoTitle(id));
             ChatCoordinator.this.emitView();
         }
+    }
+
+    /** The exchange a title is made from: the first question, the latest answered question and its answer. */
+    private static final class Exchange {
+        String firstQuestion = "", question = "", answer = "", turnId;
+    }
+
+    /** Null until the session has a finished, non-empty answer. */
+    static Exchange latestExchange(JSONArray items) {
+        Exchange out = new Exchange();
+        String lastQuestion = "";
+        boolean answered = false;
+        for (int i = 0; items != null && i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null || !"message".equals(item.optString("kind")) || item.optBoolean("inherited", false)) continue;
+            String text = item.optString("text", "");
+            if ("user".equals(item.optString("role"))) {
+                if (out.firstQuestion.isEmpty()) out.firstQuestion = text;
+                lastQuestion = text;
+            } else if ("assistant".equals(item.optString("role")) && !item.optBoolean("streaming", false)
+                    && !item.optBoolean("incomplete", false) && !text.trim().isEmpty()) {
+                out.question = lastQuestion; out.answer = text; out.turnId = item.optString("turnId", null); answered = true;
+            }
+        }
+        return answered ? out : null;
+    }
+
+    /** After a turn completes: names the session while its title is still automatic (default or placeholder). */
+    private void autoTitle(String sessionId) {
+        try {
+            ChatDatabase.Session s = db.getSession(sessionId);
+            if (!SessionTitles.automatic || s == null || !"completed".equals(s.state) || namedSessions.contains(sessionId)) return;
+            Exchange exchange = latestExchange(db.timeline(sessionId));
+            if (exchange == null || !SessionTitles.isAutomatic(s.title, exchange.firstQuestion)) return;
+            nameSession(null, sessionId, s.title, exchange);
+        } catch (Exception ignored) { /* naming is best effort; the placeholder stays */ }
+    }
+
+    /** "重新命名（自动）": names the session now from its latest exchange, unless the title changes meanwhile. */
+    private void autoTitleNow(String requestId, String sessionId) throws Exception {
+        ChatDatabase.Session s = db.getSession(sessionId); if (s == null) throw new IllegalArgumentException("会话不存在");
+        Exchange exchange = latestExchange(db.timeline(sessionId));
+        if (exchange == null) throw new IllegalStateException("还没有完成的回答，无法生成标题");
+        nameSession(requestId, sessionId, s.title, exchange);
+    }
+
+    /**
+     * One hidden light call with the session's own model (its lowest reasoning level), off the intent worker.
+     * The title is applied only if the session still has {@code expectedTitle}; the call is recorded as a
+     * "title" stage on the answered turn and its tokens and cost are added to that turn's helper usage.
+     */
+    private void nameSession(String requestId, String sessionId, String expectedTitle, Exchange exchange) throws Exception {
+        TurnConfig c = freezeTurnConfig(sessionId);
+        ChatTransport transport = transports.forProtocol(c.provider.protocol);
+        if (transport == null) throw new IllegalStateException("不支持这个账号的协议");
+        CanonicalPrompt prompt = SessionTitles.prompt(exchange.firstQuestion, exchange.question, exchange.answer);
+        namedSessions.add(sessionId);
+        guardWorker.execute(() -> {
+            TurnUsage usage = new TurnUsage();
+            try { usage.setPricing(ModelPricing.normalize(new JSONObject(c.pricing))); } catch (Exception unpriced) { usage.setPricing(null); }
+            long startedAt = System.currentTimeMillis(), started = System.nanoTime();
+            String title = null;
+            try {
+                ModelPreflight.Output output = ModelPreflight.runLight(usage.track(transport, TurnUsage.Kind.AUXILIARY, SessionTitles.STAGE),
+                        c.provider, c.apiKey, c.model, prompt, SessionTitles.OUTPUT_CAP, SessionTitles.TIMEOUT_MS, null);
+                title = output == null ? null : SessionTitles.clean(output.text);
+            } catch (Exception ignored) { }
+            long durationMs = (System.nanoTime() - started) / 1_000_000L;
+            JSONObject delta = new JSONObject();
+            try { usage.project(delta); } catch (Exception ignored) { }
+            String failure = usage.stageFailure(SessionTitles.STAGE);
+            String named = title;
+            worker.execute(() -> {
+                boolean applied = named != null && db.replaceTitleIf(sessionId, expectedTitle, named);
+                try {
+                    JSONObject spanUsage = new JSONObject().put("calls", Math.max(1, delta.optInt("auxiliaryCallCount", 1)));
+                    if (delta.has("auxiliaryInputTokens")) spanUsage.put("inputTokens", delta.optLong("auxiliaryInputTokens"));
+                    if (delta.has("auxiliaryOutputTokens")) spanUsage.put("outputTokens", delta.optLong("auxiliaryOutputTokens"));
+                    JSONObject span = new JSONObject().put("stage", SessionTitles.STAGE).put("status", named != null ? TurnTrace.OK : TurnTrace.FAILED)
+                            .put("startedAtMs", startedAt).put("durationMs", durationMs).put("usage", spanUsage)
+                            .put("detail", new JSONObject().put("applied", applied).put("manual", requestId != null));
+                    if (named == null) span.put("reason", failure == null ? "no_title" : failure);
+                    db.addHelperToTurn(exchange.turnId, span, delta);
+                } catch (Exception ignored) { }
+                emitView();
+                if (requestId != null) result(requestId, applied, applied ? null : named == null ? "没能生成标题，请稍后再试" : "标题已被修改，未覆盖");
+            });
+        });
     }
 
     /** A turn that ended on its own (the user did not stop it) is reported to the host with its outcome. */
@@ -829,7 +949,17 @@ final class ChatCoordinator implements AutoCloseable {
             view.put("providers", config.providersView());
             java.util.List<ChatDatabase.Session> sessionRows = db.listSessions();
             ViewLookups lookups = new ViewLookups();
-            JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : sessionRows) sessions.put(sessionJson(s, false, lookups)); view.put("sessions", sessions);
+            // A session that never had a message is not listed; one with an unsent draft is listed as that draft.
+            java.util.Set<String> blanks = db.blankSessionIds();
+            JSONArray sessions = new JSONArray();
+            for (ChatDatabase.Session s : sessionRows) {
+                if (!blanks.contains(s.id)) { sessions.put(sessionJson(s, false, lookups)); continue; }
+                String draft = s.draft == null ? "" : s.draft.replaceAll("\\s+", " ").trim();
+                boolean images = s.draftMedia != null && !s.draftMedia.trim().isEmpty() && !"[]".equals(s.draftMedia.trim());
+                if (draft.isEmpty() && !images) continue;
+                sessions.put(sessionJson(s, false, lookups).put("blank", true).put("draft", draft.length() > 80 ? draft.substring(0, 80) : draft));
+            }
+            view.put("sessions", sessions);
             view.put("usageToday", usageToday(sessionRows));
             if (activeSessionId != null) {
                 ChatDatabase.Session active = db.getSession(activeSessionId);

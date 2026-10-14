@@ -74,6 +74,7 @@ public class ChatCoordinatorE2eTest {
     }
 
     @Before public void setUp() throws Exception {
+        SessionTitles.automatic = false; // naming has its own tests; here it would add a request after every turn
         RuntimeEnvironment.getApplication().deleteDatabase(ChatDatabase.FILE_NAME);
         server = new MockWebServer();
         server.setDispatcher(new Dispatcher() {
@@ -94,7 +95,7 @@ public class ChatCoordinatorE2eTest {
         post("context.mode.default.set", new JSONObject().put("mode", ContextMode.MINIMAL));
     }
 
-    @After public void tearDown() throws Exception {
+    @After public void tearDown() throws Exception { SessionTitles.automatic = true;
         if (coordinator != null) coordinator.close();
         try { server.shutdown(); } catch (java.io.IOException ignored) { }
     }
@@ -1037,6 +1038,8 @@ public class ChatCoordinatorE2eTest {
     @Test public void sessionRenameIsDurableAndVisibleAfterNavigation() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "hello"));
+        await("turn completed", () -> "completed".equals(app.database().getSession(sessionId).state));
         post("chat.session.rename", new JSONObject().put("localSessionId", sessionId).put("title", "新的会话名称"));
         await("renamed title persisted", () -> "新的会话名称".equals(app.database().getSession(sessionId).title));
         await("renamed title projected to the active conversation", () -> {
@@ -1315,7 +1318,8 @@ public class ChatCoordinatorE2eTest {
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
         await("second conversation opens while first remains running", () -> {
             JSONObject view = latestView();
-            return view != null && view.optJSONArray("sessions").length() == 2
+            // The new Chat is blank, so only the running one is listed until it gets a message.
+            return view != null && view.optJSONArray("sessions").length() == 1
                     && !runningId.equals(view.optString("activeLocalSessionId"));
         });
         post("appearance.set", new JSONObject().put("theme", "dark"));
@@ -1990,6 +1994,7 @@ public class ChatCoordinatorE2eTest {
         provider.dialect = RouteDialect.parse(OpenAiCompatibleTransport.CHAT_COMPLETIONS, new JSONObject().put("maxConcurrent", 1));
         saveDeployment(provider);
         String first = createSession();
+        post("chat.session.saveDraft", new JSONObject().put("localSessionId", first).put("text", "kept")); // a blank Chat with a draft is not dropped
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
         await("second session created", () -> !first.equals(latestView().optString("activeLocalSessionId")));
         String second = latestView().optString("activeLocalSessionId");
@@ -2021,6 +2026,7 @@ public class ChatCoordinatorE2eTest {
         provider.dialect = RouteDialect.parse(OpenAiCompatibleTransport.CHAT_COMPLETIONS, new JSONObject().put("maxConcurrent", 1));
         saveDeployment(provider);
         String first = createSession();
+        post("chat.session.saveDraft", new JSONObject().put("localSessionId", first).put("text", "kept")); // a blank Chat with a draft is not dropped
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
         await("second session created", () -> !first.equals(latestView().optString("activeLocalSessionId")));
         String second = latestView().optString("activeLocalSessionId");
@@ -2222,5 +2228,87 @@ public class ChatCoordinatorE2eTest {
         JSONObject live = awaitResult(post("stats.get", new JSONObject().put("days", 7).put("groupBy", "model").put("includeArchived", false))).getJSONObject("data");
         assertEquals(1, live.getJSONArray("rows").getJSONObject(0).getInt("turns"));
         assertEquals(0, live.getJSONArray("rows").getJSONObject(0).getInt("archived"));
+    }
+
+    @Test public void aNewChatIsListedOnlyOnceItHasAMessageOrADraftAndUnusedOnesDoNotPileUp() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String first = createSession();
+        assertEquals("a blank Chat is not listed", 0, latestView().optJSONArray("sessions").length());
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
+        await("second new Chat active", () -> !first.equals(latestView().optString("activeLocalSessionId")));
+        String second = latestView().optString("activeLocalSessionId");
+        assertNull("the unused blank Chat was replaced, not kept", app.database().getSession(first));
+        assertEquals(1, app.database().listSessions().size());
+
+        post("chat.session.saveDraft", new JSONObject().put("localSessionId", second).put("text", "half a thought"));
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
+        await("third new Chat active", () -> { String id = latestView().optString("activeLocalSessionId"); return !id.isEmpty() && !second.equals(id); });
+        String third = latestView().optString("activeLocalSessionId");
+        JSONArray listed = latestView().optJSONArray("sessions");
+        assertEquals("a blank Chat with an unsent draft stays, listed as that draft", 1, listed.length());
+        assertEquals(second, listed.getJSONObject(0).optString("localSessionId"));
+        assertTrue(listed.getJSONObject(0).optBoolean("blank"));
+        assertEquals("half a thought", listed.getJSONObject(0).optString("draft"));
+
+        post("chat.session.open", new JSONObject().put("localSessionId", second));
+        await("draft Chat opened", () -> second.equals(latestView().optString("activeLocalSessionId")));
+        assertNull("leaving an unused blank Chat deletes it", app.database().getSession(third));
+    }
+
+    @Test public void theFirstMessageTitlesTheChatAndTheFirstAnswerRenamesItOnce() throws Exception {
+        SessionTitles.automatic = true;
+        AtomicInteger namingCalls = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("You name chat conversations")) { namingCalls.incrementAndGet(); return completion("标题：“天空为何是蓝色”。", 30, 6); }
+                return completion("Rayleigh scattering.", 12, 4);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        assertEquals(SessionTitles.DEFAULT_TITLE, app.database().getSession(sessionId).title);
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "为什么天空是蓝色的？请从光的散射讲起，越详细越好"));
+        await("named by the model", () -> "天空为何是蓝色".equals(app.database().getSession(sessionId).title));
+        assertEquals(1, namingCalls.get());
+        await("the list shows the new title", () -> "天空为何是蓝色".equals(latestView().optJSONArray("sessions").optJSONObject(0).optString("title")));
+
+        String turnId = app.database().timeline(sessionId).getJSONObject(1).optString("turnId");
+        JSONObject trace = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data");
+        JSONObject span = null;
+        for (int i = 0; i < trace.getJSONArray("spans").length(); i++) if (SessionTitles.STAGE.equals(trace.getJSONArray("spans").getJSONObject(i).optString("stage"))) span = trace.getJSONArray("spans").getJSONObject(i);
+        assertNotNull("the naming call is a stage of the turn it named", span);
+        assertTrue(span.getJSONObject("detail").optBoolean("applied"));
+        assertEquals(36, span.getJSONObject("usage").optInt("inputTokens") + span.getJSONObject("usage").optInt("outputTokens"));
+        assertTrue("its tokens count as helper usage of the turn", trace.getJSONObject("usage").optInt("auxiliaryOutputTokens") >= 6);
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "再说说日落"));
+        await("second turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 4);
+        Thread.sleep(300);
+        assertEquals("a model-written title is not automatic any more", 1, namingCalls.get());
+    }
+
+    @Test public void aRenameMadeWhileNamingRunsIsNotOverwrittenButRenamingOnRequestIs() throws Exception {
+        SessionTitles.automatic = true;
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("You name chat conversations")) return completion("模型起的标题", 30, 6).setBodyDelay(800, TimeUnit.MILLISECONDS);
+                return completion("answer", 12, 4);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "hello there"));
+        await("placeholder title", () -> "hello there".equals(app.database().getSession(sessionId).title));
+        await("turn completed", () -> "completed".equals(app.database().getSession(sessionId).state));
+        post("chat.session.rename", new JSONObject().put("localSessionId", sessionId).put("title", "我的标题"));
+        String turnId = app.database().timeline(sessionId).getJSONObject(1).optString("turnId");
+        await("naming finished", () -> app.database().turnTrace(sessionId, turnId).toString().contains("\"stage\":\"title\""));
+        assertEquals("the user's rename wins", "我的标题", app.database().getSession(sessionId).title);
+
+        JSONObject manual = awaitResult(post("chat.session.title.auto", new JSONObject().put("localSessionId", sessionId)));
+        assertTrue(manual.toString(), manual.optBoolean("ok"));
+        assertEquals("asking for a title replaces it", "模型起的标题", app.database().getSession(sessionId).title);
     }
 }

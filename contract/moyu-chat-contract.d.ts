@@ -32,6 +32,12 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.create', { providerId: string; modelProfileId?: string; model?: string; reasoningEffort?: string; contextMode?: ContextMode; webMode?: WebMode; title?: string }>
   | UiIntent<'chat.session.open', { localSessionId: string }>
   | UiIntent<'chat.session.rename', { localSessionId: string; title: string }>
+  /**
+   * Name the session now from its latest exchange with its own model (hidden light call, recorded as a "title" stage
+   * on that turn). Result ok = the title was replaced. Automatic naming runs on its own after the first answer while
+   * the title is still the default or the first-message placeholder; a user's rename is never overwritten.
+   */
+  | UiIntent<'chat.session.title.auto', { localSessionId: string }>
   | UiIntent<'chat.session.model.set', { localSessionId: string; modelProfileId: string }>
   | UiIntent<'chat.session.reasoning.set', { localSessionId: string; reasoningEffort: string }>
   | UiIntent<'chat.session.web.set', { localSessionId: string; webMode: WebMode }>
@@ -325,6 +331,12 @@ export interface VerificationView {
 export interface SessionView {
   localSessionId: string;
   title: string;
+  /**
+   * List rows only: a session that never had a message. Such sessions are listed only while they hold an unsent
+   * draft (`draft`, ≤ 80 chars); unused ones are deleted when left or on start, and "new Chat" replaces them.
+   */
+  blank?: boolean;
+  draft?: string;
   providerId: string;
   providerName: string;
   modelProfileId?: string;

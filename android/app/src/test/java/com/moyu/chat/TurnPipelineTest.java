@@ -38,6 +38,7 @@ public class TurnPipelineTest {
     private int requestId;
 
     @Before public void setUp() throws Exception {
+        SessionTitles.automatic = false; // naming has its own tests; here it would add a request after every turn
         RuntimeEnvironment.getApplication().deleteDatabase(ChatDatabase.FILE_NAME);
         server = new MockWebServer(); server.start();
         app = (MoyuChatApplication) RuntimeEnvironment.getApplication();
@@ -51,7 +52,7 @@ public class TurnPipelineTest {
         post("app.ready", new JSONObject());
     }
 
-    @After public void tearDown() throws Exception { if (coordinator != null) coordinator.close(); server.shutdown(); }
+    @After public void tearDown() throws Exception { SessionTitles.automatic = true; if (coordinator != null) coordinator.close(); server.shutdown(); }
 
     private void post(String type, JSONObject payload) throws Exception {
         coordinator.postIntent(new JSONObject().put("version", 1).put("type", type).put("requestId", "r" + (++requestId)).put("payload", payload).toString());

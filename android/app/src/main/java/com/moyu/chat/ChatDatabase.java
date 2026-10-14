@@ -351,7 +351,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
         s.reasoningEffort = ReasoningPolicy.normalizeEffort(reasoningEffort == null ? ReasoningPolicy.DEFAULT : reasoningEffort);
         if (!ReasoningPolicy.allows(s.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("这个会话的模型不支持所选推理深度");
-        s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim();
+        s.title = title == null || title.trim().isEmpty() ? SessionTitles.DEFAULT_TITLE : title.trim();
         s.state = "idle";
         s.updatedAt = Instant.now().toString();
         s.createdAt = s.updatedAt;
@@ -388,7 +388,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.subagentMode = HarnessPolicyResolver.normalizeSubagentMode(source.subagentMode);
         s.reasoningLevels = ReasoningPolicy.normalizeLevels(source.reasoningLevels);
         s.reasoningEffort = source.reasoningEffort == null ? ReasoningPolicy.DEFAULT : source.reasoningEffort;
-        s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.createdAt = s.updatedAt; s.draft = ""; s.draftMedia = "[]";
+        s.title = title == null || title.trim().isEmpty() ? SessionTitles.DEFAULT_TITLE : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.createdAt = s.updatedAt; s.draft = ""; s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId;
         s.contextMode = ContextMode.normalize(source.contextMode);
         s.taskProfile = source.taskProfile == null ? "" : source.taskProfile;
@@ -567,6 +567,67 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             JSONArray array = (JSONArray) value;
             for (int i = 0; i < array.length(); i++) collectMediaIds(array.opt(i), out);
         }
+    }
+
+    /** Replaces the title only while it still equals {@code expected} (automatic titles never overwrite a rename); true when replaced. */
+    public synchronized boolean replaceTitleIf(String id, String expected, String title) {
+        if (id == null || expected == null || title == null || title.trim().isEmpty()) return false;
+        ContentValues v = new ContentValues(); v.put("title", title.trim());
+        return getWritableDatabase().update("sessions", v, "local_id=? AND title=?", new String[]{id, expected}) == 1;
+    }
+
+    /** Sessions that never had a message: no timeline row and no inherited branch history. */
+    public synchronized java.util.Set<String> blankSessionIds() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT local_id FROM sessions s WHERE origin_snapshot_id IS NULL"
+                + " AND NOT EXISTS (SELECT 1 FROM timeline t WHERE t.session_id=s.local_id)", null)) {
+            while (c.moveToNext()) out.add(c.getString(0));
+        }
+        return out;
+    }
+
+    /**
+     * Adds a helper call made after the turn finished (session naming) to that turn: one more stage span, and its
+     * calls, tokens and cost added to the stored usage. {@code delta} is the helper's own TurnUsage projection.
+     */
+    public synchronized void addHelperToTurn(String turnId, JSONObject span, JSONObject delta) {
+        if (turnId == null || span == null) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            JSONObject usage;
+            int ordinal;
+            try (Cursor c = db.rawQuery("SELECT usage,(SELECT COALESCE(MAX(ordinal),-1)+1 FROM turn_spans WHERE turn_id=?) FROM turns WHERE turn_id=?", new String[]{turnId, turnId})) {
+                if (!c.moveToFirst()) { db.setTransactionSuccessful(); return; }
+                usage = new JSONObject(c.getString(0)); ordinal = c.getInt(1);
+            }
+            if (delta != null) {
+                for (String key : new String[]{"auxiliaryInputTokens", "auxiliaryOutputTokens", "totalInputTokens", "totalOutputTokens", "modelCallCount", "auxiliaryCallCount"}) {
+                    if (delta.has(key)) usage.put(key, usage.optLong(key, 0L) + delta.optLong(key, 0L));
+                }
+                if (delta.optBoolean("usageIncomplete", false)) usage.put("usageIncomplete", true);
+                JSONObject cost = usage.optJSONObject("cost"), add = delta.optJSONObject("cost");
+                if (cost != null && add != null && cost.optString("currency").equals(add.optString("currency"))) {
+                    cost.put("amount", cost.optDouble("amount", 0d) + add.optDouble("amount", 0d));
+                    if (add.optBoolean("partial", false)) cost.put("partial", true);
+                }
+            }
+            ContentValues turn = new ContentValues(); turn.put("usage", usage.toString());
+            db.update("turns", turn, "turn_id=?", new String[]{turnId});
+            JSONObject spanUsage = span.optJSONObject("usage");
+            ContentValues row = new ContentValues();
+            row.put("turn_id", turnId); row.put("ordinal", ordinal); row.put("stage", span.optString("stage", ""));
+            row.put("status", span.optString("status", "")); row.put("started_at_ms", span.optLong("startedAtMs", 0L));
+            row.put("duration_ms", span.optLong("durationMs", -1L)); row.put("reason", span.optString("reason", ""));
+            row.put("calls", spanUsage == null ? 0 : spanUsage.optInt("calls", 0));
+            if (spanUsage != null && spanUsage.has("inputTokens")) row.put("input_tokens", spanUsage.optLong("inputTokens"));
+            if (spanUsage != null && spanUsage.has("outputTokens")) row.put("output_tokens", spanUsage.optLong("outputTokens"));
+            JSONObject detail = span.optJSONObject("detail");
+            row.put("detail", detail == null ? "{}" : detail.toString());
+            db.insertWithOnConflict("turn_spans", null, row, SQLiteDatabase.CONFLICT_ABORT);
+            db.setTransactionSuccessful();
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
+        finally { db.endTransaction(); }
     }
 
     public synchronized void renameSession(String id, String title) {

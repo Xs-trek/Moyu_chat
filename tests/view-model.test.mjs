@@ -119,3 +119,18 @@ test('statistics show archived turns and helper-switch groups', () => {
   assert.equal(off.title, 'M · 已关闭：路由、联网规划');
   assert.equal(off.cells[0][1], '1');
 });
+
+test('a never-sent Chat is listed by its draft; the naming stage is a helper', () => {
+  assert.equal(vm.sessionTitle({ blank: true, draft: '半句话', title: '新 Chat' }), '草稿：半句话');
+  assert.equal(vm.sessionTitle({ blank: true, draft: '' }), '草稿：图片');
+  assert.equal(vm.sessionTitle({ title: '天空为何是蓝色' }), '天空为何是蓝色');
+  const view = vm.traceView({ status: 'ok', config: {}, spans: [
+    { stage: 'generate', status: 'ok', durationMs: 900, usage: { calls: 1, inputTokens: 90, outputTokens: 10 } },
+    { stage: 'title', status: 'ok', durationMs: 300, usage: { calls: 1, inputTokens: 30, outputTokens: 6 }, detail: { applied: true, manual: false } },
+    { stage: 'title', status: 'failed', durationMs: 200, reason: 'no_title' },
+  ] });
+  assert.equal(view.rows[1].label, '命名');
+  assert.equal(view.rows[1].note, '已更新会话标题');
+  assert.equal(view.rows[2].note, '没有给出可用的标题');
+  assert.equal(Math.round(view.helperShare * 1000), Math.round((36 / 136) * 1000));
+});

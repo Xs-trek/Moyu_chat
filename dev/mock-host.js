@@ -78,12 +78,20 @@ function detail(s) {
   };
 }
 
+const blank = (x) => !x.origin && !(x.messages || []).length;
+const PLACEHOLDER_CHARS = 20;
+const placeholderTitle = (text) => { const line = String(text || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || ''; return line.length > PLACEHOLDER_CHARS ? `${line.slice(0, PLACEHOLDER_CHARS)}…` : line; };
+/** Leaving an unused blank Chat (no message, empty composer) deletes it, as the native side does. */
+function dropBlank(keep) { world.sessions = world.sessions.filter((x) => x.localSessionId === keep || !blank(x) || String(x.composerDraft || '').trim() || busy(x)); }
+
 function emitView() {
   const s = active();
   const resolved = world.theme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : world.theme;
   dispatch({ version: 1, type: 'view.full', revision: ++revision, view: {
     route: world.route, now: now(), appearance: { theme: world.theme, resolvedTheme: resolved, tone: world.tone, delight: world.delight }, providers: world.providers, usageToday: usageToday(),
-    sessions: [...world.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((x) => ({ ...summary(x), state: busy(x) ? 'running' : x.state })),
+    // Mirrors ChatCoordinator: a Chat that never had a message is listed only while it holds an unsent draft.
+    sessions: [...world.sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).filter((x) => !blank(x) || String(x.composerDraft || '').trim())
+      .map((x) => ({ ...summary(x), state: busy(x) ? 'running' : x.state, ...(blank(x) ? { blank: true, draft: String(x.composerDraft).trim().slice(0, 80) } : {}) })),
     activeLocalSessionId: world.activeSessionId, activeSession: s ? detail(s) : undefined, ui: world.ui,
   } });
 }
@@ -267,6 +275,8 @@ function finish(s, reply, { web = false, error = false, interrupted = false } = 
   if (error) s.messages.push({ localSeq: nextSeq(s), kind: 'error', code: 'provider.stream_reset', summary: '模拟错误：流在输出中途被服务端重置。', createdAt: now() });
   s.state = error ? 'failed' : 'completed';
   s.preview = reply.text.slice(0, 60);
+  const firstQuestion = s.messages.find((m) => m.role === 'user')?.text;
+  if (!error && !interrupted && (s.title === '新 Chat' || s.title === placeholderTitle(firstQuestion))) setTimeout(() => { s.title = `${placeholderTitle(firstQuestion).slice(0, 8)}（已命名）`; emitView(); }, 900);
   if (reply.rerunOf) {
     const group = mockAnswers(reply.turnId);
     for (const answer of group.answers) for (const x of world.sessions) for (const m of x.messages) if (m.turnId === answer.turnId) m.answers = group.answers.length;
@@ -295,13 +305,14 @@ function handle(type, p) {
     case 'context.mode.default.set': world.ui.defaultContextMode = p.mode; break;
     case 'web.mode.default.set': world.ui.defaultWebMode = p.mode; break;
     case 'subagent.standard.default.set': world.ui.standardSubagentMode = p.mode; break;
-    case 'chat.session.open': world.activeSessionId = p.localSessionId; world.route = 'conversation'; break;
+    case 'chat.session.open': world.activeSessionId = p.localSessionId; world.route = 'conversation'; dropBlank(p.localSessionId); break;
     case 'chat.session.create': {
+      dropBlank(null);
       const id = `s-${Date.now()}`;
       const provider = world.providers.find((x) => x.providerId === p.providerId);
       const m = provider?.models.find((x) => x.modelProfileId === p.modelProfileId) || provider?.models[0];
       const base = world.sessions[0] || {};
-      world.sessions.unshift({ ...base, localSessionId: id, title: '新会话', providerId: provider.providerId, providerName: provider.displayName, modelProfileId: m.modelProfileId, model: m.modelId,
+      world.sessions.unshift({ ...base, localSessionId: id, title: '新 Chat', providerId: provider.providerId, providerName: provider.displayName, modelProfileId: m.modelProfileId, model: m.modelId,
         modelName: m.displayName, reasoningLevels: m.reasoningLevels, reasoningEffort: 'default', inputModalities: m.inputModalities, contextMode: p.contextMode || 'standard',
         effectiveContextMode: p.contextMode || 'standard', webMode: p.webMode || 'auto', state: 'idle', origin: undefined, preview: '', messages: [], composerDraft: '', draftMedia: [], updatedAt: now() });
       world.activeSessionId = id; world.route = 'conversation'; break;
@@ -316,7 +327,7 @@ function handle(type, p) {
     case 'chat.session.reasoning.set': if (s) s.reasoningEffort = p.reasoningEffort; break;
     case 'chat.session.web.set': if (s) s.webMode = p.webMode; break;
     case 'chat.session.saveDraft': if (s) s.composerDraft = p.text; return; // native does not re-emit for drafts
-    case 'chat.session.send': if (s) { if (p.reasoningEffort) s.reasoningEffort = p.reasoningEffort; startStream(s, p.text); } return;
+    case 'chat.session.send': if (s) { if (p.reasoningEffort) s.reasoningEffort = p.reasoningEffort; if (s.title === '新 Chat' && placeholderTitle(p.text)) s.title = placeholderTitle(p.text); startStream(s, p.text); } return;
     case 'chat.turn.retry': {
       const seq = s && retrySeq(s.messages);
       const question = seq && s.messages.find((x) => x.localSeq === seq);
@@ -357,6 +368,11 @@ window.MoyuHost = {
         try { const data = EDITOR_INTENTS[message.type](message.payload || {}); emitView(); result(message.requestId, true, '', data); }
         catch (error) { result(message.requestId, false, error.message); }
       }, 160);
+      return;
+    }
+    if (message.type === 'chat.session.title.auto') {
+      const s = findSession(message.payload?.localSessionId);
+      setTimeout(() => { s.title = `模拟标题 ${Math.floor(Math.random() * 90 + 10)}`; emitView(); result(message.requestId, true, ''); }, 700);
       return;
     }
     if (message.type === 'turn.rerun') {

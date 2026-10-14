@@ -127,6 +127,12 @@ export function messageTime(value, now = new Date()) {
   return date.getFullYear() === now.getFullYear() ? day : `${date.getFullYear()}年${day}`;
 }
 
+/** List title: a Chat that never had a message shows its unsent draft. */
+export function sessionTitle(session) {
+  if (session?.blank) return `草稿：${String(session.draft || '').trim() || '图片'}`;
+  return session?.title || '新会话';
+}
+
 /** One plain line for the session list: Markdown marks dropped, whitespace collapsed. */
 export function sessionPreview(session) {
   const text = String(session?.preview || '')
@@ -272,16 +278,16 @@ export function compact(n) {
 export function full(n) { return n === null || n === undefined ? '—' : Math.round(n).toLocaleString(); }
 export function secs(ms) { return ms === null || ms === undefined ? '—' : `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)}s`; }
 
-const STAGE_LABELS = { accept: '接收', context: '上下文', route: '路由', checkpoint: '压缩', web_plan: '联网规划', tools: '工具选择', web_retrieve: '联网检索', generate: '生成', verify: '校验', repair: '修正', subagent: '子任务' };
+const STAGE_LABELS = { accept: '接收', context: '上下文', route: '路由', checkpoint: '压缩', web_plan: '联网规划', tools: '工具选择', web_retrieve: '联网检索', generate: '生成', verify: '校验', repair: '修正', subagent: '子任务', title: '命名' };
 const STATUS_LABELS = { ok: '完成', skipped: '跳过', failed: '失败', cancelled: '已停止', open: '未结束' };
 const SKIP_REASONS = { mode_off: '当前模式未启用', task_profile_cached: '沿用本会话的路由结果', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验', user_off: '已在设置中关闭' };
 const WEB_EXECUTION = { host: '本机检索', provider: '模型侧联网', client_tools: '工具调用联网', none: '不联网' };
 const VERDICTS = { pass: '通过', fail: '不通过', partial: '部分通过' };
 const ACTIONS = { accept: '采纳', repair: '需修正', abstain: '存疑' };
 /** Stages that exist only to help the main call; their share of tokens is what "is this helper still worth it" weighs. */
-const HELPER_STAGES = new Set(['route', 'checkpoint', 'web_plan', 'verify', 'repair', 'subagent']);
+const HELPER_STAGES = new Set(['route', 'checkpoint', 'web_plan', 'verify', 'repair', 'subagent', 'title']);
 
-const CALL_FAILURES = { timeout: '调用超时', cancelled: '调用被停止', response_incomplete: '输出达到上限', empty_stream: '没有返回内容', network_error: '网络错误', stream_timeout: '流中断' };
+const CALL_FAILURES = { timeout: '调用超时', cancelled: '调用被停止', response_incomplete: '输出达到上限', empty_stream: '没有返回内容', network_error: '网络错误', stream_timeout: '流中断', no_title: '没有给出可用的标题' };
 
 /** Why a helper's model call failed, as shown after the stage note. */
 export function callFailureLabel(code) {
@@ -338,6 +344,7 @@ function stageSummary(span) {
     case 'generate': return `${d.rounds ?? 1} 轮${d.clientToolBatches ? ` · 工具 ${d.clientToolBatches} 次` : ''}${d.subagents ? ` · 子任务 ${d.subagents}` : ''}`;
     case 'verify': return [VERDICTS[d.verdict] || d.status || '', Number.isFinite(d.risk) ? `风险 ${Number(d.risk).toFixed(2)}` : '', d.repaired ? '已修正' : ACTIONS[d.action] || ''].filter(Boolean).join(' · ');
     case 'repair': return d.repaired ? '已改写回答' : '没有产出修正';
+    case 'title': return `${d.manual ? '手动 · ' : ''}${d.applied ? '已更新会话标题' : '标题已被修改，未覆盖'}`;
     default: return '';
   }
 }
@@ -357,7 +364,7 @@ export function traceView(trace) {
     const tokens = usage ? (count(usage.inputTokens) || 0) + (count(usage.outputTokens) || 0) : 0;
     if (HELPER_STAGES.has(span.stage)) helperTokens += tokens; else mainTokens += tokens;
     const note = span.status === 'skipped' ? (SKIP_REASONS[span.reason] || span.reason || '')
-      : span.status === 'ok' ? stageNote(span) : (span.reason || '');
+      : span.status === 'ok' ? stageNote(span) : (span.reason ? failureCodeLabel(span.reason) : '');
     const calls = usage?.calls || 0;
     return {
       stage: span.stage,

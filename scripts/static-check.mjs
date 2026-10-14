@@ -504,4 +504,10 @@ if (!gradle.includes("applicationId 'com.moyu.chat.beta'")) fail('beta line must
 if (!mainUi.includes(`uiVersion: '${VERSION_NAME}'`)) fail(`WebView app.ready version must match v${VERSION_NAME}`);
 
 if (failed) process.exit(1);
+// Automatic session titles never overwrite a rename (compare-and-set on the title they expect), run off the intent
+// worker as a light helper call recorded on the turn, and unused blank Chats are dropped rather than listed.
+if (!coordinatorOnly.includes('db.replaceTitleIf(sessionId, expectedTitle, named)') || !coordinatorOnly.includes('db.replaceTitleIf(sessionId, SessionTitles.DEFAULT_TITLE, placeholder)')
+    || !coordinatorOnly.includes('ModelPreflight.runLight(usage.track(transport, TurnUsage.Kind.AUXILIARY, SessionTitles.STAGE)') || !coordinatorOnly.includes('db.addHelperToTurn(exchange.turnId, span, delta)'))
+  fail('automatic titles must compare-and-set the title and record the naming call as a helper stage of the named turn');
+if (!coordinatorOnly.includes('dropBlankSessions(null); // a new Chat replaces') || !coordinatorOnly.includes('if (draft.isEmpty() && !images) continue;')) fail('blank Chats must be replaced by a new Chat and listed only with an unsent draft');
 console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);
