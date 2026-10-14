@@ -1,78 +1,139 @@
-// Moyu's pixel fish. One shared SVG sprite (≈30 rects) is injected once; every fish is three <use>
-// references plus a few accessory nodes. Poses are CSS classes animating transform/opacity only, so a
-// pose change never rebuilds DOM and a looping pose costs a handful of compositor frames per second.
+// Moyu's pixel fish on the page. The art and the pose table live in src/mascot-sprite.js; here a fish is a small
+// SVG that shows one frame of a pose strip, and a pose plays as a single Web Animation stepping the strip by whole
+// frames (transform only, compositor-driven, no JS loop).
+//
+// A fish has a base pose (`data-base`, set by the renderer and kept in sync by morph) and may play a one-shot
+// reaction on top (react / hold); when the reaction ends it returns to whatever the base is by then. Playback state
+// lives in JS properties, not attributes, so a morph never interrupts it. With delights off, the system "remove
+// animations" setting, or `data-static`, a fish shows the first frame of its pose and never moves.
 import { h, svg } from './dom.js';
+import { buildStrip, CORE, H, POSES, poseDuration, W } from './mascot-sprite.js';
 
-// 16×9 grid. a body, b belly, f fin, t tail (own group, wags), e eye (own group, blinks).
-const MAP = [
-  '.....ffff.......',
-  '....aaaaaaa.....',
-  't..aaaaaaaaaa...',
-  'tt.aaaaaaaeaaa..',
-  'ttaaaaaaaaaaaaa.',
-  'ttaabbbbbbbbbaa.',
-  'tt.abbbbbbbbba..',
-  't...abbbbbbba...',
-  '......ff........',
-];
-const FILL = { a: 'var(--fish)', b: 'var(--fish-belly)', f: 'var(--fish-fin)', t: 'var(--fish-fin)', e: 'var(--fish-eye)' };
-const GROUP = { a: 'body', b: 'body', f: 'body', t: 'tail', e: 'eye' };
-export const POSES = ['idle', 'think', 'search', 'write', 'verify', 'done', 'fail', 'cut', 'sleep', 'still', 'flip'];
+export { POSES };
 
-function ensureSprite() {
-  if (document.getElementById('moyu-fish-sprite')) return;
-  const groups = { body: [], tail: [], eye: [] };
-  MAP.forEach((row, y) => {
-    let x = 0;
-    while (x < row.length) {
-      const c = row[x];
-      let end = x + 1;
-      while (end < row.length && row[end] === c) end += 1;
-      if (c !== '.') groups[GROUP[c]].push(svg('rect', { x, y, width: end - x, height: 1, fill: FILL[c] }));
-      x = end;
-    }
-  });
-  const hat = [svg('rect', { x: 5, y: -1, width: 5, height: 1, fill: '#c8372d' }), svg('rect', { x: 6, y: -2, width: 3, height: 1, fill: '#c8372d' }), svg('rect', { x: 7, y: -3, width: 1, height: 1, fill: '#f2c94c' })];
-  const sprite = svg('svg', { id: 'moyu-fish-sprite', width: 0, height: 0, 'aria-hidden': 'true', class: 'sprite-defs' },
-    svg('symbol', { id: 'moyu-fish-body', viewBox: '0 0 16 9', overflow: 'visible' }, groups.body),
-    svg('symbol', { id: 'moyu-fish-tail', viewBox: '0 0 16 9', overflow: 'visible' }, groups.tail),
-    svg('symbol', { id: 'moyu-fish-eye', viewBox: '0 0 16 9', overflow: 'visible' }, groups.eye),
-    svg('symbol', { id: 'moyu-fish-xeye', viewBox: '0 0 16 9', overflow: 'visible' }, svg('path', { d: 'M9.6 2.6l1.8 1.8M11.4 2.6l-1.8 1.8', stroke: 'var(--fish-eye)', 'stroke-width': '.6' })),
-    svg('symbol', { id: 'moyu-fish-hat', viewBox: '0 0 16 9', overflow: 'visible' }, hat));
-  document.body.append(sprite);
+let defs = null;
+function stripId(pose, season) {
+  const id = `moyu-strip-${pose}${season ? `-${season}` : ''}`;
+  if (!defs || !defs.isConnected) {
+    defs = svg('defs');
+    document.body.append(svg('svg', { id: 'moyu-fish-sprite', class: 'sprite-defs', width: 0, height: 0, 'aria-hidden': 'true' }, defs));
+  }
+  if (!document.getElementById(id)) defs.append(buildStrip(pose, season, id));
+  return id;
 }
 
-function use(id, cls) { return svg('use', { href: `#${id}`, class: cls, width: 16, height: 9 }); }
+const known = (pose) => (Object.prototype.hasOwnProperty.call(POSES, pose) ? pose : 'idle');
+const reduced = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
+/** Whether this fish may animate at all. */
+export function moving(node) { return document.documentElement.dataset.delight !== 'off' && !reduced() && !node?.dataset.static; }
 
-/** A fish element. size: 'sm' (status lines), 'md', 'lg' (empty states). */
+/**
+ * A fish element. size: 'xs' (inline in list rows), 'sm' (perch, cards), 'md', 'lg' (empty pages).
+ * extra: dataset fields, e.g. { role: 'perch' } (the director finds fish by role) or { static: '1' }.
+ */
 export function fish(pose = 'idle', size = 'sm', extra = {}) {
-  ensureSprite();
-  const season = seasonal(new Date());
-  const art = svg('svg', { viewBox: '0 0 16 9', class: 'fish-art', 'aria-hidden': 'true' },
-    use('moyu-fish-body', 'fish-body'), use('moyu-fish-tail', 'fish-tail'), use('moyu-fish-eye', 'fish-eye'), use('moyu-fish-xeye', 'fish-xeye'),
-    season === 'cny' ? use('moyu-fish-hat', 'fish-hat') : null);
-  const node = h('span', { class: `fish ${size}`, dataset: { pose: POSES.includes(pose) ? pose : 'idle', ...extra } },
-    art,
-    h('span', { class: 'fish-acc fish-bubbles', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-    h('span', { class: 'fish-acc fish-drops', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-    h('span', { class: 'fish-acc fish-zzz', 'aria-hidden': 'true' }, h('i', { text: 'z' }), h('i', { text: 'z' })),
-    h('span', { class: 'fish-acc fish-lens', 'aria-hidden': 'true' }),
-    h('span', { class: 'fish-acc fish-glasses', 'aria-hidden': 'true' }),
-    season === 'moon' ? h('span', { class: 'fish-acc fish-moon', 'aria-hidden': 'true' }) : null);
-  return node;
+  const season = seasonal(new Date()) || '';
+  const base = known(pose);
+  return h('span', { class: `fish ${size}`, dataset: { base, season, morph: 'own', ...extra } },
+    svg('svg', { class: 'fish-art', viewBox: `${CORE.x} ${CORE.y} ${CORE.w} ${CORE.h}`, overflow: 'visible', 'aria-hidden': 'true' },
+      svg('svg', { x: 0, y: 0, width: W, height: H, overflow: 'hidden' },
+        svg('use', { class: 'fish-strip', href: `#${stripId(base, season)}` }))));
 }
 
-/** Changes pose in place; the node (and any running animation of an unchanged pose) is kept. */
+function play(node, pose, once) {
+  const id = known(pose);
+  const strip = node.querySelector('.fish-strip');
+  if (!strip) return;
+  node.__pose = id;
+  const href = `#${stripId(id, node.dataset.season || '')}`;
+  if (strip.getAttribute('href') !== href) strip.setAttribute('href', href);
+  node.__anim?.cancel();
+  node.__anim = null;
+  if (!moving(node) || typeof strip.animate !== 'function') return;
+  const frames = POSES[id].frames;
+  const total = poseDuration(id);
+  let at = 0;
+  const keyframes = frames.map((frame, k) => { const step = { offset: at / total, transform: `translateX(${-k * W}px)`, easing: 'step-end' }; at += frame.d; return step; });
+  keyframes.push({ offset: 1, transform: `translateX(${-(frames.length - 1) * W}px)` });
+  node.__anim = strip.animate(keyframes, { duration: total, iterations: POSES[id].loop && !once ? Infinity : 1, fill: 'forwards' });
+}
+
+/** Brings a fish's playback in line with its base pose, unless a reaction is showing. */
+function sync(node) {
+  if (!node.isConnected || node.__reaction) return;
+  const base = known(node.dataset.base || 'idle');
+  if (node.__pose === base && Boolean(node.__anim) === moving(node)) return;
+  play(node, base, false);
+}
+
+/** Sets the pose a fish rests in; a running reaction finishes first. */
 export function setPose(node, pose) {
-  if (node && node.dataset.pose !== pose) node.dataset.pose = POSES.includes(pose) ? pose : 'idle';
+  if (!node) return;
+  const base = known(pose);
+  if (node.dataset.base !== base) node.dataset.base = base;
+  else sync(node);
 }
 
-/** One-shot pose that falls back to a resting pose; used for "done" splashes and the poke flip. */
-export function flash(node, pose, ms = 900, rest = 'still') {
+/** Plays a one-shot pose, then returns to the base. Returns false when this fish may not move. */
+export function react(node, pose, holdMs = 0) {
+  if (!node?.isConnected || !moving(node) || !POSES[pose]) return false;
+  clearTimeout(node.__reactionTimer);
+  node.__reaction = pose;
+  play(node, pose, true);
+  const length = POSES[pose].loop ? holdMs || 2400 : Math.max(holdMs, poseDuration(pose));
+  node.__reactionTimer = setTimeout(() => release(node), length);
+  return true;
+}
+
+/** Holds a pose (looping) until release(); used for states that last, like slacking off or watching you type. */
+export function hold(node, pose) {
+  if (!node?.isConnected || !moving(node) || !POSES[pose]) return false;
+  clearTimeout(node.__reactionTimer);
+  node.__reaction = pose;
+  play(node, pose, false);
+  return true;
+}
+
+export function release(node) {
   if (!node) return;
-  setPose(node, pose);
-  clearTimeout(node.__flashTimer);
-  node.__flashTimer = setTimeout(() => { if (node.isConnected) setPose(node, rest); }, ms);
+  clearTimeout(node.__reactionTimer);
+  node.__reaction = null;
+  if (node.isConnected) play(node, node.dataset.base || 'idle', false);
+}
+
+/** What a fish is showing right now (a reaction or its base). */
+export function showing(node) { return node?.__reaction || node?.dataset.base || ''; }
+
+/** Compatibility name for one-shot reactions. */
+export function flash(node, pose) { return react(node, pose); }
+
+// New fish start playing when they are attached; a changed base (morph or setPose) or a delight / theme switch
+// re-syncs them. MutationObserver is event-driven: no polling.
+function syncAll() {
+  document.querySelectorAll('.fish').forEach((node) => {
+    if (!moving(node)) { clearTimeout(node.__reactionTimer); node.__reaction = null; }
+    node.__pose = null;
+    sync(node);
+  });
+}
+if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.documentElement) {
+  new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === 'attributes') {
+        // Re-setting an attribute to the same value (applyRoot runs on every patch) still queues a record.
+        if (record.oldValue === record.target.getAttribute(record.attributeName)) continue;
+        if (record.target === document.documentElement) { syncAll(); return; }
+        if (record.target.classList?.contains('fish')) sync(record.target);
+        continue;
+      }
+      for (const node of record.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.classList.contains('fish')) sync(node);
+        else if (node.firstElementChild) node.querySelectorAll('.fish').forEach(sync);
+      }
+    }
+  }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeOldValue: true, attributeFilter: ['data-base', 'data-delight'] });
+  window.matchMedia?.('(prefers-reduced-motion: reduce)')?.addEventListener?.('change', syncAll);
 }
 
 // Chinese New Year (eve → day 6) and Mid-Autumn (±1 day), 2026–2030.
@@ -85,6 +146,9 @@ export function seasonal(date) {
   return null;
 }
 
+/** Late night (01:00–05:00): the fish yawns at messages and the empty page tells you to sleep. */
+export function lateNight(date = new Date()) { const hour = date.getHours(); return hour >= 1 && hour < 5; }
+
 /** Greeting for an empty conversation; plain when delights are off. */
 export function greeting(date = new Date(), delight = true) {
   if (!delight) return { text: '开始新的对话', pose: 'still' };
@@ -93,6 +157,7 @@ export function greeting(date = new Date(), delight = true) {
   const season = seasonal(date);
   if (season === 'cny') return { text: '新年快乐，今年也要好好摸鱼。', pose: 'idle' };
   if (season === 'moon') return { text: '中秋快乐，月亮也在摸鱼。', pose: 'idle' };
+  if (lateNight(date)) return { text: '该睡了，明天再问也不迟。', pose: 'sleep' };
   if (hour >= 23 || hour < 5) return { text: '夜深了，小鱼先睡了。', pose: 'sleep' };
   if (day === 5 && hour >= 14) return { text: '周五下午，适合摸鱼。', pose: 'idle' };
   if (day === 1 && hour < 11) return { text: '周一早上，先喝口水。', pose: 'idle' };
@@ -104,11 +169,12 @@ export function greeting(date = new Date(), delight = true) {
 
 export const QUOTES = [
   '摸鱼不是偷懒，是给脑子换气。', '先把问题写清楚，答案就出来一半了。', '缓存命中率高的时候，我游得特别快。', '上下文太长？我帮你记着，别急。',
-  '温度 0.7，刚刚好。', 'token 是水，省着点游。', '我只有 16×9 个像素，但我很努力。', '回退不丢人，分支更优雅。', '校验通过的时候，我会盖个小印。',
+  '温度 0.7，刚刚好。', 'token 是水，省着点游。', '我是团子鱼，圆的那种。', '回退不丢人，分支更优雅。', '校验通过的时候，我会盖个小印。',
   '联网的时候我会举放大镜，看起来很专业。', '推理的时候我在吐泡泡，其实是在想事情。', '你戳我七下，我就翻个跟头。', '别看我小，我见过上百万 token。',
   '今天的鱼塘很平静。', '同一个问题换个模型问问，也许有惊喜。', '协议相同，能力未必相同。', '先跑通，再优化。', '读完再改，改完再验。',
   '深夜别写生产代码。', '多喝水，少熬夜。', '摸鱼五分钟，专注两小时。', '这个回答我也看不懂，但它看起来很自信。', '把需求拆小一点，我能游得更远。',
   '错误信息是朋友，认真读读它。', '有时候问题本身就是答案。', '保存草稿是好习惯。', '我不会联网偷看你的 API Key。', '慢一点也没关系。', '咕噜咕噜。', '……（吐了个泡泡）',
+  '慢慢摸摸我，会冒爱心。', '回答慢的时候，点点我。',
 ];
 
 let lastQuote = -1;

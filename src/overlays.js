@@ -19,10 +19,11 @@ let sheet = null;
 export function sessionItem(session, activeId) {
   const running = session.state === 'running';
   const active = session.localSessionId === activeId;
-  const preview = session.blank ? '' : vm.sessionPreview(session);
-  const title = vm.sessionTitle(session);
+  const disguised = vm.mascotState(getState().view).disguise;
+  const preview = session.blank || disguised ? '' : vm.sessionPreview(session);
+  const title = vm.sessionTitle(session, disguised);
   const meta = [];
-  if (running) meta.push(fish('write', 'sm'), h('span', { text: '生成中' }));
+  if (running) meta.push(fish('write', 'xs'), h('span', { text: '生成中' }));
   else if (session.state === 'failed') meta.push(h('span', { class: 'meta-warn', text: '失败' }));
   if (session.origin) meta.push(h('span', { class: 'meta-branch', title: `分支自 ${session.origin.sourceTitle || ''}` }, icon('branch', 'ico ico-xs'), '分支'));
   meta.push(h('span', { class: 'truncate', text: session.modelName || session.model || '' }));
@@ -58,14 +59,16 @@ export function renderDrawer(view) {
   const root = document.getElementById('drawer-root');
   if (!root || !view) return;
   pruneSelection(view.sessions);
-  const signature = JSON.stringify([view.sessions, view.activeLocalSessionId, view.usageToday, view.route, view.appearance?.delight, selecting(), selectedIds()]);
+  const signature = JSON.stringify([view.sessions, view.activeLocalSessionId, view.usageToday, view.route, view.appearance?.delight, vm.mascotState(view).disguise, selecting(), selectedIds()]);
   if (signature === drawerSignature && root.firstChild) return;
   drawerSignature = signature;
   flip(drawerOpen ? root.querySelector('.drawer-list') : null, () => morphInto(root,
     h('div', { class: 'drawer-scrim', dataset: { action: 'drawer-close' } }),
     h('nav', { class: 'drawer', 'aria-label': '会话' },
       selecting() ? h('header', { class: 'drawer-head selecting' }, selectionBar(view.sessions))
-        : h('header', { class: 'drawer-head' }, fish('still', 'sm'), h('strong', { class: 'grow', text: 'Moyu Chat β' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
+        : h('header', { class: 'drawer-head' },
+          h('button', { type: 'button', class: 'drawer-fish', 'aria-label': '小鱼', dataset: { action: 'poke-drawer-fish' } }, fish('still', 'sm', { role: 'drawer' })),
+          h('strong', { class: 'grow', text: vm.mascotState(view).disguise ? '文档' : 'Moyu Chat β' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
       h('button', { type: 'button', class: 'drawer-new', dataset: { action: 'new-chat' } }, icon('plus'), '新会话'),
       todayStrip(view),
       h('div', { class: 'drawer-list' }, (view.sessions || []).length ? sessionList(view) : h('p', { class: 'drawer-empty', text: '还没有会话' })),
@@ -89,6 +92,13 @@ export function setDrawer(open) {
 
 /** items: [{ label, icon, action, data, danger, disabled, hint }]. Every item closes the sheet after dispatch. */
 export function openActions(title, items) { sheet = { kind: 'actions', title, items }; paintSheet(null); }
+let sheetCloseHook = null;
+/** A sheet with caller-built content (the waiting mini-game); onClose runs when it closes or is replaced. */
+export function openCustomSheet({ title, content, onClose = null }) {
+  sheet = { kind: 'custom', title, content };
+  paintSheet(null);
+  sheetCloseHook = onClose;
+}
 export function openTurnSettings(sessionId) { sheet = { kind: 'turn', sessionId }; paintSheet(getState().view); }
 
 let choiceHandler = null;
@@ -259,6 +269,9 @@ function payloadSheet(state) {
 let sheetCloseTimer = 0;
 export function closeSheet() {
   sheet = null;
+  const hook = sheetCloseHook;
+  sheetCloseHook = null;
+  hook?.();
   const root = document.getElementById('sheet-root');
   if (!root || !root.classList.contains('open')) return;
   root.classList.remove('open');
@@ -276,6 +289,7 @@ export function refreshSheet(view) { if (sheet?.kind === 'turn') paintSheet(view
 function paintSheet(view) {
   const root = document.getElementById('sheet-root');
   if (!root || !sheet) return;
+  if (sheet.kind !== 'custom' && sheetCloseHook) { const hook = sheetCloseHook; sheetCloseHook = null; hook(); }
   let body;
   if (sheet.kind === 'actions') {
     body = [h('h2', { class: 'sheet-title', text: sheet.title || '' }),
@@ -292,6 +306,8 @@ function paintSheet(view) {
     body = choiceSheet(sheet);
   } else if (sheet.kind === 'newchat') {
     body = newChatSheet(sheet);
+  } else if (sheet.kind === 'custom') {
+    body = [h('h2', { class: 'sheet-title', text: sheet.title }), sheet.content];
   } else if (sheet.kind === 'text') {
     const box = h('div', { class: 'answer-text markdown-body' });
     renderMarkdownInto(box, sheet.markdown || '');

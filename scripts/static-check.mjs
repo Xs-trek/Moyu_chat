@@ -334,6 +334,9 @@ const indexHtml = read('index.html');
 const morphJs = read('src/morph.js');
 const drawerGesture = read('src/drawer-gesture.js');
 const sessionSelect = read('src/session-select.js');
+const mascotSprite = read('src/mascot-sprite.js');
+const mascotDirector = read('src/mascot-director.js');
+const fishGame = read('src/fish-game.js');
 const ui = [render, overlays, viewModel, mascot, mainUi, morphJs, drawerGesture].join('\n');
 
 // Host boundary: bounded, revisioned envelopes; streaming patches merge locally.
@@ -343,7 +346,7 @@ if (!viewModel.includes('protocol ≠ capability') || !viewModel.includes('expor
 
 // Security surface of the page itself.
 if (!indexHtml.includes("default-src 'none'; script-src 'self'; style-src 'self'") || !indexHtml.includes("connect-src 'none'")) fail('index.html must keep the strict local-only CSP');
-for (const [file, text] of [['render.js', render], ['overlays.js', overlays], ['mascot.js', mascot], ['main.js', mainUi], ['dom.js', read('src/dom.js')], ['morph.js', morphJs], ['drawer-gesture.js', drawerGesture], ['session-select.js', sessionSelect]]) {
+for (const [file, text] of [['render.js', render], ['overlays.js', overlays], ['mascot.js', mascot], ['main.js', mainUi], ['dom.js', read('src/dom.js')], ['morph.js', morphJs], ['drawer-gesture.js', drawerGesture], ['session-select.js', sessionSelect], ['mascot-sprite.js', mascotSprite], ['mascot-director.js', mascotDirector], ['fish-game.js', fishGame]]) {
   if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(|outerHTML\s*=/.test(text)) fail(`src/${file}: UI must build DOM nodes, never HTML strings`);
 }
 if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(/.test(markdown) || markdown.includes("createElement('img')") || markdown.includes('createElement("img")')) fail('model Markdown must remain inert DOM text: no HTML injection or remote Markdown image creation');
@@ -390,7 +393,12 @@ if (!render.includes('reconcileTimeline(') || !render.includes('node.dataset.ite
 if (!markdown.includes('export function renderMarkdownInto') || !markdown.includes('export function stableBoundary') || !render.includes('renderMarkdownInto(body, item.text, streaming)')) fail('streaming replies must render Markdown incrementally and keep the DOM when finalized');
 for (const marker of ['md-table-wrap', 'md-code-block', 'md-task-item', 'safeHttps', 'tableDelimiter', 'renderSafeMarkdown']) if (!markdown.includes(marker)) fail(`safe GFM-style Markdown renderer missing: ${marker}`);
 if (!render.includes("// Visible output always sits below the reasoning block.") || !render.includes('if (reasoningBlockNode) reasoningBlockNode.after(body)')) fail('streaming visible output must remain below the reasoning block');
-if (!render.includes('setPose(live.querySelector') || !mascot.includes('export function setPose')) fail('the live stage mascot must change pose in place instead of being rebuilt per patch');
+// Pixel mascot: frames step by one Web Animation; no JS animation loop except the waiting game while it is open.
+for (const [file, text] of [['mascot.js', mascot], ['mascot-sprite.js', mascotSprite], ['mascot-director.js', mascotDirector]]) if (/requestAnimationFrame|setInterval\(/.test(text)) fail(`src/${file}: the mascot must not run a JS animation loop`);
+if (!mascot.includes("easing: 'step-end'") || !mascot.includes('strip.animate(keyframes')) fail('mascot poses must play as stepped Web Animations over a pre-built strip');
+if (!fishGame.includes('cancelAnimationFrame(raf)') || !mainUi.includes('onClose: () => { game?.stop(); game = null; }')) fail('the waiting game loop must stop when its sheet closes');
+if (!read('android/app/src/main/java/com/moyu/chat/MascotSettings.java').includes('default: throw new IllegalArgumentException("unsupported mascot key: " + key);') || !coordinator.includes('case "ui.mascot.set": mascot.set(')) fail('ui.mascot.set must only write its whitelisted keys');
+if (!render.includes('setPose(perch, perchBase(session))') || !render.includes("setPose(perch.querySelector('.fish'), perchBase(session))") || !mascot.includes('export function setPose')) fail('the live stage mascot must change pose in place instead of being rebuilt per patch');
 if (!render.includes("class: 'composer-primary'") || !render.includes("dataset: { action: 'interrupt'")) fail('single send/stop slot missing');
 if (!overlays.includes("'session-model-set'") || !overlays.includes("'session-reasoning-set'") || !overlays.includes("'session-web-set'") || !mainUi.includes("postIntent('chat.session.model.set'") || !mainUi.includes("postIntent('chat.session.reasoning.set'") || !mainUi.includes('setOptimisticWebMode')) fail('per-turn model/reasoning/Web settings must stay reachable from the conversation');
 if (!overlays.includes("const locked = !session.canConfigureTurn")) fail('turn settings must be locked while a turn is running');

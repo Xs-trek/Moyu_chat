@@ -30,10 +30,21 @@
   --seal: #b4473a;
   --scrim: rgba(18, 24, 21, .38);
   --shadow: 0 6px 24px rgba(20, 30, 25, .14);
-  --fish: #e9a23b;
-  --fish-belly: #f6d088;
-  --fish-fin: #c97f22;
-  --fish-eye: #262a27;
+  --fish: #f2a541;
+  --fish-light: #f9c878;
+  --fish-shade: #d9822b;
+  --fish-fin: #e8743b;
+  --fish-eye: #2a2522;
+  --fish-shine: #ffffff;
+  --fish-cheek: #f7907c;
+  --fx-bubble: #5fb3c9;
+  --fx-sleep: #8e9892;
+  --fx-alert: #e05a4f;
+  --fx-heart: #f06c7e;
+  --fx-lens: #3a4f5c;
+  --fx-glass: #d8f1f6;
+  --fx-spark: #f5c542;
+  --fx-crumb: #c9a26b;
 
   /* type */
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -93,7 +104,7 @@
   --ink: #d4dad6; --muted: #8e9892; --accent: #6cbcae; --accent-ink: #15181a; --accent-soft: #1f3936; --user: #223040; --user-line: #2e3f52;
   --good: #7fc495; --good-soft: #1f3326; --warn: #e0b064; --warn-soft: #3a2f1b; --danger: #e08a80; --danger-soft: #3d2422; --seal: #d4776a;
   --scrim: rgba(0, 0, 0, .5); --shadow: 0 8px 28px rgba(0, 0, 0, .45);
-  --fish: #e2a145; --fish-belly: #efc985; --fish-fin: #b97a26; --fish-eye: #15181a;
+  --fish: #eba049; --fish-light: #f4c57c; --fish-shade: #c97a2c; --fish-fin: #dd7140; --fish-eye: #15181a; --fish-shine: #fff6e5; --fish-cheek: #e98a78; --fx-bubble: #7cc4d8; --fx-sleep: #8e9892; --fx-lens: #a9c0cc; --fx-glass: #24414a;
   color-scheme: dark;
 }
 
@@ -110,7 +121,7 @@
   :root:not([data-theme]) {
     --canvas: #15181a; --surface: #1c2022; --raised: #222729; --inset: #272d2f; --line: #30383a; --line-strong: #465050;
     --ink: #d4dad6; --muted: #8e9892; --accent: #6cbcae; --accent-ink: #15181a; --accent-soft: #1f3936;
-    --fish: #e2a145; --fish-belly: #efc985; --fish-fin: #b97a26; --fish-eye: #15181a;
+    --fish: #eba049; --fish-light: #f4c57c; --fish-shade: #c97a2c; --fish-fin: #dd7140; --fish-eye: #15181a; --fish-shine: #fff6e5; --fish-cheek: #e98a78; --fx-bubble: #7cc4d8; --fx-sleep: #8e9892; --fx-lens: #a9c0cc; --fx-glass: #24414a;
     color-scheme: dark;
   }
 }
@@ -859,66 +870,33 @@ details[open] > summary::after { transform: translateY(1px) rotate(225deg); }
 /* ---------- Mascot & delights ---------- */
 
 .sprite-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+/* Pixel fish (src/mascot.js, src/mascot-sprite.js): one frame of a pose strip, stepped by a Web Animation.
+   Sizes are whole multiples of the 22×15 body box so every sprite pixel is the same size. */
 .fish { position: relative; display: inline-block; flex: 0 0 auto; line-height: 0; }
 .fish-art { display: block; overflow: visible; shape-rendering: crispEdges; }
-.fish.sm .fish-art { width: 32px; height: 18px; }
-.fish.md .fish-art { width: 64px; height: 36px; }
-.fish.lg .fish-art { width: 112px; height: 63px; }
-.fish-tail { transform-box: view-box; transform-origin: 2px 5px; }
-.fish-eye { transform-box: view-box; transform-origin: 10.5px 3.5px; }
-.fish-xeye, .fish-acc { opacity: 0; }
-.fish-acc { position: absolute; pointer-events: none; }
-.fish-hat { opacity: 1; }
-
-.fish[data-pose="idle"] .fish-art { animation: fish-bob 2.6s steps(2) infinite; }
-.fish[data-pose="idle"] .fish-eye, .fish[data-pose="still"] .fish-eye { animation: fish-blink 4.2s steps(1) infinite; }
-.fish[data-pose="write"] .fish-tail { animation: fish-wag .42s steps(2) infinite; }
-.fish[data-pose="write"] .fish-art { animation: fish-bob .84s steps(2) infinite; }
-.fish[data-pose="search"] .fish-art { animation: fish-scan 1.6s steps(4) infinite; }
-.fish[data-pose="done"] .fish-art { animation: fish-hop .5s steps(3) 1; }
-.fish[data-pose="flip"] .fish-art { animation: fish-flip .8s steps(8) 1; }
-.fish[data-pose="fail"] .fish-art { transform: scaleY(-1); }
-.fish[data-pose="fail"] .fish-eye { opacity: 0; }
-.fish[data-pose="fail"] .fish-xeye { opacity: 1; }
-.fish[data-pose="cut"] .fish-art { opacity: .5; }
-
-.fish-bubbles { left: 72%; top: -10px; width: 12px; height: 16px; }
-.fish-bubbles i { position: absolute; left: 0; bottom: 0; width: 5px; height: 5px; border: 1.5px solid var(--accent); border-radius: 50%; opacity: 0; }
-.fish-bubbles i:nth-child(2) { left: 5px; }
-.fish[data-pose="think"] .fish-bubbles { opacity: 1; }
-.fish[data-pose="think"] .fish-bubbles i { animation: fish-rise 1.8s steps(6) infinite; }
-.fish[data-pose="think"] .fish-bubbles i:nth-child(2) { animation-delay: .6s; }
-.fish[data-pose="think"] .fish-bubbles i:nth-child(3) { animation-delay: 1.2s; }
-.fish-zzz { left: 78%; top: -10px; font: 700 10px/1 var(--font-mono); color: var(--muted); }
-.fish-zzz i { position: absolute; font-style: normal; opacity: 0; }
-.fish[data-pose="sleep"] .fish-zzz { opacity: 1; }
-.fish[data-pose="sleep"] .fish-zzz i { animation: fish-rise 2.4s steps(4) infinite; }
-.fish[data-pose="sleep"] .fish-zzz i:nth-child(2) { left: 6px; animation-delay: 1.2s; }
-.fish-drops { left: 40%; top: 0; width: 1px; height: 1px; }
-.fish-drops i { position: absolute; width: 3px; height: 3px; background: var(--accent); opacity: 0; }
-.fish[data-pose="done"] .fish-drops { opacity: 1; }
-.fish[data-pose="done"] .fish-drops i { animation: fish-splash .6s steps(3) 1 forwards; }
-.fish-drops i:nth-child(2) { --dx: 7px; }
-.fish-drops i:nth-child(3) { --dx: -7px; }
-.fish-lens { right: -9px; top: -3px; width: 10px; height: 10px; border: 2px solid var(--accent); border-radius: 50%; }
-.fish-lens::after { content: ""; position: absolute; right: -4px; bottom: -4px; width: 5px; height: 2px; background: var(--accent); transform: rotate(45deg); }
-.fish[data-pose="search"] .fish-lens { opacity: 1; }
-.fish-glasses { left: 56%; top: 22%; width: 26%; height: 24%; border: 1.5px solid var(--ink); border-radius: 1px; }
-.fish[data-pose="verify"] .fish-glasses { opacity: 1; }
-.fish-moon { opacity: 1; right: -16px; top: -12px; width: 12px; height: 12px; border-radius: 50%; background: #f2d27a; box-shadow: inset -3px -2px 0 rgba(0, 0, 0, .12); }
-.fish.lg .fish-moon { right: -26px; top: -18px; width: 20px; height: 20px; }
-.fish.lg .fish-lens { right: -16px; top: -6px; width: 22px; height: 22px; border-width: 3px; }
-.fish.lg .fish-bubbles i, .fish.lg .fish-drops i { transform: scale(1.6); }
-.turn-sum .fish.splash { margin-left: 6px; }
-
-@keyframes fish-bob { 50% { transform: translateY(-6%); } }
-@keyframes fish-blink { 0%, 95% { transform: scaleY(1); } 96%, 100% { transform: scaleY(.15); } }
-@keyframes fish-wag { 50% { transform: scaleY(.7); } }
-@keyframes fish-scan { 25% { transform: translateX(-6%); } 75% { transform: translateX(6%); } }
-@keyframes fish-hop { 50% { transform: translateY(-30%); } }
-@keyframes fish-flip { 50% { transform: translateY(-40%) rotate(180deg); } 100% { transform: rotate(360deg); } }
+.fish.xs .fish-art { width: 22px; height: 15px; }
+.fish.sm .fish-art { width: 44px; height: 30px; }
+.fish.md .fish-art { width: 66px; height: 45px; }
+.fish.lg .fish-art { width: 110px; height: 75px; }
+/* Ink classes sit on the strips' rects; a <use> clone is styled in its own shadow tree, so these match by class alone. */
+.ink-body { fill: var(--fish); } .ink-sheen { fill: var(--fish-light); } .ink-shade { fill: var(--fish-shade); } .ink-fin { fill: var(--fish-fin); }
+.ink-eye { fill: var(--fish-eye); } .ink-shine { fill: var(--fish-shine); } .ink-cheek { fill: var(--fish-cheek); } .ink-hat { fill: #c8372d; }
+.ink-bubble { fill: var(--fx-bubble); } .ink-sleep { fill: var(--fx-sleep); } .ink-alert { fill: var(--fx-alert); } .ink-heart { fill: var(--fx-heart); }
+.ink-lens { fill: var(--fx-lens); } .ink-glass { fill: var(--fx-glass); } .ink-spark { fill: var(--fx-spark); } .ink-crumb { fill: var(--fx-crumb); }
+/* Rare koi (1 in 200 launches, kept for the day): white body, red fins and a red crown spot. */
+html[data-koi="on"][data-delight="on"] { --fish: #f4f1ea; --fish-light: #d8402f; --fish-shade: #d9d2c5; --fish-fin: #d8402f; --fish-cheek: #f2a8a0; }
+/* The perch: the conversation's fish sits on the composer's top edge. */
+.composer { position: relative; }
+.perch { appearance: none; position: absolute; left: 14px; bottom: calc(100% - 8px); z-index: 1; padding: 6px; border: 0; background: transparent; border-radius: var(--radius-md); line-height: 0; }
+.perch:active { transform: none; }
+.drawer-fish { appearance: none; display: inline-grid; place-items: center; min-width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; }
+.live-dot { width: 8px; height: 8px; flex: 0 0 auto; background: var(--accent); animation: live-blink 1.2s steps(2) infinite; }
+@keyframes live-blink { 50% { opacity: .25; } }
 @keyframes fish-rise { 0% { opacity: 0; transform: translateY(0); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-16px); } }
-@keyframes fish-splash { 0% { opacity: 1; transform: translate(0, 0); } 100% { opacity: 0; transform: translate(var(--dx, 0), -10px); } }
+/* The waiting game sheet. */
+.fish-game-wrap { display: grid; gap: 10px; padding: 0 0 8px; }
+.fish-game { display: block; width: 100%; max-width: 480px; margin: 0 auto; aspect-ratio: 4 / 3; border-radius: var(--radius-md); image-rendering: pixelated; touch-action: none; }
+.fish-game-status { margin: 0; text-align: center; font-size: var(--text-sm); color: var(--muted); }
 
 .seal {
   flex: 0 0 auto; display: inline-grid; place-items: center; width: 24px; height: 24px; margin: 0 4px;
@@ -939,7 +917,7 @@ details[open] > summary::after { transform: translateY(1px) rotate(225deg); }
 }
 .icon-btn.bubbling::after { left: 62%; width: 4px; height: 4px; animation-delay: .15s; }
 
-[data-delight="off"] .fish *, [data-delight="off"] .fish .fish-art, [data-delight="off"] .icon-btn::before, [data-delight="off"] .icon-btn::after { animation: none !important; }
+[data-delight="off"] .live-dot, [data-delight="off"] .icon-btn::before, [data-delight="off"] .icon-btn::after { animation: none !important; }
 /* System "remove animations": nothing slides or scales; state changes become short cross-fades. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 120ms !important; transition-delay: 0s !important; }
@@ -949,7 +927,7 @@ details[open] > summary::after { transform: translateY(1px) rotate(225deg); }
   .fx-leave-back, .fx-exit-fold, .fx-exit-fade, .fx-exit-toast { animation: fx-fade-out 120ms ease-in forwards !important; }
   #sheet-root.closing .sheet, #panel-root.closing .panel, .modal-backdrop.closing .modal-card { animation: fade-out 120ms ease-in forwards !important; }
   .fx-leave-forward::after, .fx-enter-back::after, .icon-btn.bubbling::before, .icon-btn.bubbling::after { content: none !important; }
-  .fx-grow, .ripple, .fish *, .fish .fish-art { animation: none !important; }
+  .fx-grow, .ripple, .live-dot { animation: none !important; }
   html[data-panel="open"] #app { transform: none; }
   .btn:active, .sheet-item:active, .choice-row:active, .drawer-link:active, .icon-btn:active, .composer-send:active { transform: none; }
 }
@@ -974,3 +952,21 @@ details[open] > summary::after { transform: translateY(1px) rotate(225deg); }
   .sources { padding-left: 14px; padding-right: 14px; }
   .md-table th, .md-table td { min-width: 5.5rem; max-width: 16rem; }
 }
+
+/* ---------- Boss key (double tap the title) ---------- */
+
+html[data-disguise="on"] {
+  --canvas: #f3f3f3; --surface: #fcfcfc; --raised: #fcfcfc; --inset: #ececec; --line: #dadada; --line-strong: #c2c2c2;
+  --ink: #262626; --muted: #707070; --accent: #2b579a; --accent-ink: #fcfcfc; --accent-soft: #dbe5f3; --user: #fcfcfc; --user-line: #fcfcfc;
+}
+html[data-disguise="on"][data-theme="dark"] {
+  --canvas: #1e1e1e; --surface: #252526; --raised: #2a2a2b; --inset: #303031; --line: #3b3b3c; --line-strong: #555;
+  --ink: #d6d6d6; --muted: #9a9a9a; --accent: #6f9bd8; --accent-ink: #1e1e1e; --accent-soft: #23324a; --user: #252526; --user-line: #252526;
+}
+html[data-disguise="on"] .fish, html[data-disguise="on"] .perch, html[data-disguise="on"] .fish-say, html[data-disguise="on"] .drawer-fish,
+html[data-disguise="on"] .turn-foot, html[data-disguise="on"] .reasoning-block, html[data-disguise="on"] .msg-meta, html[data-disguise="on"] .turn-nav,
+html[data-disguise="on"] .mode-tag, html[data-disguise="on"] .today, html[data-disguise="on"] .hero .caps { display: none !important; }
+html[data-disguise="on"] .markdown-body, html[data-disguise="on"] .user-bubble { font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif; }
+html[data-disguise="on"] .user-bubble { background: transparent; border: 0; border-left: 3px solid var(--accent); border-radius: 0; padding: 2px 0 2px 10px; }
+html[data-disguise="on"] .user-bubble::before { content: "批注："; color: var(--accent); font-weight: 600; }
+html[data-disguise="on"] .msg.user { justify-content: flex-start; }

@@ -1,13 +1,15 @@
 import { bindHost, postIntent, requestIntent } from './bridge.js';
-import { flash, randomQuote } from './mascot.js';
-import { closeImageViewer, closeSheet, handleBack, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTextSheet, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
+import { react } from './mascot.js';
+import * as director from './mascot-director.js';
+import { createGame } from './fish-game.js';
+import { closeImageViewer, closeSheet, handleBack, openCustomSheet, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTextSheet, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
 import { openModelEditor, openProviderEditor } from './editors.js';
 import { syncSegment } from './dom.js';
 import { reducedMotion } from './morph.js';
 import { createRenderGate } from './render-gate.js';
 import { forgetStats, patchConversation, patchStreamItem, render, renderNotice, resizeTextarea, setStatsArchived, setStatsDays, setStatsGroup, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
-import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
+import { getState, setNotice, setOptimisticDisguise, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
 import { forgetRemote, onRemoteChange, refreshRemote, traceKey } from './remote.js';
 import * as vm from './view-model.js';
 import './drawer-gesture.js';
@@ -18,7 +20,7 @@ onSelectionChange(() => renderGate.request());
 // A requested turn trace arrived: refresh the expanded footer in place.
 onRemoteChange(() => { if (!patchConversation()) renderGate.request(); });
 subscribe((_state, change) => {
-  if (change?.scope !== 'stream' && change?.scope !== 'toast') verifyNewKeys(currentView());
+  if (change?.scope !== 'stream' && change?.scope !== 'toast') { verifyNewKeys(currentView()); noteMascotState(currentView()); }
   if (change?.scope === 'toast') renderNotice();
   else if (change?.scope === 'stream' && change.item && patchStreamItem(change)) return;
   else if (!patchConversation()) renderGate.request();
@@ -141,16 +143,70 @@ function copyText(text, target, okText) {
   }).catch(() => setNotice({ level: 'warning', text: '复制失败' }));
 }
 
-let pokes = [];
 function pokeFish(target) {
-  const fishNode = target.querySelector('.fish');
-  const now = Date.now();
-  pokes = pokes.filter((t) => now - t < 4000).concat(now);
-  if (!vm.appearance(currentView()).delight) return;
+  if (director.consumeStroke()) return; // the tap that ended a stroke already got its hearts
+  const line = director.poke(target.querySelector('.fish'));
   const say = target.parentElement?.querySelector('.fish-say');
-  if (say) say.textContent = randomQuote();
-  if (pokes.length >= 7) { pokes = []; flash(fishNode, 'flip', 900, 'idle'); }
-  else flash(fishNode, 'done', 520, 'idle');
+  if (say && line) say.textContent = line;
+}
+
+// ---------- Mascot: turn endings, koi, the boss key, the waiting game ----------
+
+let mascotReady = false;
+let watchedSession = { id: '', state: '' };
+/** Follows the active session across views: a turn that stops running gets its reaction (and ends the game). */
+function noteMascotState(view) {
+  if (!view) return;
+  if (!mascotReady) {
+    mascotReady = true;
+    director.startAmbientLife();
+    const day = director.rollKoi(vm.mascotState(view).koiDay);
+    if (day) postIntent('ui.mascot.set', { key: 'koiDay', value: day });
+  }
+  const session = view.activeSession;
+  const id = session?.localSessionId || '';
+  const state = session?.state || '';
+  if (id && id === watchedSession.id && watchedSession.state === 'running' && state !== 'running') {
+    const kind = vm.settleKind(session);
+    // Let the render that shows the finished reply land first, so the perch is there to react.
+    setTimeout(() => director.settled(kind), 0);
+    game?.answerReady();
+  }
+  watchedSession = { id, state };
+}
+
+let game = null;
+/** Tapping the perch: during a long turn it opens the waiting game; otherwise the fish just hops. */
+function tapPerch(target) {
+  const view = currentView();
+  const session = view?.activeSession;
+  const node = target.querySelector('.fish');
+  if (vm.appearance(view).delight && session?.state === 'running' && vm.runningSeconds(session) >= 10) {
+    game?.stop();
+    game = createGame({
+      best: vm.mascotState(view).gameBest,
+      onBest: (score) => postIntent('ui.mascot.set', { key: 'gameBest', value: score }),
+      onDone: () => closeSheet(),
+    });
+    openCustomSheet({ title: '摸会儿鱼', content: game.node, onClose: () => { game?.stop(); game = null; } });
+    return;
+  }
+  react(node, 'hop');
+}
+
+let titleTaps = 0;
+let titleTapTimer = 0;
+/** Boss key: a double tap on the page title disguises the whole app as a document, and back. */
+function tapTitle() {
+  titleTaps += 1;
+  clearTimeout(titleTapTimer);
+  titleTapTimer = setTimeout(() => { titleTaps = 0; }, 350);
+  if (titleTaps < 2) return;
+  titleTaps = 0;
+  const next = !vm.mascotState(currentView()).disguise;
+  document.documentElement.dataset.disguise = next ? 'on' : 'off';
+  setOptimisticDisguise(next);
+  postIntent('ui.mascot.set', { key: 'disguise', value: next });
 }
 
 function sessionMenu(target) {
@@ -178,7 +234,11 @@ function deleteSelected() {
     onConfirm: () => {
       clearSelection();
       requestIntent('chat.session.delete', { localSessionIds: ids })
-        .then((data) => { const kept = (data?.skipped || []).length; if (kept) setNotice({ level: 'warning', text: `${kept} 个会话正在进行，未删除` }); })
+        .then((data) => {
+          const kept = (data?.skipped || []).length;
+          if (kept) setNotice({ level: 'warning', text: `${kept} 个会话正在进行，未删除` });
+          if (data?.deleted) setTimeout(() => director.batchDeleted(), 0);
+        })
         .catch((error) => setNotice({ level: 'error', text: `删除失败：${error?.message || error}` }));
     },
   });
@@ -254,6 +314,7 @@ document.addEventListener('click', (event) => {
       nav.querySelector('.turn-nav-toggle')?.setAttribute('aria-expanded', 'false');
     }
   }
+  if (event.target.closest('.head-title')) tapTitle();
   const target = event.target.closest('[data-action]');
   if (!target || target.disabled) return;
   const action = target.dataset.action;
@@ -282,7 +343,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'payload-part') { optimisticSegment(target); selectPayloadPart(target.dataset.part); }
   else if (action === 'payload-copy') copyText(payloadText(), target, '已复制报文');
   else if (action === 'trace-retry') { forgetRemote(traceKey(target.dataset.turnId)); if (!patchConversation()) renderGate.request(); }
-  else if (action === 'rate-turn') postIntent('turn.rate', { localSessionId: sessionId, turnId: target.dataset.turnId, rating: Number(target.dataset.rating) || 0 });
+  else if (action === 'rate-turn') { postIntent('turn.rate', { localSessionId: sessionId, turnId: target.dataset.turnId, rating: Number(target.dataset.rating) || 0 }); director.rated(Number(target.dataset.rating) || 0); }
   else if (action === 'open-answers') openAnswers(sessionId, target.dataset.turnId);
   else if (action === 'rerun-open') openRerun(sessionId, target.dataset.localSeq);
   else if (action === 'rerun-model') { optimisticChoice(target); setRerunChoice({ modelProfileId: target.dataset.modelProfileId }); }
@@ -292,6 +353,8 @@ document.addEventListener('click', (event) => {
   else if (action === 'stats-group') { setStatsGroup(target.dataset.group); renderGate.request(); }
   else if (action === 'stats-archived') { setStatsArchived(target.dataset.enabled === 'true'); renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
+  else if (action === 'poke-drawer-fish') director.pokeDrawer(target.querySelector('.fish'));
+  else if (action === 'perch-fish') tapPerch(target);
   else if (action === 'select-toggle') toggleSelected(sessionId);
   else if (action === 'select-blocked') setNotice({ level: 'info', text: '回合进行中的会话不能删除' });
   else if (action === 'select-all') selectAll((currentView()?.sessions || []).filter(selectable).map((s) => s.localSessionId));
@@ -444,7 +507,7 @@ document.addEventListener('click', (event) => {
     if (sessionId && localSeq && target.dataset.label) postIntent('verification.feedback', { localSessionId: sessionId, localSeq, label: target.dataset.label });
   }
   else if (action === 'branch-local') postIntent('branch.create.local', { localSessionId: sessionId });
-  else if (action === 'interrupt') postIntent('chat.session.interrupt', { localSessionId: sessionId });
+  else if (action === 'interrupt') { postIntent('chat.session.interrupt', { localSessionId: sessionId }); director.interrupted(); }
   else if (action === 'retry-turn') retryTurn(sessionId);
   else if (action === 'apply-profile') postIntent('chat.session.model.set', { localSessionId: sessionId, modelProfileId: target.dataset.modelProfileId });
   else if (action === 'view-image') openImageViewer(target.dataset.src, target.dataset.name);
@@ -593,6 +656,7 @@ document.addEventListener('submit', (event) => {
     return;
   }
   const requestId = sendTurn(sessionId, text, activeSession, false);
+  if (requestId) director.sent();
   if (requestId && input) {
     input.value = '';
     resizeComposerTextarea(input);

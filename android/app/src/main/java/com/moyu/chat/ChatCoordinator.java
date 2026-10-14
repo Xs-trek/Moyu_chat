@@ -64,6 +64,7 @@ final class ChatCoordinator implements AutoCloseable {
     private String theme;
     private String tone;
     private boolean delight;
+    private final MascotSettings mascot;
     private final java.util.function.BooleanSupplier systemDark;
     private String usageTodayKey = "";
     private JSONObject usageTodayCache;
@@ -97,6 +98,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.theme = validTheme(db.setting("theme", "system"));
         this.tone = validTone(db.setting("tone", "sage"));
         this.delight = !"false".equals(db.setting("delight", "true"));
+        this.mascot = new MascotSettings(db);
         this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
         this.crossChatMemoryEnabled = "true".equals(db.setting("crossChatMemoryEnabled", "false"));
         this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
@@ -157,6 +159,7 @@ final class ChatCoordinator implements AutoCloseable {
                     if (p.has("tone")) { tone = validTone(required(p, "tone")); db.putSetting("tone", tone); }
                     break;
                 }
+                case "ui.mascot.set": mascot.set(required(p, "key"), p.opt("value")); break;
                 case "ui.delight.set": delight = p.optBoolean("enabled", true); db.putSetting("delight", delight ? "true" : "false"); break;
                 case "chat.reasoning.visibility.set": showReasoning = p.optBoolean("show", false); db.putSetting("showReasoning", showReasoning ? "true" : "false"); break;
                 case "inspector.capture.set": wireCapture = p.optBoolean("enabled", true); db.putSetting("wireCapture", wireCapture ? "true" : "false"); break;
@@ -1006,7 +1009,7 @@ final class ChatCoordinator implements AutoCloseable {
                     .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture).put("notifyInBackground", notifyInBackground).put("customInstruction", customInstruction)
                     .put("helpersOff", HelperSwitches.toJson(helpersOff))
                     .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
-                    .put("standardSubagentMode", standardSubagentMode));
+                    .put("standardSubagentMode", standardSubagentMode).put("mascot", mascot.toJson()));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));
         } catch (Exception error) { host.showMessage("界面更新失败：" + safe(error)); }
     }

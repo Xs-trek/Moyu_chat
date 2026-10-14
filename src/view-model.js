@@ -128,9 +128,55 @@ export function messageTime(value, now = new Date()) {
 }
 
 /** List title: a Chat that never had a message shows its unsent draft. */
-export function sessionTitle(session) {
+export function sessionTitle(session, disguised = false) {
+  if (disguised) return docName(session?.localSessionId);
   if (session?.blank) return `草稿：${String(session.draft || '').trim() || '图片'}`;
   return session?.title || '新会话';
+}
+
+// ---------- Mascot and the boss key ----------
+
+/** Native mascot state (ui.mascot); defaults when an older host omits it. */
+export function mascotState(view) {
+  const m = view?.ui?.mascot || {};
+  return { disguise: Boolean(m.disguise), gameBest: Math.max(0, Number(m.gameBest) || 0), koiDay: typeof m.koiDay === 'string' ? m.koiDay : '' };
+}
+
+const DOC_NAMES = ['Q4 工作计划（修订）', '项目周报 · 第 42 周', '需求评审会议纪要', '2026 年度预算说明', '供应商对比分析', '季度复盘（草稿）', '技术方案评审意见', '客户访谈记录整理'];
+/** The boss key shows every conversation as a plausible, stable document name. */
+export function docName(id) {
+  let hash = 0;
+  for (const ch of String(id || '')) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return `${DOC_NAMES[hash % DOC_NAMES.length]}.docx`;
+}
+
+/** Seconds the current turn has been running (from its question), 0 when idle. */
+export function runningSeconds(session, now = Date.now()) {
+  if (session?.state !== 'running') return 0;
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.kind === 'message' && m.role === 'user') { const t = Date.parse(m.createdAt); return Number.isFinite(t) ? Math.max(0, (now - t) / 1000) : 0; }
+  }
+  return 0;
+}
+
+/** How the last turn ended, once the session is no longer running: 'done' | 'interrupted' | 'failed'. */
+export function settleKind(session) {
+  const messages = Array.isArray(session?.messages) ? session.messages : [];
+  const last = [...messages].reverse().find((m) => m?.kind === 'message' && m.role === 'assistant');
+  if (last?.incomplete && last.terminalCode === 'interrupted') return 'interrupted';
+  if (session?.state === 'failed' || messages[messages.length - 1]?.kind === 'error') return 'failed';
+  return 'done';
+}
+
+/** The live reply's stage pose and length while a turn streams; null when nothing streams. */
+export function liveStage(session) {
+  if (session?.state !== 'running') return null;
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  const live = [...messages].reverse().find((m) => m?.kind === 'message' && m.role === 'assistant' && m.streaming);
+  const pose = session.postProcessingStage ? 'verify' : live ? stageInfo(live.streamStage).pose : session.webPreparingStage ? 'search' : 'think';
+  return { pose, chars: String(live?.text || '').length };
 }
 
 /** One plain line for the session list: Markdown marks dropped, whitespace collapsed. */

@@ -428,6 +428,28 @@ public class ChatCoordinatorE2eTest {
         await("deleting the open session returns home", () -> "home".equals(latestView().optString("route")) && latestView().optJSONArray("sessions").length() == 0);
     }
 
+    @Test public void mascotStateIsAWhitelistKeptNativelyAndTheBestScoreOnlyRises() throws Exception {
+        post("view.reload", new JSONObject());
+        await("first view", () -> latestView() != null);
+        JSONObject initial = latestView().getJSONObject("ui").getJSONObject("mascot");
+        assertFalse(initial.optBoolean("disguise"));
+        assertEquals(0, initial.optInt("gameBest"));
+        assertEquals("", initial.optString("koiDay"));
+
+        assertTrue(awaitResult(post("ui.mascot.set", new JSONObject().put("key", "disguise").put("value", true))).optBoolean("ok"));
+        assertTrue(awaitResult(post("ui.mascot.set", new JSONObject().put("key", "gameBest").put("value", 42))).optBoolean("ok"));
+        assertTrue(awaitResult(post("ui.mascot.set", new JSONObject().put("key", "gameBest").put("value", 7))).optBoolean("ok"));
+        assertTrue(awaitResult(post("ui.mascot.set", new JSONObject().put("key", "koiDay").put("value", "2026-10-14"))).optBoolean("ok"));
+        assertFalse("a malformed day is refused", awaitResult(post("ui.mascot.set", new JSONObject().put("key", "koiDay").put("value", "today"))).optBoolean("ok"));
+        assertFalse("only whitelisted keys are writable", awaitResult(post("ui.mascot.set", new JSONObject().put("key", "theme").put("value", "dark"))).optBoolean("ok"));
+
+        JSONObject mascot = latestView().getJSONObject("ui").getJSONObject("mascot");
+        assertTrue(mascot.optBoolean("disguise"));
+        assertEquals("a lower score never replaces the best", 42, mascot.optInt("gameBest"));
+        assertEquals("2026-10-14", mascot.optString("koiDay"));
+        assertEquals("kept across restarts in the settings table", "true", app.database().setting("mascot.disguise", "false"));
+    }
+
     @Test public void editAndRollbackRewindCurrentSessionWhileBranchingStaysExplicit() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sourceId = createSession();

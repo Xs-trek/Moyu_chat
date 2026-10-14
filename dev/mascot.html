@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-tone="sage" data-delight="on">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Moyu · 小鱼图鉴</title>
+  <link rel="stylesheet" href="../src/styles.css">
+  <link rel="stylesheet" href="./mascot.css">
+</head>
+<body>
+  <!-- Dev-only gallery of every pose at every size, drawn by the real src/mascot.js (not packaged into the APK). -->
+  <main class="gallery">
+    <header class="gallery-head">
+      <h1>小鱼图鉴</h1>
+      <p>每个姿态在四种尺寸下的样子，用的是应用里同一份精灵数据和播放代码。点卡片重播；一次性姿态播完会回到待机。</p>
+      <div class="gallery-tools">
+        <button type="button" data-toggle="theme">切换深浅色</button>
+        <button type="button" data-toggle="koi">锦鲤配色</button>
+        <button type="button" data-toggle="delight">动效开关</button>
+      </div>
+    </header>
+    <section class="gallery-grid" id="grid"></section>
+  </main>
+  <script type="module" src="./mascot-gallery.js"></script>
+</body>
+</html>

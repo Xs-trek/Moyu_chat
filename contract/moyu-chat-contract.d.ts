@@ -51,6 +51,8 @@ export type MoyuChatIntent =
   | UiIntent<'chat.attachment.remove', { localSessionId: string; mediaId: string }>
   | UiIntent<'chat.session.interrupt', { localSessionId: string }>
   /** One session (fails when busy), or a multi-select batch: busy sessions are skipped and reported, missing ones ignored. Batch result data: { deleted: number; skipped: string[] }. */
+  /** Mascot state kept natively (the WebView has no DOM storage). Whitelisted keys only; gameBest only rises; koiDay is YYYY-MM-DD or ''. */
+  | UiIntent<'ui.mascot.set', { key: 'disguise'; value: boolean } | { key: 'gameBest'; value: number } | { key: 'koiDay'; value: string }>
   | UiIntent<'chat.session.delete', { localSessionId: string } | { localSessionIds: string[] }>
   | UiIntent<'chat.message.edit', { localSessionId: string; localSeq: number }>
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
@@ -496,7 +498,7 @@ export interface AppViewModel {
   sessions: SessionView[];
   activeLocalSessionId?: string;
   activeSession?: SessionDetailView;
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; customInstruction: string; helpersOff: HelperId[]; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; customInstruction: string; helpersOff: HelperId[]; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; mascot: MascotState; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {
@@ -581,3 +583,6 @@ export interface ModelPreview {
 
 /** Native → WebView message shown in the page's toast (replaces Android Toasts). */
 export interface NoticeEnvelope { version: 1; type: 'notice'; level: 'info' | 'warning' | 'error'; text: string }
+
+/** Boss-key disguise, the waiting mini-game's best score and the day the rare koi colours were rolled. */
+export interface MascotState { disguise: boolean; gameBest: number; koiDay: string }

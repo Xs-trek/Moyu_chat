@@ -1,0 +1,13 @@
+/* Dev-only layout for dev/mascot.html. */
+body { padding: 24px 16px 48px; }
+.gallery { max-width: 1100px; margin: 0 auto; display: grid; gap: 20px; }
+.gallery-head { display: grid; gap: 8px; }
+.gallery-head h1 { margin: 0; font-size: 1.5rem; }
+.gallery-head p { margin: 0; color: var(--muted); max-width: 64ch; }
+.gallery-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.gallery-tools button, .gallery-card { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+.gallery-tools button { padding: 6px 12px; }
+.gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.gallery-card { display: grid; gap: 12px; padding: 16px; text-align: left; cursor: pointer; }
+.gallery-card b { font: 600 .8125rem/1 var(--font-mono); color: var(--muted); }
+.gallery-row { display: flex; align-items: flex-end; gap: 28px; min-height: 96px; padding-top: 28px; }

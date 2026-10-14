@@ -41,6 +41,16 @@ export function patchView(patch, revision) {
 }
 
 /** Apply an immediate local turn-setting selection; the native full view remains authoritative. */
+/** Boss key: show the disguise at once; the native view that follows confirms it. */
+export function setOptimisticDisguise(disguise) {
+  const view = state.view;
+  if (!view) return false;
+  const ui = view.ui || {};
+  state = { ...state, view: { ...view, ui: { ...ui, mascot: { ...(ui.mascot || {}), disguise: Boolean(disguise) } } } };
+  emit({ scope: 'view' });
+  return true;
+}
+
 export function setOptimisticReasoningEffort(sessionId, reasoningEffort) {
   const view = state.view;
   const current = view?.activeSession;

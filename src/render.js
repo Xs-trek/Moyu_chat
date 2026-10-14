@@ -1,7 +1,8 @@
 import { captureTimelineAnchor, restoreTimelineAnchor } from './scroll-anchor.js';
 import { renderMarkdownInto } from './markdown.js';
 import { button, h, icon, iconButton, syncSegment } from './dom.js';
-import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
+import { fish, greeting, MILESTONES, setPose } from './mascot.js';
+import { milestone, perchPose } from './mascot-director.js';
 import { pruneSelection, selecting, selectionBar } from './session-select.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
@@ -50,7 +51,7 @@ function emptyHero({ title, subtitle, poseOverride, children = [] }) {
   const hello = greeting(new Date(), delight);
   return h('div', { class: 'hero', dataset: { itemKey: 'empty:hero' } },
     delight ? h('div', { class: 'fish-say', 'aria-live': 'polite', text: hello.text }) : null,
-    h('button', { type: 'button', class: 'fish-poke', 'aria-label': '小鱼', dataset: { action: 'poke-fish' } }, fish(poseOverride || hello.pose, 'lg')),
+    h('button', { type: 'button', class: 'fish-poke', 'aria-label': '小鱼', dataset: { action: 'poke-fish' } }, fish(poseOverride || hello.pose, 'lg', { role: 'hero' })),
     title ? h('h2', { class: 'hero-title', text: title }) : null,
     subtitle ? h('p', { class: 'hero-sub', text: subtitle }) : null,
     children);
@@ -71,7 +72,7 @@ function home(view) {
     body = h('div', { class: 'home-list' }, selecting() ? selectionBar(view.sessions) : null, sessionList(view));
   }
   return h('main', { class: 'page page-home' },
-    appHeader('Moyu Chat β', '会话与分支只保存在本机', iconButton('plus', '新会话', 'new-chat')),
+    vm.mascotState(view).disguise ? appHeader('文档', '最近打开', iconButton('plus', '新建', 'new-chat')) : appHeader('Moyu Chat β', '会话与分支只保存在本机', iconButton('plus', '新会话', 'new-chat')),
     h('div', { class: 'page-body' }, body));
 }
 
@@ -303,7 +304,7 @@ function conversation(view) {
   return h('main', { class: 'conversation-layout', dataset: { sessionId: session.localSessionId, configSignature: configSignature(session) } },
     h('header', { class: 'app-head conversation-head' },
       iconButton('menu', '会话列表', 'drawer-open', {}, 'icon-btn nav-toggle'),
-      h('div', { class: 'head-title grow conversation-title' }, h('strong', { class: 'truncate', dataset: { swap: '' }, text: session.title }), conversationSubtitle(session)),
+      h('div', { class: 'head-title grow conversation-title' }, h('strong', { class: 'truncate', dataset: { swap: '' }, text: headTitle(view, session) }), conversationSubtitle(session)),
       iconButton('more', '会话操作', 'conversation-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '' })),
     turnNavigator(session),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
@@ -312,6 +313,7 @@ function conversation(view) {
       h('div', { class: 'timeline', dataset: { morph: 'own' } })),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
       iconButton('down', '回到底部', 'jump-latest', {}, 'icon-btn jump-latest is-hidden'),
+      perchNode(session),
       profileNotice(session),
       draftMediaStrip(session.draftMedia, session.localSessionId),
       h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', dataset: { projectedDraft: session.composerDraft || '' }, placeholder: vm.composerPlaceholder(session), 'aria-label': '消息' }),
@@ -320,6 +322,29 @@ function conversation(view) {
         turnChip(session),
         h('span', { class: 'grow' }),
         h('div', { class: 'composer-primary' }, primaryButton(session)))));
+}
+
+/** The title bar text: the session title, or a document name under the boss key. */
+function headTitle(view, session) { return vm.mascotState(view).disguise ? vm.docName(session.localSessionId) : (session.title || ''); }
+
+/** The perch fish's base pose: the live stage while a turn runs, resting otherwise. */
+function perchBase(session) {
+  const live = vm.liveStage(session);
+  return live ? perchPose(live.pose, live.chars) : 'idle';
+}
+
+/** The fish sitting on the composer once a conversation has messages (an empty one shows the big fish instead). */
+function perchNode(session) {
+  if (!(session.messages || []).length) return null;
+  return h('button', { type: 'button', class: 'perch', 'aria-label': '小鱼', dataset: { action: 'perch-fish', key: 'perch' } }, fish(perchBase(session), 'sm', { role: 'perch' }));
+}
+
+function syncPerch(composer, session) {
+  const perch = composer.querySelector('.perch');
+  const wanted = (session.messages || []).length > 0;
+  if (perch && !wanted) perch.remove();
+  else if (!perch && wanted) composer.querySelector('.jump-latest')?.after(withFx(perchNode(session), 'pop'));
+  else if (perch) setPose(perch.querySelector('.fish'), perchBase(session));
 }
 
 function configSignature(session) {
@@ -484,11 +509,16 @@ function summaryFooter(item, ctx, canAct) {
     expanded ? detailRows(item, ctx.sessionId, canAct) : null);
 }
 
-function liveFooter(item) {
+function liveLabel(item, ctx) {
   const stage = vm.stageInfo(item.streamStage);
   const chars = String(item.text || '').length;
+  const label = chars ? `${stage.label} · ${chars} 字` : stage.label;
+  return ctx.delight && vm.runningSeconds(ctx.session) >= 10 ? `${label} · 点小鱼摸会儿鱼` : label;
+}
+
+function liveFooter(item, ctx) {
   return h('footer', { class: 'turn-foot live' },
-    h('div', { class: 'turn-live', role: 'status' }, fish(stage.pose, 'sm'), h('span', { class: 'live-label', text: chars ? `${stage.label} · ${chars} 字` : stage.label })));
+    h('div', { class: 'turn-live', role: 'status' }, h('span', { class: 'live-dot', 'aria-hidden': 'true' }), h('span', { class: 'live-label', text: liveLabel(item, ctx) })));
 }
 
 function isFinal(item, ctx) {
@@ -510,7 +540,7 @@ function assistantNode(item, ctx) {
   return h('article', { class: `msg assistant${item.inherited ? ' inherited' : ''}`, dataset: { itemKey: vm.timelineKey(item), streaming: streaming ? '1' : '0' } },
     item.inherited ? h('span', { class: 'chip quiet inherited-tag', text: '历史' }) : null,
     reasoningBlock(item, ctx), item.text ? body : null, mediaGallery(item.attachments), sourceRow(item.sources),
-    streaming ? liveFooter(item) : summaryFooter(item, ctx, isFinal(item, ctx)));
+    streaming ? liveFooter(item, ctx) : summaryFooter(item, ctx, isFinal(item, ctx)));
 }
 
 function userNode(item, ctx) {
@@ -524,7 +554,7 @@ function userNode(item, ctx) {
 
 function errorNode(item) {
   return h('article', { class: 'msg error', dataset: { itemKey: vm.timelineKey(item) } },
-    fish('fail', 'sm'), h('div', { class: 'grow' }, h('strong', { text: item.summary }), h('code', { text: item.code })));
+    fish('fail', 'sm', { static: '1' }), h('div', { class: 'grow' }, h('strong', { text: item.summary }), h('code', { text: item.code })));
 }
 
 function timelineItem(item, ctx) {
@@ -537,7 +567,6 @@ function timelineItem(item, ctx) {
 /** Updates an assistant reply in place: the Markdown body and the live mascot persist across patches. */
 function patchAssistant(node, item, ctx) {
   const streaming = Boolean(item.streaming && ctx.running);
-  const wasStreaming = node.dataset.streaming === '1';
   node.dataset.streaming = streaming ? '1' : '0';
 
   const reasoning = node.querySelector('.reasoning-block');
@@ -571,29 +600,17 @@ function patchAssistant(node, item, ctx) {
 
   const footer = node.querySelector('.turn-foot');
   if (streaming) {
-    const stage = vm.stageInfo(item.streamStage);
     const live = footer?.classList.contains('live') ? footer : null;
-    if (!live) { const next = withFx(liveFooter(item), 'fade'); if (footer) footer.replaceWith(next); else node.append(next); return; }
-    setPose(live.querySelector('.fish'), stage.pose);
-    const chars = String(item.text || '').length;
-    const label = chars ? `${stage.label} · ${chars} 字` : stage.label;
+    if (!live) { const next = withFx(liveFooter(item, ctx), 'fade'); if (footer) footer.replaceWith(next); else node.append(next); return; }
+    const label = liveLabel(item, ctx);
     const labelNode = live.querySelector('.live-label');
     if (labelNode.textContent !== label) labelNode.textContent = label;
     return;
   }
-  let desired = summaryFooter(item, ctx, isFinal(item, ctx));
+  const desired = summaryFooter(item, ctx, isFinal(item, ctx));
   if (!footer) node.append(desired);
   else if (footer.classList.contains('live')) footer.replaceWith(withFx(desired, 'fade'));
-  else if (footer.dataset.footerSignature !== desired.dataset.footerSignature) desired = morph(footer, desired);
-  else desired = footer;
-  if (wasStreaming && ctx.delight) {
-    // A finished reply gets a one-time splash next to its summary.
-    const splash = fish('done', 'sm');
-    splash.classList.add('splash');
-    desired.querySelector('.turn-sum')?.prepend(splash);
-    flash(splash, 'done', 1100);
-    setTimeout(() => splash.remove(), 1200);
-  }
+  else if (footer.dataset.footerSignature !== desired.dataset.footerSignature) morph(footer, desired);
 }
 
 function replaceBySignature(node, selector, desired, key, before) {
@@ -678,7 +695,7 @@ function noteMilestones(view, session) {
   milestoneTotals.set(session.localSessionId, total);
   if (previous === undefined) return;
   const crossed = MILESTONES.filter(([limit]) => previous < limit && total >= limit).pop();
-  if (crossed) setNotice({ level: 'info', text: `这条会话已经游过 ${crossed[1]} token。` });
+  if (crossed) { setNotice({ level: 'info', text: `这条会话已经游过 ${crossed[1]} token。` }); milestone(); }
 }
 
 /** Session fields a streaming patch carries; while they hold still, a patch changed only the live reply. */
@@ -713,6 +730,8 @@ export function patchStreamItem(change) {
   if (!node || !node.classList.contains('assistant')) return false;
   const anchor = captureTimelineAnchor();
   patchAssistant(node, projected, timelineContext(view, session));
+  const perch = document.querySelector('form[data-form="composer"] .perch .fish');
+  if (perch) setPose(perch, perchBase(session));
   if (anchor) restoreTimelineAnchor(anchor, session.localSessionId);
   return true;
 }
@@ -737,7 +756,8 @@ export function patchConversation() {
   noteMilestones(view, session);
 
   const title = document.querySelector('.conversation-title strong');
-  if (title && title.textContent !== (session.title || '')) { title.textContent = session.title || ''; swapIn(title); }
+  const titleText = headTitle(view, session);
+  if (title && title.textContent !== titleText) { title.textContent = titleText; swapIn(title); }
   const subtitle = document.querySelector('.conversation-title small');
   const nextSubtitle = conversationSubtitle(session);
   if (subtitle && subtitle.dataset.subtitle !== nextSubtitle.dataset.subtitle) swapIn(morph(subtitle, nextSubtitle));
@@ -755,6 +775,7 @@ export function patchConversation() {
     const desiredDraftMedia = draftMediaStrip(session.draftMedia, session.localSessionId);
     if (currentDraftMedia && currentDraftMedia.dataset.mediaSignature !== desiredDraftMedia.dataset.mediaSignature) currentDraftMedia.replaceWith(desiredDraftMedia);
     else if (!currentDraftMedia) composer.prepend(desiredDraftMedia);
+    syncPerch(composer, session);
     const primary = composer.querySelector('.composer-primary');
     const isStop = Boolean(primary?.querySelector('[data-action="interrupt"]'));
     if (primary && isStop !== Boolean(session.canInterrupt)) primary.replaceChildren(withFx(primaryButton(session), 'pop'));
@@ -787,6 +808,7 @@ function applyRoot(view) {
   root.dataset.theme = look.resolved;
   root.dataset.tone = look.tone;
   root.dataset.delight = look.delight ? 'on' : 'off';
+  root.dataset.disguise = vm.mascotState(view).disguise ? 'on' : 'off';
   root.dataset.route = view.route || 'home';
 }
 

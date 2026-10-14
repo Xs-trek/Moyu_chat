@@ -7,7 +7,7 @@
 // their own horizontal gestures.
 import { isDrawerOpen, setDrawer } from './overlays.js';
 
-const NO_SWIPE = '.md-code, .md-table-wrap, .sources, .draft-media-strip, .wire, .answer-text, .turn-nav-list, .segmented, textarea, input, select';
+const NO_SWIPE = '.fish-poke, .fish-game, .md-code, .md-table-wrap, .sources, .draft-media-strip, .wire, .answer-text, .turn-nav-list, .segmented, textarea, input, select';
 const SLOP = 10;          // px before a gesture is classified
 const LONG_PRESS = 400;   // ms; a slower start is a press / text selection, not a swipe
 const FLING = 0.35;       // px/ms

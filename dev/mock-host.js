@@ -291,6 +291,13 @@ function handle(type, p) {
     case 'nav.open': world.route = p.route; break;
     case 'appearance.set': if (p.theme) world.theme = p.theme; if (p.tone) world.tone = p.tone; break;
     case 'ui.delight.set': world.delight = Boolean(p.enabled); break;
+    case 'ui.mascot.set': {
+      const m = world.ui.mascot || (world.ui.mascot = { disguise: false, gameBest: 0, koiDay: '' });
+      if (p.key === 'disguise') m.disguise = Boolean(p.value);
+      else if (p.key === 'gameBest') m.gameBest = Math.max(m.gameBest, Number(p.value) || 0);
+      else if (p.key === 'koiDay') m.koiDay = String(p.value || '');
+      break;
+    }
     case 'chat.reasoning.visibility.set': world.ui.showReasoning = Boolean(p.show); break;
     case 'memory.global.set': world.ui.crossChatMemoryEnabled = Boolean(p.enabled); break;
     case 'inspector.capture.set': world.ui.wireCapture = Boolean(p.enabled); break;

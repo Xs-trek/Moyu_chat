@@ -46,7 +46,7 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 会话标题 | `SessionTitles`（临时标题、模型命名的提示词与清洗；只替换仍是自动的标题），命名调用由 `ChatCoordinator` 在首轮完成后发起，记为该回合的 `title` 阶段 |
 | 观察 | `TurnStats`（统计页：按模型 × 上下文模式汇总延迟、token、辅助占比、各辅助模块实际执行率和评价）、`TurnUsage`（按主调用 / 辅助调用 / 子任务分类，并按发起阶段归属每次模型调用）、`TurnTrace`（每个阶段的状态、耗时、判断摘要，跳过时记录原因）、`WireCapture`（协议检查器：脱敏后的请求 / 响应原文，不含请求头和 API Key，只保留最近 30 回合，可在设置中关闭） |
 | 存储 | `ChatDatabase`（`moyu-beta.db`，schema 2；v1→v2 增加 `turn_archive`，见 `onUpgrade`）、`ChatMediaStore`、`ChatSecretStore` |
-| 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/math.js`（公式：按需加载本地 `src/vendor/katex/`，文件按 sha256 锁定在静态检查里）、`src/highlight.js`（本地轻量代码高亮）、`src/mascot.js`（像素小鱼与彩蛋）、`src/morph.js`（原地更新 DOM、一次性动效、FLIP、数值淡入）、`src/drawer-gesture.js`（侧边栏跟手拖动）、`src/session-select.js`（会话列表长按多选与批量删除）、`src/editors.js`（Provider / Model Profile 编辑页）、`src/remote.js`（按需读取的数据：调用链、回答对比、统计）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
+| 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/math.js`（公式：按需加载本地 `src/vendor/katex/`，文件按 sha256 锁定在静态检查里）、`src/highlight.js`（本地轻量代码高亮）、`src/mascot.js`（像素小鱼的播放：精灵条 + 逐帧 Web Animation）、`src/mascot-sprite.js`（小鱼的像素数据与姿态帧表）、`src/mascot-director.js`（小鱼反应与轻量彩蛋的调度）、`src/fish-game.js`（等回答时的小游戏）、`src/morph.js`（原地更新 DOM、一次性动效、FLIP、数值淡入）、`src/drawer-gesture.js`（侧边栏跟手拖动）、`src/session-select.js`（会话列表长按多选与批量删除）、`src/editors.js`（Provider / Model Profile 编辑页）、`src/remote.js`（按需读取的数据：调用链、回答对比、统计）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
 | 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。同一页面收到新视图时用 `morph` 原地更新（保留节点、滚动位置、进行中的过渡和展开状态），只有路由或会话变化才重建页面并播放进入动画；新出现的节点用 `fx-*` 类做一次性动效（只用 transform / opacity），要退场动画的节点声明 `data-exit`调用链只通过 `turn.trace.get` 按需读取，不随视图推送；用量存在 `turns` 表，由原生按原有形状投影成 `kind: usage` 条目。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |
 | 契约 | `contract/moyu-chat-contract.d.ts`：intent 与视图模型类型，改动原生视图或 intent 时同步更新 |
 
@@ -80,7 +80,7 @@ JAVA_HOME="$PWD/.tools/jdk-17.0.20+8" ./.tools/gradle-8.5/bin/gradle -p android 
 npm run dev
 ```
 
-打开 `http://localhost:5178/?f=<fixture>&theme=<system|light|dark>`。`dev/mock-host.js` 模拟 `MoyuHost` 和 `ChatCoordinator` 的 view.full / view.patch 信封（流式补丁按原生的 20 fps 节奏发送），`src/` 原样运行，CSP 与 `index.html` 相同。fixture 定义在 `dev/fixtures.js`，页面左侧的 DEV 面板可以切换 fixture、主题，以及触发流式、联网、出错和中断。`dev/` 不会被打包进 APK（`syncMoyuChatUi` 只复制 `index.html` 和 `src/**`，静态检查会核对这一点）。预览不能代替真机：软键盘、WebView 版本差异、系统字体都要在设备上确认，清单见 `docs/device-checklist.md`。
+打开 `http://localhost:5178/?f=<fixture>&theme=<system|light|dark>`。`dev/mock-host.js` 模拟 `MoyuHost` 和 `ChatCoordinator` 的 view.full / view.patch 信封（流式补丁按原生的 20 fps 节奏发送），`src/` 原样运行，CSP 与 `index.html` 相同。小鱼图鉴在 `/dev/mascot.html`。fixture 定义在 `dev/fixtures.js`，页面左侧的 DEV 面板可以切换 fixture、主题，以及触发流式、联网、出错和中断。`dev/` 不会被打包进 APK（`syncMoyuChatUi` 只复制 `index.html` 和 `src/**`，静态检查会核对这一点）。预览不能代替真机：软键盘、WebView 版本差异、系统字体都要在设备上确认，清单见 `docs/device-checklist.md`。
 
 ## 工作方式
 
