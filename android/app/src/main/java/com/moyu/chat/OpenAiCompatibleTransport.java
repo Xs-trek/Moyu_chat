@@ -11,7 +11,10 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.Call;
 import okhttp3.MediaType;
@@ -31,6 +34,15 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     static final long SEMANTIC_IDLE_SECONDS = 300L;
     static final long READ_TIMEOUT_SECONDS = 360L;
     private static final long MAX_SEMANTIC_IDLE_NANOS = TimeUnit.SECONDS.toNanos(SEMANTIC_IDLE_SECONDS);
+    private static final String STALLED = "Provider stream produced no semantic data for 5 minutes";
+    /**
+     * After a Chat Completions finish_reason the stream is still read until [DONE], EOF or a trailing usage
+     * chunk: stream_options.include_usage sends usage in its own choices:[] chunk after the finish chunk.
+     * A gateway that holds the connection open past the finish is cut off after this grace.
+     */
+    static final long FINISH_GRACE_MS = 2_000L;
+    /** onStage value for the provider's semantic end of output; the grace wait after it is not turn time. */
+    static final String STAGE_FINISHED = "finished";
     private final OkHttpClient http = new OkHttpClient.Builder()
             .fastFallback(true)
             .retryOnConnectionFailure(false)
@@ -44,6 +56,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             .callTimeout(30, TimeUnit.MINUTES)
             .build();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final ScheduledExecutorService graceTimer = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "moyu-chat-finish-grace"); thread.setDaemon(true); return thread;
+    });
 
     @Override public Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort, CanonicalPrompt prompt, Sink sink) {
         return stream(provider, apiKey, model, reasoningEffort, prompt, ChatTurnOptions.NONE, sink);
@@ -95,6 +110,10 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         boolean sawUnexpectedPayload = false;
         boolean responseStarted = false;
         long lastSemantic = System.nanoTime();
+        // Chat Completions: the outcome of finish_reason, held until [DONE] / EOF / trailing usage / grace expiry.
+        Runnable finishOutcome = null;
+        AtomicBoolean graceExpired = new AtomicBoolean(false);
+        ScheduledFuture<?> grace = null;
         try (Response response = call.execute()) {
             responseStarted = true;
             wire.status(response.code());
@@ -114,40 +133,57 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
                     if (!line.startsWith("data:")) {
                         String trimmed = line.trim();
                         if (!trimmed.isEmpty() && !trimmed.startsWith(":") && !trimmed.startsWith("event:")) sawUnexpectedPayload = true;
-                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", STALLED, true); return; }
                         continue;
                     }
                     String data = line.substring(5).trim();
                     if (data.isEmpty()) {
-                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", STALLED, true); return; }
                         continue;
                     }
                     sawData = true;
-                    if ("[DONE]".equals(data)) { sink.onCompleted(); return; }
+                    if ("[DONE]".equals(data)) { if (finishOutcome != null) finishOutcome.run(); else sink.onCompleted(); return; }
                     JSONObject event;
                     try { event = new JSONObject(data); }
                     catch (Exception ignored) {
-                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                        if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", STALLED, true); return; }
                         continue;
                     }
                     if (isSemanticEvent(protocol, event)) lastSemantic = now;
-                    else if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", "Provider stream produced no semantic data for 5 minutes", true); return; }
+                    else if (now - lastSemantic > MAX_SEMANTIC_IDLE_NANOS) { sink.onError("stream_stalled", STALLED, true); return; }
                     if (CHAT_COMPLETIONS.equals(protocol)) {
-                        if (parseChat(event, sink, chatToolCollector)) { sink.onCompleted(); return; }
+                        ChatEnd end = parseChatEvent(event, sink, chatToolCollector);
+                        if (end == null) continue;
+                        if (end.finish == null) { (finishOutcome != null ? finishOutcome : end.immediate).run(); return; }
+                        if (finishOutcome == null) {
+                            finishOutcome = end.finish;
+                            sink.onStage(STAGE_FINISHED);
+                            grace = scheduleGrace(call, graceExpired);
+                        }
                     } else if (parseResponses(event, sink, emittedImages, emittedContinuation, responseToolCalls, emittedRefusals)) return;
                 }
             }
-            if (sawData) sink.onCompleted();
+            if (finishOutcome != null) finishOutcome.run();
+            else if (sawData) sink.onCompleted();
             else if (sawUnexpectedPayload) sink.onError("unexpected_response_format", "Provider returned HTTP 200 but not an SSE data stream", false);
             else sink.onError("empty_stream", "Provider returned HTTP 200 with no stream data", true);
         } catch (IOException error) {
-            if (call.isCanceled()) sink.onError("cancelled", "已中断", false);
+            if (finishOutcome != null && graceExpired.get()) finishOutcome.run();
+            else if (call.isCanceled()) sink.onError("cancelled", "已中断", false);
+            else if (finishOutcome != null) finishOutcome.run(); // the answer was complete; a dropped tail loses only usage.
             else if (error instanceof java.net.SocketTimeoutException) {
                 if (!responseStarted) sink.onError("response_start_timeout", "Provider did not return HTTP response headers within " + READ_TIMEOUT_SECONDS + " seconds", true);
                 else if (!sawData) sink.onError("stream_first_event_timeout", "Provider returned HTTP headers but no SSE data within " + READ_TIMEOUT_SECONDS + " seconds", true);
                 else sink.onError("stream_timeout", "Provider stream stopped producing bytes for " + READ_TIMEOUT_SECONDS + " seconds", true);
             } else sink.onError("network_error", ProviderErrors.networkSummary(error), true);
+        } finally {
+            if (grace != null) grace.cancel(false);
         }
+    }
+
+    private ScheduledFuture<?> scheduleGrace(Call call, AtomicBoolean expired) {
+        try { return graceTimer.schedule(() -> { expired.set(true); call.cancel(); }, FINISH_GRACE_MS, TimeUnit.MILLISECONDS); }
+        catch (java.util.concurrent.RejectedExecutionException closed) { return null; }
     }
 
     private static boolean isSemanticEvent(String protocol, JSONObject event) {
@@ -415,17 +451,30 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     /**
-     * Returns true when a Chat-Completions-compatible stream has emitted a semantic terminal chunk.
-     * This deliberately accepts more than [DONE]: compatible gateways may keep SSE open after a
-     * finish_reason or emit one final empty-choices usage/cost chunk.
+     * How a Chat Completions event ends the stream. {@code finish} is the deferred outcome of a finish_reason
+     * (reading continues for a trailing usage chunk); {@code immediate} ends it now: an error event, or a
+     * choices:[] usage/cost chunk, which is the last semantic chunk compatible gateways send.
      */
-    static boolean parseChat(JSONObject event, ChatTransport.Sink sink) {
-        return parseChat(event, sink, new ChatToolCollector());
+    static final class ChatEnd {
+        final Runnable finish;
+        final Runnable immediate;
+        private ChatEnd(Runnable finish, Runnable immediate) { this.finish = finish; this.immediate = immediate; }
     }
 
-    private static boolean parseChat(JSONObject event, ChatTransport.Sink sink, ChatToolCollector toolCollector) {
+    /** True when the event ends the stream; a finish outcome is delivered at once (unit-test entry). */
+    static boolean parseChat(JSONObject event, ChatTransport.Sink sink) {
+        ChatEnd end = parseChatEvent(event, sink, new ChatToolCollector());
+        if (end == null) return false;
+        (end.finish != null ? end.finish : end.immediate).run();
+        return true;
+    }
+
+    private static ChatEnd parseChatEvent(JSONObject event, ChatTransport.Sink sink, ChatToolCollector toolCollector) {
         JSONObject error = event.optJSONObject("error");
-        if (error != null) { sink.onError(error.optString("code", "provider_error"), error.optString("message", "Provider error"), false); return true; }
+        if (error != null) {
+            String code = error.optString("code", "provider_error"), message = error.optString("message", "Provider error");
+            return new ChatEnd(null, () -> sink.onError(code, message, false));
+        }
         JSONArray choices = event.optJSONArray("choices");
         String finishReason = "";
         if (choices != null && choices.length() > 0) {
@@ -460,18 +509,25 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             sink.onUsageDetails(input, output, cached, cacheWrite, input, reasoningTokens);
         }
 
-        if (!finishReason.isEmpty()) {
-            if ("length".equals(finishReason)) sink.onError("response_incomplete", "Response stopped at max output tokens", false);
-            else if ("content_filter".equals(finishReason)) sink.onError("content_filter", "Provider stopped the response due to content filtering", false);
-            else if ("tool_calls".equals(finishReason)) {
+        if (!finishReason.isEmpty()) return new ChatEnd(finishOutcome(finishReason, sink, toolCollector), null);
+        if (choices != null && choices.length() == 0 && (usage != null || event.has("cost"))) return new ChatEnd(null, sink::onCompleted);
+        return null;
+    }
+
+    private static Runnable finishOutcome(String finishReason, ChatTransport.Sink sink, ChatToolCollector toolCollector) {
+        switch (finishReason) {
+            case "length": return () -> sink.onError("response_incomplete", "Response stopped at max output tokens", false);
+            case "content_filter": return () -> sink.onError("content_filter", "Provider stopped the response due to content filtering", false);
+            case "tool_calls": return () -> {
                 JSONArray calls = toolCollector == null ? new JSONArray() : toolCollector.calls();
                 if (calls.length() == 0) sink.onError("invalid_tool_call", "Provider ended with tool_calls but emitted no valid function calls", false);
                 else sink.onClientToolBatch(calls);
-            } else if ("function_call".equals(finishReason)) sink.onError("unsupported_tool_call", "Legacy function_call is not enabled; use tools/tool_calls", false);
-            else if ("network_error".equals(finishReason) || "insufficient_system_resource".equals(finishReason)) sink.onError(finishReason, "Provider terminated the stream: " + finishReason, true);
-            return true;
+            };
+            case "function_call": return () -> sink.onError("unsupported_tool_call", "Legacy function_call is not enabled; use tools/tool_calls", false);
+            case "network_error":
+            case "insufficient_system_resource": return () -> sink.onError(finishReason, "Provider terminated the stream: " + finishReason, true);
+            default: return sink::onCompleted;
         }
-        return choices != null && choices.length() == 0 && (usage != null || event.has("cost"));
     }
 
     /**
@@ -795,5 +851,5 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     private static String safe(Exception error) { String message = error.getMessage(); return message == null || message.isEmpty() ? error.getClass().getSimpleName() : message; }
-    @Override public void close() { executor.shutdownNow(); }
+    @Override public void close() { executor.shutdownNow(); graceTimer.shutdownNow(); }
 }

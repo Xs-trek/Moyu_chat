@@ -186,6 +186,51 @@ public class TransportMockServerTest {
         assertEquals("x", sink.text.toString());
     }
 
+    @Test public void chatUsageInTrailingChunkAfterFinishIsKept() throws Exception {
+        // stream_options.include_usage: the finish chunk carries no usage; usage follows in a choices:[] chunk.
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"},\"finish_reason\":null}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":null}\n\n"
+                        + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":5}}\n\n"
+                        + "data: [DONE]\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "test-key", "test-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertTrue(sink.completed);
+        assertEquals("answer", sink.text.toString());
+        assertEquals(9, sink.inputTokens);
+        assertEquals(5, sink.outputTokens);
+        assertEquals(1, sink.terminals.get());
+    }
+
+    @Test public void chatFinishOutcomeWaitsForTrailingUsage() throws Exception {
+        // A length stop is reported only after the trailing usage chunk, so the error keeps its usage.
+        server.enqueue(new MockResponse().setBody(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"cut\"},\"finish_reason\":\"length\"}]}\n\n"
+                        + "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":8}}\n\n"
+                        + "data: [DONE]\n\n"));
+        RecordingSink sink = new RecordingSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "test-key", "test-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        assertEquals("response_incomplete", sink.errorCode);
+        assertEquals(8, sink.outputTokens);
+    }
+
+    @Test public void chatFinishWithHeldConnectionCompletesAfterGrace() throws Exception {
+        String finish = "data: {\"choices\":[{\"delta\":{\"content\":\"held\"},\"finish_reason\":\"stop\"}]}\n\n";
+        // An overstated Content-Length keeps the client waiting for bytes that never come, like a gateway
+        // that holds the connection open after the finish chunk and never sends [DONE].
+        server.enqueue(new MockResponse().setBody(finish).setHeader("Content-Length", 100_000));
+        RecordingSink sink = new RecordingSink();
+        long started = System.nanoTime();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "test-key", "test-model", prompt("user", "hi"), sink);
+        sink.awaitTerminal();
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000L;
+        assertTrue(sink.completed);
+        assertEquals("held", sink.text.toString());
+        assertTrue("grace should cut the held stream, took " + elapsedMs + " ms", elapsedMs < 5_000L);
+    }
+
     @Test public void chatFinishReasonIsSemanticTerminalWithoutDoneMarker() throws Exception {
         RecordingSink sink = new RecordingSink();
         JSONObject event = new JSONObject("{\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}");

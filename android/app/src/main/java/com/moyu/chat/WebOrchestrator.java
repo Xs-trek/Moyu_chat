@@ -128,8 +128,8 @@ final class WebOrchestrator {
         Plan modelPlan = null;
         try {
             CanonicalPrompt plannerPrompt = plannerPrompt(userText, context, previous, now);
-            ModelPreflight.Output output = ModelPreflight.runOutputWithEffort(transport, provider, apiKey, model,
-                    ReasoningPolicy.DEFAULT, plannerPrompt, 700, 10_000, cancellation);
+            ModelPreflight.Output output = ModelPreflight.runLight(transport, provider, apiKey, model,
+                    plannerPrompt, 700, 10_000, cancellation);
             if (output != null) modelPlan = parseModelPlan(output.text);
         } catch (Exception ignored) { }
         return merge(deterministic, modelPlan, webMode, userText, previous, now, true);

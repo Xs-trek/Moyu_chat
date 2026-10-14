@@ -167,6 +167,44 @@ final class ReasoningPolicy {
         body.put("thinking", new JSONObject().put("type", "enabled").put("budget_tokens", budget));
     }
 
+    private static final String[] EFFORT_ORDER = { NONE_LEVEL, MINIMAL, LOW, MEDIUM, HIGH, XHIGH, MAX };
+
+    /** The lowest effort the deployment declares; DEFAULT when it declares no effort selector. */
+    static String lightestEffort(String levels) {
+        String allowed = "," + normalizeLevels(levels) + ",";
+        for (String level : EFFORT_ORDER) if (allowed.contains("," + level + ",")) return level;
+        return DEFAULT;
+    }
+
+    /**
+     * Thinking mode for a short structured helper call: off when the deployment's declared wire can say so
+     * (Messages always can; a Chat Completions route only when its dialect carries the thinking switch),
+     * otherwise unchanged. provider-default stays as is: nothing declared means nothing to switch.
+     */
+    static String lightThinkingMode(ChatDatabase.Provider provider) {
+        String mode = normalizeThinkingMode(provider.thinkingMode);
+        if (THINKING_PROVIDER_DEFAULT.equals(mode) || THINKING_DISABLED.equals(mode)) return mode;
+        RouteDialect dialect = provider.dialect == null ? RouteDialect.defaults(provider.protocol) : provider.dialect;
+        return dialect.carriesThinking(provider.protocol, THINKING_DISABLED) ? THINKING_DISABLED : mode;
+    }
+
+    /** Extra output room for reasoning tokens, which count against the output cap on every supported protocol. */
+    static final int HELPER_REASONING_HEADROOM = 2048;
+
+    /**
+     * Output cap for a hidden call that needs {@code answerTokens} of visible text. Reasoning may still run
+     * unless thinking is off or effort is none, so it gets headroom; a kept manual thinking budget must also
+     * stay below the cap. Never lower than the requested answer room.
+     */
+    static int helperOutputCap(ChatDatabase.Provider provider, String effort, int answerTokens) {
+        String mode = normalizeThinkingMode(provider.thinkingMode);
+        boolean reasoningOff = THINKING_DISABLED.equals(mode) || NONE_LEVEL.equals(normalizeEffort(effort));
+        if (reasoningOff) return answerTokens;
+        int cap = answerTokens + HELPER_REASONING_HEADROOM;
+        if (THINKING_MANUAL.equals(mode)) cap = Math.max(cap, Math.max(0, provider.thinkingBudgetTokens) + answerTokens);
+        return cap;
+    }
+
     /** Compatibility overload for tests/older callers that have no explicit thinking configuration. */
     static void apply(JSONObject body, String wireFormat, String effort) throws Exception {
         ChatDatabase.Provider provider = new ChatDatabase.Provider();

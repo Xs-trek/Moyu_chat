@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full local verification: frontend static checks, then JVM tests + debug lint + debug APK.
+# Full local verification: frontend static checks and behaviour tests, then JVM tests + debug lint + debug APK.
 # Extra Gradle tasks may be passed as arguments, e.g. `scripts/verify.sh :app:assembleRelease`.
 set -euo pipefail
 
@@ -15,6 +15,7 @@ if [ -z "${ANDROID_HOME:-}" ] && [ ! -f android/local.properties ]; then
 fi
 
 npm run build
+npm test
 
 if [ $# -eq 0 ]; then set -- :app:testDebugUnitTest :app:lintDebug :app:assembleDebug; fi
 "$root/.tools/gradle-8.5/bin/gradle" -p android --console=plain "$@"

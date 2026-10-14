@@ -21,7 +21,12 @@ class ChatSecretStore {
     ChatSecretStore(Context c){prefs=c.getSharedPreferences("moyu_chat_secure",Context.MODE_PRIVATE);}
     synchronized void put(String providerId,String value){if(value==null||value.isEmpty()){prefs.edit().remove(providerId).apply();return;}try{Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key());byte[] data=cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));byte[] iv=cipher.getIV();ByteBuffer b=ByteBuffer.allocate(4+iv.length+data.length);b.putInt(iv.length).put(iv).put(data);prefs.edit().putString(providerId,Base64.encodeToString(b.array(),Base64.NO_WRAP)).apply();}catch(Exception e){throw new IllegalStateException("cannot store provider secret",e);}}
     synchronized String get(String providerId){String encoded=prefs.getString(providerId,null);if(encoded==null)return null;try{ByteBuffer b=ByteBuffer.wrap(Base64.decode(encoded,Base64.NO_WRAP));int n=b.getInt();if(n<12||n>32||b.remaining()<=n)return null;byte[] iv=new byte[n];b.get(iv);byte[] data=new byte[b.remaining()];b.get(data);Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,iv));return new String(cipher.doFinal(data),StandardCharsets.UTF_8);}catch(Exception e){return null;}}
-    boolean has(String providerId){return get(providerId)!=null;}
+    /**
+     * Whether a usable key is stored. Every view projection asks this per account, so the Keystore decrypt is
+     * done once per stored ciphertext and remembered (in memory, by ciphertext; the key itself is not kept).
+     */
+    synchronized boolean has(String providerId){String encoded=prefs.getString(providerId,null);if(encoded==null)return false;Boolean ok=readable.get(encoded);if(ok==null){ok=get(providerId)!=null;if(readable.size()>=64)readable.clear();readable.put(encoded,ok);}return ok;}
+    private final java.util.Map<String,Boolean> readable=new java.util.HashMap<>();
     /**
      * Shape check for a pasted key: surrounding whitespace is trimmed; inner whitespace, line breaks and
      * non-ASCII characters are paste mistakes that would make every request fail. Messages never echo the key.

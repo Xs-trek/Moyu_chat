@@ -14,6 +14,10 @@ final class TurnControl implements ClientToolRuntime.TurnCancellation {
     volatile String turnId;
     JSONObject usageState;
     long requestStartedNanos;
+    /** Time spent after a provider's finish marker waiting for trailing usage; not counted as turn duration. */
+    final java.util.concurrent.atomic.AtomicLong finishGraceNanos = new java.util.concurrent.atomic.AtomicLong();
+    /** Monotonic "now" for turn durations, with any post-finish grace wait taken out. */
+    long durationNow() { return System.nanoTime() - finishGraceNanos.get(); }
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private final AtomicReference<Thread> taskThread = new AtomicReference<>();
     private final AtomicReference<ChatTransport.Turn> transportTurn = new AtomicReference<>();

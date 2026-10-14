@@ -34,6 +34,8 @@ final class ProviderRoundLoop {
     private final LinkedHashMap<String, JSONObject> webSources = new LinkedHashMap<>();
     private final String[] webBackend;
     private volatile long firstOutputNanos = 0L;
+    /** When the current round's provider sent its finish marker (0 = not yet); see OpenAiCompatibleTransport.FINISH_GRACE_MS. */
+    private volatile long roundFinishNanos = 0L;
     private final StringBuffer textOut = new StringBuffer();
     private final StringBuffer reasoningOut = new StringBuffer();
     private final AtomicReference<String> streamStage = new AtomicReference<>("connecting");
@@ -184,9 +186,17 @@ final class ProviderRoundLoop {
                 .put("outputChars", textOut.length()).put("reasoningChars", reasoningOut.length());
     }
 
+    /** The wait between a round's finish marker and its terminal callback is not turn time. */
+    private void endFinishGrace() {
+        long finished = roundFinishNanos;
+        roundFinishNanos = 0L;
+        if (finished > 0L) turnControl.finishGraceNanos.addAndGet(Math.max(0L, System.nanoTime() - finished));
+    }
+
     private final class RoundSink implements ChatTransport.Sink {
         @Override public void onStage(String stage) {
             if (stage == null || stage.trim().isEmpty() || streamTerminal.get()) return;
+            if (OpenAiCompatibleTransport.STAGE_FINISHED.equals(stage)) { if (roundFinishNanos == 0L) roundFinishNanos = System.nanoTime(); return; }
             streamStage.set(stage.trim());
             markProjectionDirty();
         }
@@ -221,7 +231,7 @@ final class ProviderRoundLoop {
         }
         @Override public void onTextDelta(String delta) {
             if (delta == null || delta.isEmpty() || streamTerminal.get()) return;
-            if (firstOutputNanos == 0L) firstOutputNanos = System.nanoTime();
+            if (firstOutputNanos == 0L) firstOutputNanos = turnControl.durationNow();
             streamStage.set("output");
             textOut.append(delta);
             markProjectionDirty();
@@ -230,7 +240,7 @@ final class ProviderRoundLoop {
             if (!allowImageOutput) return;
             env.authority().execute(() -> {
                 try {
-                    if (firstOutputNanos == 0L) firstOutputNanos = System.nanoTime();
+                    if (firstOutputNanos == 0L) firstOutputNanos = turnControl.durationNow();
                     streamStage.set("output");
                     JSONObject image = p.mediaStore.saveBase64Image(mimeType, base64, fileName);
                     outputMedia.put(image);
@@ -253,7 +263,7 @@ final class ProviderRoundLoop {
             if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = TurnPipeline.providerWebBackend(r.provider.protocol);
             projectNow();
         } catch (Exception ignored) { } }); }
-        @Override public void onClientToolBatch(JSONArray calls) { handleToolBatch(calls); }
+        @Override public void onClientToolBatch(JSONArray calls) { endFinishGrace(); handleToolBatch(calls); }
         @Override public void onUsage(Integer in, Integer out) { onUsageDetails(in, out, null, null, null, null); }
         @Override public void onUsageDetails(Integer in, Integer out, Integer cached, Integer cacheWrite, Integer cacheBase, Integer reasoningTokens) { env.authority().execute(() -> { try {
             if (in != null) roundInput = Math.max(roundInput, Math.max(0, in));
@@ -265,11 +275,13 @@ final class ProviderRoundLoop {
             persistUsageProjection();
         } catch (Exception ignored) { } }); }
         @Override public void onCompleted() {
+            endFinishGrace();
             streamTerminal.set(true);
             providerRoundGeneration.incrementAndGet();
             env.authority().execute(ProviderRoundLoop.this::completeGeneration);
         }
         @Override public void onError(String code, String summary, boolean retryable) {
+            endFinishGrace();
             streamTerminal.set(true);
             providerRoundGeneration.incrementAndGet();
             env.authority().execute(() -> {

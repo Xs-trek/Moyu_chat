@@ -205,13 +205,132 @@ function codeBlock(language, codeText) {
   highlightInto(code, codeText, language); if (language) code.dataset.language = language; pre.append(code); block.append(head, pre); return block;
 }
 
-function renderTaskItem(raw) {
-  const task = raw.match(/^\[([ xX])\]\s+(.*)$/);
+const MAX_BLOCK_DEPTH = 8;
+const LIST_MARKER = /^([ \t]*)([-+*]|(\d{1,9})[.)])([ \t]+)(\S.*)$/;
+const FENCE_OPEN = /^(`{3,}|~{3,})/;
+
+/** Leading whitespace width in columns (a tab advances to the next multiple of 4). */
+function indentOf(line) {
+  let col = 0;
+  for (const ch of String(line ?? '')) {
+    if (ch === ' ') col += 1;
+    else if (ch === '\t') col += 4 - (col % 4);
+    else break;
+  }
+  return col;
+}
+
+/** Removes up to `count` columns of leading whitespace, splitting a tab when it straddles the cut. */
+function stripColumns(line, count) {
+  let col = 0;
+  let i = 0;
+  while (i < line.length && col < count) {
+    if (line[i] === ' ') { col += 1; i += 1; continue; }
+    if (line[i] !== '\t') break;
+    const width = 4 - (col % 4);
+    if (col + width > count) return ' '.repeat(col + width - count) + line.slice(i + 1);
+    col += width; i += 1;
+  }
+  return line.slice(i);
+}
+
+function listMarker(line) {
+  if (isThematicBreak(line)) return null;
+  const match = String(line ?? '').match(LIST_MARKER);
+  if (!match) return null;
+  const indent = indentOf(match[1]);
+  const markerEnd = indent + match[2].length;
+  const gap = indentOf(' '.repeat(markerEnd) + match[4]) - markerEnd;
+  return {
+    indent, ordered: Boolean(match[3]), number: match[3] ? Number(match[3]) : 1, content: match[5],
+    // A gap of five or more columns starts indented content; only one of its columns belongs to the marker.
+    contentIndent: indent + match[2].length + (gap > 4 ? 1 : gap),
+  };
+}
+
+function closesFence(line, fence) {
+  const marker = line.trim().match(/^(`{3,}|~{3,})\s*$/);
+  return Boolean(marker && marker[1][0] === fence[0] && marker[1].length >= fence.length);
+}
+
+/**
+ * Collects one list item starting at `index`: the marker line, lines indented at least two columns past the
+ * marker (nested lists, code fences, further paragraphs, also across blank lines), everything inside a fence
+ * the item opened, and lazy paragraph continuation lines. Returns the dedented body and where the item ends.
+ */
+function collectListItem(lines, index, marker) {
+  const base = marker.indent;
+  const raw = [{ text: marker.content, kind: 'first' }];
+  let fence = (marker.content.match(FENCE_OPEN) || [])[1] || '';
+  let loose = false;
+  let cursor = index + 1;
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+    if (fence) {
+      raw.push({ text: line, kind: 'fenced' });
+      if (closesFence(line, fence)) fence = '';
+      cursor += 1; continue;
+    }
+    if (!line.trim()) {
+      let next = cursor + 1;
+      while (next < lines.length && !lines[next].trim()) next += 1;
+      if (next >= lines.length || indentOf(lines[next]) < base + 2) break;
+      for (; cursor < next; cursor += 1) raw.push({ text: '', kind: 'blank' });
+      loose = true; continue;
+    }
+    if (indentOf(line) >= base + 2) {
+      raw.push({ text: line, kind: 'indented' });
+      fence = (line.trim().match(FENCE_OPEN) || [])[1] || '';
+      cursor += 1; continue;
+    }
+    // Lazy continuation: an unindented line that simply continues the item's paragraph.
+    const previous = raw[raw.length - 1];
+    if (previous.kind === 'blank' || previous.kind === 'fenced' || isBlockStart(lines, cursor)) break;
+    raw.push({ text: line, kind: 'lazy' });
+    cursor += 1;
+  }
+  const indented = raw.filter((line) => line.kind === 'indented').map((line) => indentOf(line.text));
+  const dedent = Math.min(marker.contentIndent, ...indented);
+  const body = raw.map((line) => (line.kind === 'first' || line.kind === 'blank' ? line.text
+    : line.kind === 'lazy' ? line.text.trimStart() : stripColumns(line.text, dedent)));
+  return { body, next: cursor, loose };
+}
+
+function renderList(lines, index, depth) {
+  const first = listMarker(lines[index]);
+  const list = document.createElement(first.ordered ? 'ol' : 'ul'); list.className = 'md-list';
+  if (first.ordered) list.start = first.number;
+  const items = [];
+  let loose = false;
+  while (index < lines.length) {
+    const marker = listMarker(lines[index]);
+    if (!marker || marker.ordered !== first.ordered || marker.indent >= first.indent + 2) break;
+    const item = collectListItem(lines, index, marker);
+    items.push(item.body);
+    loose ||= item.loose;
+    index = item.next;
+    let next = index;
+    while (next < lines.length && !lines[next].trim()) next += 1;
+    const sibling = next < lines.length ? listMarker(lines[next]) : null;
+    if (!sibling || sibling.ordered !== first.ordered || sibling.indent >= first.indent + 2) break;
+    loose ||= next > index;
+    index = next;
+  }
+  for (const body of items) list.append(listItem(body, loose, depth));
+  return { node: list, next: index };
+}
+
+function listItem(body, loose, depth) {
   const li = document.createElement('li');
-  if (!task) { li.append(inlineFragment(raw)); return li; }
+  const task = body[0].match(/^\[([ xX])\]\s+(.*)$/);
+  const lines = task ? [task[2], ...body.slice(1)] : body;
+  const content = depth >= MAX_BLOCK_DEPTH ? paragraph(lines.filter((line) => line.trim())) : renderBlocks(lines, depth + 1);
+  // A tight item shows its text inline rather than as a spaced paragraph.
+  if (!loose) for (const node of [...content.childNodes]) if (node.classList?.contains('md-p')) node.replaceWith(...node.childNodes);
+  if (!task) { li.append(content); return li; }
   li.className = 'md-task-item';
   const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.disabled = true; checkbox.checked = task[1].toLowerCase() === 'x'; checkbox.setAttribute('aria-hidden', 'true');
-  const text = document.createElement('span'); text.append(inlineFragment(task[2])); li.append(checkbox, text); return li;
+  const text = document.createElement('div'); text.className = 'md-task-body'; text.append(content); li.append(checkbox, text); return li;
 }
 
 function isThematicBreak(line) {
@@ -231,16 +350,12 @@ function isBlockStart(lines, index) {
   return false;
 }
 
+/** Every newline inside a paragraph is a line break: chat replies use single newlines as intended breaks. */
 function paragraph(lines) {
   const p = document.createElement('p'); p.className = 'md-p';
-  let previousHardBreak = false;
   lines.forEach((raw, index) => {
-    let line = raw;
-    const hardBreak = /(?: {2,}|\\)$/.test(line);
-    if (hardBreak) line = line.replace(/(?: {2,}|\\)$/, '');
-    if (index) p.append(previousHardBreak ? document.createElement('br') : textNode(' '));
-    p.append(inlineFragment(line));
-    previousHardBreak = hardBreak;
+    if (index) p.append(document.createElement('br'));
+    p.append(inlineFragment(raw.trimStart().replace(/(?: {2,}|\\)$/, '')));
   });
   return p;
 }
@@ -251,8 +366,11 @@ function paragraph(lines) {
  * remains visible inert text. Streaming replies go through renderMarkdownInto() below.
  */
 export function renderSafeMarkdown(value) {
+  return renderBlocks(String(value ?? '').replace(/\r\n?/g, '\n').split('\n'), 0);
+}
+
+function renderBlocks(lines, depth) {
   const root = document.createDocumentFragment();
-  const lines = String(value ?? '').replace(/\r\n?/g, '\n').split('\n');
   let index = 0;
 
   while (index < lines.length) {
@@ -288,23 +406,14 @@ export function renderSafeMarkdown(value) {
         if (!lines[index].trim()) quoteLines.push(''); else quoteLines.push(lines[index].replace(/^\s*>\s?/, ''));
         index += 1;
       }
-      const block = document.createElement('blockquote'); block.className = 'md-quote'; block.append(renderSafeMarkdown(quoteLines.join('\n'))); root.append(block); continue;
+      const block = document.createElement('blockquote'); block.className = 'md-quote';
+      block.append(depth >= MAX_BLOCK_DEPTH ? paragraph(quoteLines.filter((quoted) => quoted.trim())) : renderBlocks(quoteLines, depth + 1));
+      root.append(block); continue;
     }
 
-    const listMatch = line.match(/^\s*((?:[-+*])|(\d+)[.)])\s+(.+)$/);
-    if (listMatch) {
-      const ordered = Boolean(listMatch[2]); const list = document.createElement(ordered ? 'ol' : 'ul'); list.className = 'md-list';
-      if (ordered) list.start = Number(listMatch[2]) || 1;
-      while (index < lines.length) {
-        const current = lines[index].match(/^\s*((?:[-+*])|(\d+)[.)])\s+(.+)$/);
-        if (!current || Boolean(current[2]) !== ordered) break;
-        const item = renderTaskItem(current[3]); index += 1;
-        const continuation = [];
-        while (index < lines.length && /^\s{2,}\S/.test(lines[index]) && !/^\s*(?:[-+*]|\d+[.)])\s+/.test(lines[index])) continuation.push(lines[index++].trim());
-        if (continuation.length) { item.append(document.createElement('br')); item.append(inlineFragment(continuation.join(' '))); }
-        list.append(item);
-      }
-      root.append(list); continue;
+    if (listMarker(line)) {
+      const list = renderList(lines, index, depth);
+      root.append(list.node); index = list.next; continue;
     }
 
     const paragraphLines = [line]; index += 1;
@@ -318,9 +427,10 @@ export function renderSafeMarkdown(value) {
 }
 
 /**
- * Offset just past the last blank line that is outside a code fence. Everything before it is a sequence of
- * finished blocks; only the text after it can still change shape as more tokens arrive. The last line is
- * ignored because it may be incomplete.
+ * Offset just past the last blank line, outside a code fence, after which a new block surely starts: the next
+ * line has text, is not indented and is not a list item (an indented line or a list item could still extend the
+ * list before the blank line). Everything before it is a sequence of finished blocks; only the text after it can
+ * still change shape as more tokens arrive. The last line is ignored because it may be incomplete.
  */
 export function stableBoundary(source) {
   const lines = source.split('\n');
@@ -329,12 +439,15 @@ export function stableBoundary(source) {
   let boundary = 0;
   for (let i = 0; i < lines.length - 1; i += 1) {
     const line = lines[i];
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    const marker = line.trim().match(FENCE_OPEN);
     if (fence) {
-      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && /^ {0,3}(`{3,}|~{3,})\s*$/.test(line)) fence = '';
+      if (closesFence(line, fence)) fence = '';
     } else if (marker) fence = marker[1];
     offset += line.length + 1;
-    if (!fence && !line.trim()) boundary = offset;
+    if (fence || line.trim()) continue;
+    const next = lines[i + 1];
+    const nextComplete = i + 1 < lines.length - 1;
+    if (nextComplete && next.trim() && indentOf(next) < 2 && !LIST_MARKER.test(next)) boundary = offset;
   }
   return boundary;
 }

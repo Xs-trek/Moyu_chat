@@ -35,7 +35,8 @@ export function patchView(patch, revision) {
   const sessions = Array.isArray(view.sessions) ? view.sessions.map((entry) => entry?.localSessionId === current.localSessionId ? { ...entry, ...sessionPatch } : entry) : view.sessions;
   const nextView = { ...view, activeSession: nextSession, sessions };
   state = { ...state, view: nextView, revision: nextRevision || state.revision, route: nextView.route || state.route };
-  emit({ scope: 'stream' });
+  // The patched item and the view before it let the renderer patch just the live reply.
+  emit({ scope: 'stream', item: item && typeof item === 'object' ? item : null, previous: view });
   return true;
 }
 

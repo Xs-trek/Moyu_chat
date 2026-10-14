@@ -599,6 +599,42 @@ function noteMilestones(view, session) {
   if (crossed) setNotice({ level: 'info', text: `这条会话已经游过 ${crossed[1]} token。` });
 }
 
+/** Session fields a streaming patch carries; while they hold still, a patch changed only the live reply. */
+const STREAM_SESSION_FIELDS = ['state', 'canSend', 'canInterrupt', 'canConfigureTurn', 'contextPreparing', 'webPreparingStage', 'postProcessingStage'];
+
+/**
+ * Fast path for a streaming patch (20 per second while a reply streams): when only the live reply changed,
+ * patch that one node instead of reconciling the whole timeline, drawer, navigator and composer, so the
+ * per-frame cost does not grow with the length of the conversation. Returns false when the caller must
+ * fall back to {@link patchConversation}.
+ */
+export function patchStreamItem(change) {
+  const view = getState().view;
+  const session = view?.activeSession;
+  const before = change?.previous?.activeSession;
+  const item = change?.item;
+  if (!session || !before || !item || view.route !== 'conversation' || before.localSessionId !== session.localSessionId) return false;
+  if (item.kind !== 'message' || item.role !== 'assistant') return false;
+  if (STREAM_SESSION_FIELDS.some((key) => (before[key] ?? null) !== (session[key] ?? null))) return false;
+  const scroll = document.querySelector('.timeline-scroll');
+  const timeline = scroll?.querySelector('.timeline');
+  if (!timeline || scroll.dataset.sessionId !== session.localSessionId || selectionInside(timeline)) return false;
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  const index = messages.findIndex((entry) => Number(entry?.localSeq) === Number(item.localSeq));
+  if (index < 0) return false;
+  // Only rows up to the next user message can attach to this reply (its usage row), so project just those.
+  let end = index + 1;
+  while (end < messages.length && !(messages[end]?.kind === 'message' && messages[end]?.role === 'user')) end += 1;
+  const projected = vm.timelineProjection(messages.slice(index, end))[0];
+  const key = vm.timelineKey(projected);
+  const node = timeline.children.length ? [...timeline.children].find((child) => child.dataset.itemKey === key) : null;
+  if (!node || !node.classList.contains('assistant')) return false;
+  const anchor = captureTimelineAnchor();
+  patchAssistant(node, projected, timelineContext(view, session));
+  if (anchor) restoreTimelineAnchor(anchor, session.localSessionId);
+  return true;
+}
+
 /** Patch the volatile conversation projection without replacing the focused composer/IME subtree. */
 export function patchConversation() {
   const view = getState().view;

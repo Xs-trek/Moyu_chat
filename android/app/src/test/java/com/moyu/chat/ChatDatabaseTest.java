@@ -389,11 +389,35 @@ public class ChatDatabaseTest {
 
         assertEquals("stale running session must be marked failed", "failed", db.getSession(running.id).state);
         JSONArray timeline = db.timeline(running.id);
-        assertEquals("stale streaming projection must be removed, user message kept", 1, timeline.length());
+        assertEquals("question, the kept partial answer and an error row", 3, timeline.length());
         assertEquals("question", timeline.getJSONObject(0).optString("text"));
+        JSONObject partial = timeline.getJSONObject(1);
+        assertEquals("partial", partial.optString("text"));
+        assertFalse(partial.optBoolean("streaming"));
+        assertTrue(partial.optBoolean("incomplete"));
+        assertEquals(ChatDatabase.PROCESS_DIED, partial.optString("terminalCode"));
+        assertFalse(partial.has("streamStage"));
+        assertEquals("error", timeline.getJSONObject(2).optString("kind"));
+        assertEquals(ChatDatabase.PROCESS_DIED, timeline.getJSONObject(2).optString("code"));
 
         assertEquals("healthy sessions must be untouched", "completed", db.getSession(healthy.id).state);
         assertEquals(2, db.timeline(healthy.id).length());
+    }
+
+    @Test public void recoverInterruptedSessionsRemovesEmptyStreamingRows() throws Exception {
+        TestDeployments.save(db, provider("p-empty"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-empty", "m", null, null);
+        db.appendTimeline(s.id, "u", message("user", "question"));
+        db.appendTimeline(s.id, "live", new JSONObject().put("kind", "message").put("role", "assistant")
+                .put("text", "").put("streaming", true).put("streamStage", "connecting").put("createdAt", Instant.now().toString()));
+        s = db.getSession(s.id); s.state = "running"; db.saveSession(s);
+
+        db.recoverInterruptedSessions();
+
+        JSONArray timeline = db.timeline(s.id);
+        assertEquals("an answer that showed nothing is removed; the error row says why", 2, timeline.length());
+        assertEquals("question", timeline.getJSONObject(0).optString("text"));
+        assertEquals("error", timeline.getJSONObject(1).optString("kind"));
     }
 
     @Test public void recoverInterruptedSessionsAlsoRepairsDivergedStreamingFlag() throws Exception {
@@ -408,8 +432,9 @@ public class ChatDatabaseTest {
 
         assertEquals("a durable streaming row cannot survive cold start", "failed", db.getSession(s.id).state);
         JSONArray timeline = db.timeline(s.id);
-        assertEquals(1, timeline.length());
-        assertEquals("question", timeline.getJSONObject(0).optString("text"));
+        assertEquals(3, timeline.length());
+        assertFalse("no row stays streaming", timeline.getJSONObject(1).optBoolean("streaming"));
+        assertTrue(timeline.getJSONObject(1).optBoolean("incomplete"));
     }
 
     @Test public void finalizeTurnSettlesLiveProjectionAndSessionTogether() throws Exception {

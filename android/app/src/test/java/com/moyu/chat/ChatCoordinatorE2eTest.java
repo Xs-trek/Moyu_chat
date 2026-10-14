@@ -1234,6 +1234,34 @@ public class ChatCoordinatorE2eTest {
         });
     }
 
+    @Test public void sendRefusedBeforeAcceptanceRestoresDraftAndSaysSo() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        app.database().setDraft(sessionId, "stale half-typed draft");
+        secrets.values.clear(); // freezeTurnConfig refuses: credential missing
+        String submitted = "the message the composer already cleared";
+
+        String id = post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", submitted));
+        JSONObject result = awaitResult(id);
+
+        assertFalse(result.optBoolean("ok"));
+        assertTrue("the result tells the WebView the text is the draft again", result.optJSONObject("data").optBoolean("draftRestored"));
+        assertEquals(submitted, app.database().getSession(sessionId).draft);
+        assertEquals("nothing was accepted", 0, app.database().timeline(sessionId).length());
+    }
+
+    @Test public void savingADraftPushesNoView() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        int before = host.envelopes.size();
+        String id = post("chat.session.saveDraft", new JSONObject().put("localSessionId", sessionId).put("text", "typing"));
+        assertTrue(awaitResult(id).optBoolean("ok"));
+        assertEquals("typing", app.database().getSession(sessionId).draft);
+        synchronized (host.envelopes) {
+            for (JSONObject e : host.envelopes.subList(before, host.envelopes.size())) assertNotEquals("view.full", e.optString("type"));
+        }
+    }
+
     @Test public void submittedTextStaysOutOfComposerWhenContextPreparationFails() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sessionId = createSession();

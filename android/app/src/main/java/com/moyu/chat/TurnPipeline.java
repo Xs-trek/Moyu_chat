@@ -201,9 +201,9 @@ final class TurnPipeline {
                 r.prompt = contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "");
                 r.compactionPlan = r.checkpointAllowed ? contexts.compactionPlan(session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
                 r.needsCheckpoint = r.compactionPlan != null;
-                r.trace().end(stage, TurnTrace.OK, new JSONObject().put("routed", routed != null)
+                r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.ROUTE, new JSONObject().put("routed", routed != null)
                         .put("domain", r.taskProfile.domain).put("taskType", r.taskProfile.taskType)
-                        .put("depth", r.taskProfile.depth).put("confidence", r.taskProfile.confidence));
+                        .put("depth", r.taskProfile.depth).put("confidence", r.taskProfile.confidence)));
             }
             if (!r.needsCheckpoint) r.trace().skip(TurnTrace.CHECKPOINT, r.checkpointAllowed ? "within_budget" : "mode_off");
             if (r.needsCheckpoint) {
@@ -216,8 +216,8 @@ final class TurnPipeline {
                     db.saveSession(session);
                     r.prompt = contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "");
                 }
-                r.trace().end(stage, TurnTrace.OK, new JSONObject().put("updated", update != null)
-                        .put("coveredItems", update == null ? session.checkpointCoveredItems : update.coveredItems));
+                r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.CHECKPOINT, new JSONObject().put("updated", update != null)
+                        .put("coveredItems", update == null ? session.checkpointCoveredItems : update.coveredItems)));
             }
         } catch (Exception preparationError) {
             r.trace().fail(stage, "context_prepare_failed");
@@ -250,10 +250,10 @@ final class TurnPipeline {
             if (r.webPlanning && env.clearWebStage(r.id)) env.emitStreamingView(r.id);
         }
         WebOrchestrator.Plan plan = r.webPlan;
-        r.trace().end(span, TurnTrace.OK, new JSONObject().put("webMode", r.config.webMode).put("useWeb", plan.useWeb)
+        r.trace().end(span, TurnTrace.OK, withCallFailure(r, TurnTrace.WEB_PLAN, new JSONObject().put("webMode", r.config.webMode).put("useWeb", plan.useWeb)
                 .put("plannerCalled", plan.plannerAttempted).put("intent", plan.intent)
                 .put("queries", new JSONArray(plan.queries)).put("urls", plan.urls.size())
-                .put("followUp", r.webFollowUp != null && r.webFollowUp.previousTurnUsedWeb));
+                .put("followUp", r.webFollowUp != null && r.webFollowUp.previousTurnUsedWeb)));
         return !cancelled(r);
     }
 
@@ -494,10 +494,10 @@ final class TurnPipeline {
             if (!repaired) attachProviderContinuation(seed, r.config, providerContinuationItems);
         } catch (Exception ignored) { }
         try {
-            r.trace().end(repairSpan, TurnTrace.OK, new JSONObject().put("repaired", repaired));
-            r.trace().end(verifySpan, TurnTrace.OK, new JSONObject().put("status", verification.status).put("verdict", verification.verdict)
+            r.trace().end(repairSpan, TurnTrace.OK, withCallFailure(r, TurnTrace.REPAIR, new JSONObject().put("repaired", repaired)));
+            r.trace().end(verifySpan, TurnTrace.OK, withCallFailure(r, TurnTrace.VERIFY, new JSONObject().put("status", verification.status).put("verdict", verification.verdict)
                     .put("risk", decision.risk).put("action", terminalAction).put("repairAttempted", repairAttempted)
-                    .put("repaired", repaired).put("repairLimitReached", repairLimitReached).put("attempts", attempts.length()));
+                    .put("repaired", repaired).put("repairLimitReached", repairLimitReached).put("attempts", attempts.length())));
         } catch (Exception ignored) { }
         finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, null);
     }
@@ -529,12 +529,19 @@ final class TurnPipeline {
         finish(r, "", "", new JSONArray(), new LinkedHashMap<>(), "", new String[]{code, summary});
     }
 
+    /** Adds why the stage's last helper call failed (provider error code, "timeout" or "cancelled"), when it did. */
+    private static JSONObject withCallFailure(TurnRun r, String stage, JSONObject detail) throws org.json.JSONException {
+        String failure = r.control.usage.stageFailure(stage);
+        if (failure != null) detail.put("callFailure", failure);
+        return detail;
+    }
+
     void settleUsage(TurnRun r, long firstOutputNanos) {
         TurnControl control = r.control;
         JSONObject usageState = control.usageState;
         try {
             if (env.ownsTurn(r.id, control)) control.usage.project(usageState);
-            long finished = System.nanoTime();
+            long finished = control.durationNow();
             usageState.put("requestDurationMs", Math.max(0L, (finished - r.requestStartedNanos) / 1_000_000L));
             if (firstOutputNanos > 0L) {
                 long outputDurationMs = Math.max(1L, (finished - firstOutputNanos) / 1_000_000L);
@@ -556,7 +563,7 @@ final class TurnPipeline {
             try {
                 control.usage.project(control.usageState);
                 control.usageState.put("requestDurationMs", Math.max(0L,
-                        (System.nanoTime() - control.requestStartedNanos) / 1_000_000L));
+                        (control.durationNow() - control.requestStartedNanos) / 1_000_000L));
                 db.updateTurnUsage(control.turnId, control.usageState);
             } catch (Exception ignored) { }
         }

@@ -76,6 +76,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         public org.json.JSONObject headers;
         public String reasoningWire = ReasoningPolicy.WIRE_NONE;
         public String thinkingMode = ReasoningPolicy.THINKING_PROVIDER_DEFAULT;
+        /** Request-local: the effort levels the deployment declares ('' = no effort selector). */
+        public String reasoningLevels = "";
         public String serviceTier = "";
         public int thinkingBudgetTokens = 0;
         public int contextTokens = ContextBudgetManager.DEFAULT_CONTEXT_TOKENS;
@@ -365,7 +367,14 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return out;
     }
 
-    /** Cold-start recovery: no provider turn can survive process death, so every durable streaming row is stale. */
+    static final String PROCESS_DIED = "process_died";
+    static final String PROCESS_DIED_SUMMARY = "应用在生成过程中被关闭，回答没有完成";
+
+    /**
+     * Cold-start recovery: no provider turn can survive process death, so every durable streaming row is stale.
+     * A row that already shows text, reasoning or images is kept as an incomplete answer (the same shape
+     * {@code finalizeTurn} gives a failed turn); an empty one is removed. Each affected session gets an error row.
+     */
     public synchronized void recoverInterruptedSessions() {
         SQLiteDatabase db = getWritableDatabase();
         db.execSQL("UPDATE turns SET status='failed',terminal_code='process_died',ended_at=? WHERE status='running'", new Object[]{Instant.now().toString()});
@@ -373,26 +382,55 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         try (Cursor c = db.rawQuery("SELECT local_id FROM sessions WHERE state='running'", null)) {
             while (c.moveToNext()) affected.add(c.getString(0));
         }
-        ArrayList<String> staleKeys = new ArrayList<>();
+        ArrayList<String[]> staleRows = new ArrayList<>(); // {item_key, session_id, kept body or null}
         try (Cursor c = db.rawQuery("SELECT item_key,session_id,body FROM timeline WHERE instr(body,'\"streaming\":true')>0", null)) {
             while (c.moveToNext()) {
                 try {
                     JSONObject body = new JSONObject(c.getString(2));
-                    if (body.optBoolean("streaming", false)) { staleKeys.add(c.getString(0)); affected.add(c.getString(1)); }
+                    if (!body.optBoolean("streaming", false)) continue;
+                    staleRows.add(new String[]{c.getString(0), c.getString(1), partialAnswer(body)});
+                    affected.add(c.getString(1));
                 } catch (Exception ignored) { }
             }
         }
-        if (affected.isEmpty() && staleKeys.isEmpty()) return;
+        if (affected.isEmpty()) return;
         db.beginTransaction();
         try {
-            for (String key : staleKeys) db.delete("timeline", "item_key=?", new String[]{key});
+            for (String[] stale : staleRows) {
+                if (stale[2] == null) { db.delete("timeline", "item_key=?", new String[]{stale[0]}); continue; }
+                ContentValues row = new ContentValues(); row.put("body", stale[2]);
+                db.update("timeline", row, "item_key=?", new String[]{stale[0]});
+                try { updatePreviewFromBody(db, stale[1], new JSONObject(stale[2])); } catch (Exception ignored) { }
+            }
             String now = Instant.now().toString();
             for (String sessionId : affected) {
+                int seq;
+                try (Cursor c = db.rawQuery("SELECT COALESCE(MAX(local_seq),0)+1 FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+                    seq = c.moveToFirst() ? c.getInt(0) : 1;
+                }
+                JSONObject error = new JSONObject().put("kind", "error").put("code", PROCESS_DIED)
+                        .put("summary", PROCESS_DIED_SUMMARY).put("createdAt", now).put("localSeq", seq);
+                ContentValues errorRow = new ContentValues(); errorRow.put("item_key", "error:" + UUID.randomUUID()); errorRow.put("session_id", sessionId);
+                errorRow.put("local_seq", seq); errorRow.put("kind", "error"); errorRow.put("body", error.toString()); errorRow.put("created_at", now);
+                db.insertWithOnConflict("timeline", null, errorRow, SQLiteDatabase.CONFLICT_ABORT);
                 ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", now);
                 db.update("sessions", state, "local_id=?", new String[]{sessionId});
             }
             db.setTransactionSuccessful();
+        } catch (org.json.JSONException error) {
+            throw new IllegalStateException(error);
         } finally { db.endTransaction(); }
+    }
+
+    /** The settled body for a stale streaming row that already shows something, or null when it is empty. */
+    private static String partialAnswer(JSONObject body) throws org.json.JSONException {
+        JSONArray media = body.optJSONArray("attachments");
+        boolean shows = !body.optString("text", "").isEmpty() || !body.optString("reasoning", "").isEmpty()
+                || (media != null && media.length() > 0);
+        if (!shows || !"assistant".equals(body.optString("role", ""))) return null;
+        JSONObject kept = new JSONObject(body.toString()).put("streaming", false).put("incomplete", true).put("terminalCode", PROCESS_DIED);
+        kept.remove("streamStage");
+        return kept.toString();
     }
 
     /** Deletes one local session and all derived lexical-index data that belongs to it. */
@@ -1308,6 +1346,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         out.reasoningWire = ReasoningPolicy.normalizeWire(profile.reasoningWire, out.protocol);
         out.contextTokens = profile.contextTokens; out.inputTokens = profile.inputTokens; out.maxOutputTokens = profile.maxOutputTokens;
         out.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); out.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
+        out.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
         out.serviceTier = profile.serviceTier == null ? "" : profile.serviceTier;
         out.sendOutputCap = DeploymentResolver.sendsOutputCap(out.protocol, profile.sources);
         return out;
@@ -1325,6 +1364,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         out.reasoningWire = ReasoningPolicy.normalizeWire(session.reasoningWire, out.protocol);
         out.contextTokens = session.contextTokens; out.inputTokens = session.inputTokens; out.maxOutputTokens = session.maxOutputTokens;
         out.thinkingMode = ReasoningPolicy.normalizeThinkingMode(session.thinkingMode); out.thinkingBudgetTokens = Math.max(0, session.thinkingBudgetTokens);
+        out.reasoningLevels = ReasoningPolicy.normalizeLevels(session.reasoningLevels);
         out.serviceTier = session.serviceTier == null ? "" : session.serviceTier;
         out.sendOutputCap = session.sendOutputCap || AnthropicMessagesTransport.PROTOCOL.equals(out.protocol);
         return out;

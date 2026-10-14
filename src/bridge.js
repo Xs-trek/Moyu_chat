@@ -62,7 +62,11 @@ export function bindHost(onView) {
         waiters.delete(envelope.requestId);
         clearTimeout(waiter.timer);
         if (envelope.ok) waiter.resolve(envelope.data ?? null);
-        else waiter.reject(new Error(envelope.error?.summary || '操作失败'));
+        else {
+          const error = new Error(envelope.error?.summary || '操作失败');
+          error.data = envelope.data ?? null;
+          waiter.reject(error);
+        }
         return;
       }
       if (!envelope.ok) notice('error', envelope.error?.summary || '操作失败');

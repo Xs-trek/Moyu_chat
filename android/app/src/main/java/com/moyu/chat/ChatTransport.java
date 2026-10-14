@@ -35,7 +35,11 @@ interface ChatTransport {
          */
         default void onWire(String direction, String text) { }
     }
-    interface Turn { void cancel(); }
+    interface Turn {
+        void cancel();
+        /** Cancel because the caller's deadline passed; usage tracking records it as a timeout, not a user stop. */
+        default void timeout() { cancel(); }
+    }
 
     Turn stream(ChatDatabase.Provider provider, String apiKey, String model, String reasoningEffort, CanonicalPrompt prompt, Sink sink);
 

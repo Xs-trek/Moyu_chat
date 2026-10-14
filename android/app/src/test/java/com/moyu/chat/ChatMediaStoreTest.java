@@ -22,6 +22,18 @@ public class ChatMediaStoreTest {
         assertTrue(store.exists(image.getString("mediaId")));
     }
 
+    @Test public void importSizingLimitsTheLongEdgeAndNeverUpscales() {
+        assertArrayEquals(new int[]{2048, 1536}, ChatMediaStore.scaledSize(4000, 3000, 2048));
+        assertArrayEquals(new int[]{1152, 2048}, ChatMediaStore.scaledSize(2250, 4000, 2048));
+        assertArrayEquals(new int[]{800, 600}, ChatMediaStore.scaledSize(800, 600, 2048));
+        assertArrayEquals(new int[]{2048, 1}, ChatMediaStore.scaledSize(8192, 1, 2048));
+        // Subsampling decodes no smaller than the target long edge.
+        assertEquals(1, ChatMediaStore.sampleSize(4000, 3000, 2048));
+        assertEquals(2, ChatMediaStore.sampleSize(4096, 3072, 2048));
+        assertEquals(4, ChatMediaStore.sampleSize(8192, 6000, 2048));
+        assertEquals(1, ChatMediaStore.sampleSize(1000, 1000, 2048));
+    }
+
     @Test public void excessivePixelAreaAndLongThinImageAreRejected() {
         ChatMediaStore.validateDimensions(4096, 4096);
         ChatMediaStore.validateDimensions(8192, 1);

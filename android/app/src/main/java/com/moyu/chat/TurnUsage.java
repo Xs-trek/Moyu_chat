@@ -23,6 +23,8 @@ final class TurnUsage {
         final int index;
         Integer input, output;
         boolean ended;
+        /** Why the call produced no usable result: the provider's error code, or "timeout" / "cancelled". */
+        String failure;
         RequestUsage(Kind kind, String stage, int index) { this.kind = kind; this.stage = stage; this.index = index; }
     }
 
@@ -44,6 +46,19 @@ final class TurnUsage {
     }
 
     private synchronized void end(RequestUsage request) { request.ended = true; }
+
+    private synchronized void fail(RequestUsage request, String code) {
+        if (request.failure == null && !request.ended) request.failure = code == null || code.isEmpty() ? "provider_error" : code;
+    }
+
+    /** The failure of the last call a stage made, or null when it succeeded (or made no call). */
+    synchronized String stageFailure(String stage) {
+        for (int i = requests.size() - 1; i >= 0; i--) {
+            RequestUsage request = requests.get(i);
+            if (request.stage.equals(stage)) return request.failure;
+        }
+        return null;
+    }
 
     ChatTransport track(ChatTransport delegate, Kind kind) { return track(delegate, kind, kind.name().toLowerCase(java.util.Locale.ROOT)); }
 
@@ -81,14 +96,19 @@ final class TurnUsage {
                         sink.onWire(direction, text);
                     }
                     @Override public void onError(String code, String summary, boolean retryable) {
-                        end(request); sink.onError(code, summary, retryable);
+                        fail(request, code); end(request); sink.onError(code, summary, retryable);
                     }
                 };
                 try {
                     Turn turn = delegate.stream(provider, key, model, effort, prompt, options, tracked);
-                    return () -> {
-                        try { if (turn != null) turn.cancel(); }
-                        finally { end(request); }
+                    return new Turn() {
+                        @Override public void cancel() { stop("cancelled"); }
+                        @Override public void timeout() { stop("timeout"); }
+                        private void stop(String reason) {
+                            fail(request, reason);
+                            try { if (turn != null) turn.cancel(); }
+                            finally { end(request); }
+                        }
                     };
                 } catch (RuntimeException error) {
                     end(request);

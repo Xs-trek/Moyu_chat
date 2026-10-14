@@ -169,7 +169,23 @@ const ACTIONS = { accept: '采纳', repair: '需修正', abstain: '存疑' };
 /** Stages that exist only to help the main call; their share of tokens is what "is this helper still worth it" weighs. */
 const HELPER_STAGES = new Set(['route', 'checkpoint', 'web_plan', 'verify', 'repair', 'subagent']);
 
+const CALL_FAILURES = { timeout: '调用超时', cancelled: '调用被停止', response_incomplete: '输出达到上限', empty_stream: '没有返回内容', network_error: '网络错误', stream_timeout: '流中断' };
+
+/** Why a helper's model call failed, as shown after the stage note. */
+export function callFailureLabel(code) {
+  const value = String(code || '');
+  if (!value) return '';
+  const http = value.match(/^http_(\d{3})$/);
+  return `调用失败：${CALL_FAILURES[value] || (http ? `HTTP ${http[1]}` : value)}`;
+}
+
 function stageNote(span) {
+  const note = stageSummary(span);
+  const failure = callFailureLabel(span.detail?.callFailure);
+  return [note, failure].filter(Boolean).join(' · ');
+}
+
+function stageSummary(span) {
   const d = span.detail || {};
   switch (span.stage) {
     case 'accept': return [contextLabel(d.effectiveContextMode || d.contextMode), d.harnessPreset].filter(Boolean).join(' · ');

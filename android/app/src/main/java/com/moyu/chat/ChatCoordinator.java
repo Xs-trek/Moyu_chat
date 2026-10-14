@@ -161,25 +161,25 @@ final class ChatCoordinator implements AutoCloseable {
                         throw new IllegalStateException("session busy; message kept as next draft");
                     }
                     if (message.trim().isEmpty() && db.draftMedia(sessionId).length() == 0) break;
-                    // Send is self-contained with respect to the visible turn setting. A preceding
-                    // reasoning.set bridge message is still persisted normally, but Send must not rely
-                    // on cross-bridge scheduling order to know what the user selected for this turn.
-                    if (p.has("reasoningEffort")) setSessionReasoning(sessionId, p.optString("reasoningEffort", ReasoningPolicy.DEFAULT));
-                    if (p.has("webMode")) setSessionWebMode(sessionId, p.optString("webMode", ChatTurnOptions.WEB_AUTO));
                     final String asyncRequestId = requestId;
-                    // All user-selected wire/session capabilities plus provider config/secret/credential epoch
-                    // are frozen while this serialized intent worker owns the turn. UI navigation or profile
-                    // edits cannot relabel an already accepted request.
-                    final TurnConfig turnConfig = freezeTurnConfig(sessionId);
-                    if (!host.setTurnRuntimeActive(sessionId, true)) {
-                        db.setDraft(sessionId, message); // the turn was not accepted; restore the exact submitted text.
-                        throw new IllegalStateException("unable to acquire foreground generation runtime");
-                    }
+                    final TurnConfig turnConfig;
                     final TurnControl turnControl = new TurnControl();
-                    if (turnControls.putIfAbsent(sessionId, turnControl) != null) {
-                        host.setTurnRuntimeActive(sessionId, false);
-                        throw new IllegalStateException("session busy");
-                    }
+                    try {
+                        // Send is self-contained with respect to the visible turn setting. A preceding
+                        // reasoning.set bridge message is still persisted normally, but Send must not rely
+                        // on cross-bridge scheduling order to know what the user selected for this turn.
+                        if (p.has("reasoningEffort")) setSessionReasoning(sessionId, p.optString("reasoningEffort", ReasoningPolicy.DEFAULT));
+                        if (p.has("webMode")) setSessionWebMode(sessionId, p.optString("webMode", ChatTurnOptions.WEB_AUTO));
+                        // All user-selected wire/session capabilities plus provider config/secret/credential epoch
+                        // are frozen while this serialized intent worker owns the turn. UI navigation or profile
+                        // edits cannot relabel an already accepted request.
+                        turnConfig = freezeTurnConfig(sessionId);
+                        if (!host.setTurnRuntimeActive(sessionId, true)) throw new IllegalStateException("unable to acquire foreground generation runtime");
+                        if (turnControls.putIfAbsent(sessionId, turnControl) != null) {
+                            host.setTurnRuntimeActive(sessionId, false);
+                            throw new IllegalStateException("session busy");
+                        }
+                    } catch (Exception rejected) { sendRejected(requestId, sessionId, message, rejected); return; }
                     // The composer is cleared only after the runtime lease makes this an accepted turn.
                     db.setDraft(sessionId, "");
                     startingSessions.add(sessionId);
@@ -210,13 +210,13 @@ final class ChatCoordinator implements AutoCloseable {
                     } catch (Exception schedulingError) {
                         turnControls.remove(sessionId, turnControl);
                         startingSessions.remove(sessionId);
-                        db.setDraft(sessionId, message);
                         host.setTurnRuntimeActive(sessionId, false);
-                        throw schedulingError;
+                        sendRejected(requestId, sessionId, message, schedulingError);
                     }
                     return;
                 }
-                case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); break;
+                // The composer already shows what was typed: saving it changes nothing on screen, so no view push.
+                case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); result(requestId, true, null); return;
                 case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;
                 case "chat.attachment.remove": {
                     db.removeDraftMedia(required(p, "localSessionId"), required(p, "mediaId"));
@@ -433,6 +433,21 @@ final class ChatCoordinator implements AutoCloseable {
                 || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id);
     }
 
+    /**
+     * A send that was not accepted puts the exact submitted text back as the draft, and the result says so
+     * ({@code draftRestored}), so the composer the WebView already cleared can show it again.
+     */
+    private void sendRejected(String requestId, String sessionId, String message, Exception error) {
+        boolean restored = false;
+        if (message != null && !message.trim().isEmpty()) {
+            try { db.setDraft(sessionId, message); restored = true; } catch (Exception ignored) { }
+        }
+        JSONObject data = null;
+        try { data = new JSONObject().put("draftRestored", restored); } catch (Exception ignored) { }
+        result(requestId, false, safe(error), data);
+        emitView();
+    }
+
     private void saveDraft(String id, String text) {
         if (db.getSession(id) == null) throw new IllegalArgumentException("session not found");
         // A running turn may coexist with the user's next-turn draft. Frontend draft generations
@@ -636,14 +651,15 @@ final class ChatCoordinator implements AutoCloseable {
                     .put("appearance", new JSONObject().put("theme", theme).put("resolvedTheme", resolvedTheme).put("tone", tone).put("delight", delight));
             view.put("providers", config.providersView());
             java.util.List<ChatDatabase.Session> sessionRows = db.listSessions();
-            JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : sessionRows) sessions.put(sessionJson(s, false)); view.put("sessions", sessions);
+            ViewLookups lookups = new ViewLookups();
+            JSONArray sessions = new JSONArray(); for (ChatDatabase.Session s : sessionRows) sessions.put(sessionJson(s, false, lookups)); view.put("sessions", sessions);
             view.put("usageToday", usageToday(sessionRows));
             if (activeSessionId != null) {
                 ChatDatabase.Session active = db.getSession(activeSessionId);
                 if (active != null) {
                     view.put("activeLocalSessionId", activeSessionId);
                     // Route-scoped projection: non-conversation screens never pay to serialize/bridge the full timeline.
-                    if ("conversation".equals(route)) view.put("activeSession", sessionJson(active, true));
+                    if ("conversation".equals(route)) view.put("activeSession", sessionJson(active, true, lookups));
                 }
             }
             view.put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
@@ -752,11 +768,37 @@ final class ChatCoordinator implements AutoCloseable {
         return out;
     }
 
-    private JSONObject sessionJson(ChatDatabase.Session s, boolean detail) throws Exception {
-        ChatDatabase.Provider p = db.getProvider(s.providerId);
-        ChatDatabase.ModelProfile modelProfile = s.modelProfileId == null ? null : db.getModelProfile(s.modelProfileId);
-        ChatDatabase.Provider deployment = p == null ? null : db.sessionDeployment(s);
-        ChatDatabase.Snapshot originSnap = s.originSnapshotId == null ? null : db.getSnapshot(s.originSnapshotId);
+    /**
+     * Rows read once per view build. Sessions share a handful of accounts, profiles and routes, so the session
+     * list would otherwise re-read the same rows for every session on every view push.
+     */
+    private final class ViewLookups {
+        private final java.util.Map<String, Object> rows = new java.util.HashMap<>();
+        @SuppressWarnings("unchecked")
+        private <T> T row(String kind, String id, java.util.function.Function<String, T> read) {
+            if (id == null) return null;
+            String key = kind + ':' + id;
+            if (!rows.containsKey(key)) rows.put(key, read.apply(id));
+            return (T) rows.get(key);
+        }
+        ChatDatabase.Provider provider(String id) { return row("provider", id, db::getProvider); }
+        ChatDatabase.ModelProfile profile(String id) { return row("profile", id, db::getModelProfile); }
+        ChatDatabase.Snapshot snapshot(String id) { return row("snapshot", id, db::getSnapshot); }
+        /** Same result as {@link ChatDatabase#sessionDeployment}, from the shared rows. */
+        ChatDatabase.Provider deployment(ChatDatabase.Session s) {
+            ChatDatabase.Provider shared = provider(s.providerId);
+            ChatDatabase.Route route = row("route", s.routeId, db::getRoute);
+            if (shared == null || route == null) return null;
+            try { return ChatDatabase.deploymentProvider(shared, route, s); }
+            catch (RuntimeException invalid) { return null; }
+        }
+    }
+
+    private JSONObject sessionJson(ChatDatabase.Session s, boolean detail, ViewLookups lookups) throws Exception {
+        ChatDatabase.Provider p = lookups.provider(s.providerId);
+        ChatDatabase.ModelProfile modelProfile = lookups.profile(s.modelProfileId);
+        ChatDatabase.Provider deployment = p == null ? null : lookups.deployment(s);
+        ChatDatabase.Snapshot originSnap = lookups.snapshot(s.originSnapshotId);
         boolean starting = startingSessions.contains(s.id);
         boolean preparing = preparingSessions.contains(s.id);
         String webPreparingStage = webPreparingStages.get(s.id);

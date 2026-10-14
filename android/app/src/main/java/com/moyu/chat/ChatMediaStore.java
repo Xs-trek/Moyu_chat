@@ -2,7 +2,9 @@ package com.moyu.chat;
 
 import android.content.ContentResolver;
 import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.net.Uri;
 import android.provider.OpenableColumns;
 import android.util.Base64;
@@ -42,7 +44,96 @@ final class ChatMediaStore {
             if (in == null) throw new IllegalArgumentException("cannot open selected image");
             bytes = readBounded(in);
         }
-        return persist(bytes, mime, name);
+        Encoded encoded = prepareImport(bytes, mime);
+        return persist(encoded.bytes, encoded.mime, renamed(name, mime, encoded.mime));
+    }
+
+    /** Long edge of an imported image. Larger photos cost upload and tokens on every later turn that resends them. */
+    static final int IMPORT_LONG_EDGE = 2048;
+    static final int IMPORT_JPEG_QUALITY = 85;
+
+    private static final class Encoded {
+        final byte[] bytes; final String mime;
+        Encoded(byte[] bytes, String mime) { this.bytes = bytes; this.mime = mime; }
+    }
+
+    /**
+     * Imported images are re-encoded once: EXIF orientation is applied and all metadata (location, device) is
+     * dropped, the long edge is limited to {@link #IMPORT_LONG_EDGE}, photos become JPEG, and PNG stays PNG so
+     * screenshot text stays sharp. GIF is kept as is (re-encoding would drop its animation; it has no EXIF).
+     */
+    private static Encoded prepareImport(byte[] bytes, String mime) throws Exception {
+        if ("image/gif".equals(mime)) return new Encoded(bytes, mime);
+        BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeStream(new ByteArrayInputStream(bytes), null, bounds);
+        validateDimensions(bounds.outWidth, bounds.outHeight);
+        BitmapFactory.Options decode = new BitmapFactory.Options();
+        decode.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, IMPORT_LONG_EDGE);
+        Bitmap source = BitmapFactory.decodeStream(new ByteArrayInputStream(bytes), null, decode);
+        if (source == null) throw new IllegalArgumentException("无法读取这张图片");
+        Bitmap oriented = null;
+        try {
+            int[] size = scaledSize(source.getWidth(), source.getHeight(), IMPORT_LONG_EDGE);
+            Matrix matrix = orientation("image/jpeg".equals(mime) || "image/webp".equals(mime) ? bytes : null);
+            matrix.postScale(size[0] / (float) source.getWidth(), size[1] / (float) source.getHeight());
+            oriented = matrix.isIdentity() ? source
+                    : Bitmap.createBitmap(source, 0, 0, source.getWidth(), source.getHeight(), matrix, true);
+            boolean png = "image/png".equals(mime) || ("image/webp".equals(mime) && oriented.hasAlpha());
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            if (!oriented.compress(png ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG, IMPORT_JPEG_QUALITY, out)) {
+                throw new IllegalArgumentException("无法处理这张图片");
+            }
+            return new Encoded(out.toByteArray(), png ? "image/png" : "image/jpeg");
+        } finally {
+            if (oriented != null && oriented != source) oriented.recycle();
+            source.recycle();
+        }
+    }
+
+    /** Largest power-of-two subsampling that still decodes at least {@code longEdge} on the long side. */
+    static int sampleSize(int width, int height, int longEdge) {
+        int sample = 1;
+        while (Math.max(width, height) / (sample * 2) >= longEdge) sample *= 2;
+        return sample;
+    }
+
+    /** Size with the long edge limited to {@code longEdge}, aspect kept, never upscaled. */
+    static int[] scaledSize(int width, int height, int longEdge) {
+        int longest = Math.max(width, height);
+        if (longest <= longEdge) return new int[]{width, height};
+        double scale = longEdge / (double) longest;
+        return new int[]{Math.max(1, (int) Math.round(width * scale)), Math.max(1, (int) Math.round(height * scale))};
+    }
+
+    /**
+     * The rotation/mirroring an EXIF orientation tag asks for (identity when there is none). The framework
+     * ExifInterface is enough here: minSdk 26 is past the old-platform bugs the androidx copy exists for.
+     */
+    @android.annotation.SuppressLint("ExifInterface")
+    private static Matrix orientation(byte[] jpegOrWebp) {
+        Matrix matrix = new Matrix();
+        if (jpegOrWebp == null) return matrix;
+        int value;
+        try { value = new android.media.ExifInterface(new ByteArrayInputStream(jpegOrWebp)).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL); }
+        catch (Exception unreadable) { return matrix; }
+        switch (value) {
+            case android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL: matrix.setScale(-1, 1); break;
+            case android.media.ExifInterface.ORIENTATION_ROTATE_180: matrix.setRotate(180); break;
+            case android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL: matrix.setScale(1, -1); break;
+            case android.media.ExifInterface.ORIENTATION_TRANSPOSE: matrix.setRotate(90); matrix.postScale(-1, 1); break;
+            case android.media.ExifInterface.ORIENTATION_ROTATE_90: matrix.setRotate(90); break;
+            case android.media.ExifInterface.ORIENTATION_TRANSVERSE: matrix.setRotate(-90); matrix.postScale(-1, 1); break;
+            case android.media.ExifInterface.ORIENTATION_ROTATE_270: matrix.setRotate(-90); break;
+            default: break;
+        }
+        return matrix;
+    }
+
+    /** Keeps the picked file's name, with the extension of the format it was re-encoded to. */
+    private static String renamed(String name, String fromMime, String toMime) {
+        if (name == null || fromMime.equals(toMime)) return name;
+        int dot = name.lastIndexOf('.');
+        return (dot > 0 ? name.substring(0, dot) : name) + extension(toMime);
     }
 
     JSONObject saveBase64Image(String mimeType, String base64, String fileName) throws Exception {

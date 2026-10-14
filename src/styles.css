@@ -497,6 +497,10 @@ h1, h2, h3, p { margin: 0; }
 .markdown-body h4.md-heading, .markdown-body h5.md-heading, .markdown-body h6.md-heading { font-size: 1rem; }
 .markdown-body .md-list { padding-left: 1.4em; }
 .markdown-body .md-list li + li { margin-top: .25em; }
+.markdown-body .md-list li > .md-list, .markdown-body .md-list li > .md-code-block, .markdown-body .md-list li > .md-table-wrap, .markdown-body .md-list li > .md-quote { margin: .4em 0; }
+.markdown-body .md-list li > .md-p { margin-bottom: .5em; }
+.markdown-body .md-list li > :last-child, .markdown-body .md-task-body > :last-child { margin-bottom: 0; }
+.markdown-body .md-task-body { min-width: 0; flex: 1; }
 .markdown-body .md-task-item { list-style: none; display: flex; align-items: flex-start; gap: .5em; margin-left: -1.2em; }
 .markdown-body .md-task-item input { width: 1rem; height: 1rem; margin: .4em 0 0; accent-color: var(--accent); }
 .markdown-body .md-quote { padding: .4em .9em; border-left: 3px solid var(--accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--accent-soft); }

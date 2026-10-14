@@ -5,7 +5,7 @@ import { openModelEditor, openProviderEditor } from './editors.js';
 import { syncSegment } from './dom.js';
 import { reducedMotion } from './morph.js';
 import { createRenderGate } from './render-gate.js';
-import { forgetStats, patchConversation, render, renderNotice, resizeTextarea, setStatsDays, syncTurnNavigator, toggleTurnDetails } from './render.js';
+import { forgetStats, patchConversation, patchStreamItem, render, renderNotice, resizeTextarea, setStatsDays, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
 import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
 import { forgetRemote, onRemoteChange, traceKey } from './remote.js';
@@ -17,6 +17,7 @@ const renderGate = createRenderGate(render);
 onRemoteChange(() => { if (!patchConversation()) renderGate.request(); });
 subscribe((_state, change) => {
   if (change?.scope === 'toast') renderNotice();
+  else if (change?.scope === 'stream' && change.item && patchStreamItem(change)) return;
   else if (!patchConversation()) renderGate.request();
 });
 bindHost((view, revision) => setView(view, revision));
@@ -426,6 +427,16 @@ function resizeComposerTextarea(input) {
   resizeTextarea(input);
 }
 
+/** Put a rejected message back into a composer the user has not typed into since. */
+function restoreComposerText(sessionId, text) {
+  const form = document.querySelector('form[data-form="composer"]');
+  const input = form?.dataset.sessionId === sessionId ? form.elements.namedItem('message') : null;
+  if (!input || input.value) return;
+  input.value = text;
+  input.dataset.projectedDraft = text;
+  resizeComposerTextarea(input);
+}
+
 document.addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.target;
@@ -446,8 +457,16 @@ document.addEventListener('submit', (event) => {
   }
   const reasoningEffort = activeSession?.reasoningEffort;
   const webMode = activeSession?.webMode;
+  // The result of an accepted send arrives when the turn ends; a rejected send fails at once and Native
+  // has put the submitted text back as the draft, so the cleared composer shows it again.
   const requestId = postIntent('chat.session.send', { localSessionId: sessionId, text,
-    ...(reasoningEffort ? { reasoningEffort } : {}), ...(webMode ? { webMode } : {}) });
+    ...(reasoningEffort ? { reasoningEffort } : {}), ...(webMode ? { webMode } : {}) }, {
+    resolve() {},
+    reject(error) {
+      if (error?.data?.draftRestored) restoreComposerText(sessionId, text);
+      setNotice({ level: 'error', text: error?.message || '发送失败' });
+    },
+  });
   if (requestId && input) {
     input.value = '';
     resizeComposerTextarea(input);

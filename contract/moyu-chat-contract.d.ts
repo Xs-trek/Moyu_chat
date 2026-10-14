@@ -35,6 +35,7 @@ export type MoyuChatIntent =
   | UiIntent<'chat.session.model.set', { localSessionId: string; modelProfileId: string }>
   | UiIntent<'chat.session.reasoning.set', { localSessionId: string; reasoningEffort: string }>
   | UiIntent<'chat.session.web.set', { localSessionId: string; webMode: WebMode }>
+  /** A send that is not accepted fails at once with `data: { draftRestored: boolean }`: the submitted text is the draft again. */
   | UiIntent<'chat.session.send', { localSessionId: string; text: string; reasoningEffort?: string; webMode?: WebMode }>
   | UiIntent<'chat.session.saveDraft', { localSessionId: string; text: string }>
   | UiIntent<'chat.attachment.pick', { localSessionId: string }>
@@ -305,7 +306,10 @@ export interface TurnSpanView {
   durationMs: number;
   reason?: string;
   usage?: { calls: number; inputTokens?: number; outputTokens?: number };
-  /** Small decision summary, e.g. route {domain, taskType, confidence}, web_plan {useWeb, queries}, verify {verdict, risk, action, repaired}. */
+  /**
+   * Small decision summary, e.g. route {domain, taskType, confidence}, web_plan {useWeb, queries}, verify {verdict, risk, action, repaired}.
+   * Helper stages add `callFailure` (provider error code, "timeout" or "cancelled") when their last model call failed.
+   */
   detail?: Record<string, unknown>;
 }
 
