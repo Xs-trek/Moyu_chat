@@ -166,7 +166,7 @@ if (/\bput\("text",\s*trimmed\b/.test(coordinator)) fail('send must store the ra
 if (!coordinator.includes('db.recoverInterruptedSessions()')) fail('coordinator must recover stale running sessions at startup');
 if (!coordinator.includes('"assistant:live:" + id + ":" + UUID.randomUUID()')) fail('every provider turn must use a unique live assistant key');
 if (!coordinator.includes('db.beginTurn(') || !coordinator.includes('db.finalizeTurn(')) fail('turn start/finalization must use durable transactional state helpers');
-if (!coordinator.includes('if (activeTurns.containsKey(id)) throw new IllegalStateException("请先停止当前回合再删除会话")')) fail('running provider turns must not be deleted underneath asynchronous callbacks');
+if (!coordinator.includes('if (activeTurns.containsKey(id)) return "请先停止当前回合再删除会话";') || !coordinator.includes('if (busy != null) throw new IllegalStateException(busy);')) fail('running provider turns must not be deleted underneath asynchronous callbacks');
 if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
 if (!coordinator.includes('context.mode.default.set') || !coordinator.includes('defaultContextMode')) fail('v0.0.2 default context-mode authority missing');
 if (!coordinator.includes('web.mode.default.set') || !coordinator.includes('defaultWebMode') || !coordinator.includes('MoyuWebService')) fail('v0.0.2 Web-mode authority/orchestration missing');
@@ -333,6 +333,7 @@ const scrollAnchor = read('src/scroll-anchor.js');
 const indexHtml = read('index.html');
 const morphJs = read('src/morph.js');
 const drawerGesture = read('src/drawer-gesture.js');
+const sessionSelect = read('src/session-select.js');
 const ui = [render, overlays, viewModel, mascot, mainUi, morphJs, drawerGesture].join('\n');
 
 // Host boundary: bounded, revisioned envelopes; streaming patches merge locally.
@@ -342,7 +343,7 @@ if (!viewModel.includes('protocol ≠ capability') || !viewModel.includes('expor
 
 // Security surface of the page itself.
 if (!indexHtml.includes("default-src 'none'; script-src 'self'; style-src 'self'") || !indexHtml.includes("connect-src 'none'")) fail('index.html must keep the strict local-only CSP');
-for (const [file, text] of [['render.js', render], ['overlays.js', overlays], ['mascot.js', mascot], ['main.js', mainUi], ['dom.js', read('src/dom.js')], ['morph.js', morphJs], ['drawer-gesture.js', drawerGesture]]) {
+for (const [file, text] of [['render.js', render], ['overlays.js', overlays], ['mascot.js', mascot], ['main.js', mainUi], ['dom.js', read('src/dom.js')], ['morph.js', morphJs], ['drawer-gesture.js', drawerGesture], ['session-select.js', sessionSelect]]) {
   if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(|outerHTML\s*=/.test(text)) fail(`src/${file}: UI must build DOM nodes, never HTML strings`);
 }
 if (/\.innerHTML\s*=|insertAdjacentHTML\s*\(/.test(markdown) || markdown.includes("createElement('img')") || markdown.includes('createElement("img")')) fail('model Markdown must remain inert DOM text: no HTML injection or remote Markdown image creation');
@@ -397,6 +398,7 @@ if (!mainUi.includes("action: 'branch-local'") || !mainUi.includes('disabled: ru
 if (!mainUi.includes("action === 'branch-message'") || !coordinator.includes('createLocalBranch(')) fail('branching must remain a separate explicit user action');
 if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'") || !coordinator.includes('editMessageInPlace(') || !coordinator.includes('rollbackMessageInPlace(') || !db.includes('truncateTimelineFrom(')) fail('edit/rollback must rewind the current local session in place');
 if (!mainUi.includes("postIntent('chat.session.delete'") || !mainUi.includes("action: 'delete-session'")) fail('session delete intent exists natively but is not exposed by the WebView UI');
+if (!mainUi.includes("requestIntent('chat.session.delete', { localSessionIds: ids })") || !mainUi.includes('function deleteSelected()') || !/function deleteSelected\(\)[\s\S]*?openConfirmDialog/.test(mainUi) || !coordinator.includes('if (deleteBlocker(id) != null) { skipped.put(id); continue; }') || !sessionSelect.includes("export function selectable(session) { return session?.state !== 'running'; }")) fail('multi-select delete must confirm in app-owned UI and skip sessions with a turn in flight');
 if (!mainUi.includes("action === 'rename-session'") || !mainUi.includes("postIntent('chat.session.rename'") || !mainUi.includes('openTextDialog')) fail('manual session rename must be exposed through app-owned UI');
 if (!render.includes("menu.dataset.sessionTitle = session.title") || !render.includes("const title = document.querySelector('.conversation-title strong')")) fail('conversation title and rename metadata must remain synchronized during incremental patches');
 if (!mainUi.includes("postIntent('chat.reasoning.visibility.set'") || !render.includes('reasoning-block')) fail('provider-emitted reasoning visibility toggle missing');

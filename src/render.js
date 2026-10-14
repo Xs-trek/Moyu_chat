@@ -2,6 +2,7 @@ import { captureTimelineAnchor, restoreTimelineAnchor } from './scroll-anchor.js
 import { renderMarkdownInto } from './markdown.js';
 import { button, h, icon, iconButton, syncSegment } from './dom.js';
 import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
+import { pruneSelection, selecting, selectionBar } from './session-select.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
 import { flip, morph, removeNode, swapIn, withFx } from './morph.js';
@@ -66,7 +67,8 @@ function home(view) {
   } else if (!(view.sessions || []).length) {
     body = emptyHero({ title: '还没有会话', subtitle: '会话与分支只保存在本机。', children: [button('新会话', 'new-chat', {}, 'btn primary')] });
   } else {
-    body = h('div', { class: 'home-list' }, sessionList(view));
+    pruneSelection(view.sessions);
+    body = h('div', { class: 'home-list' }, selecting() ? selectionBar(view.sessions) : null, sessionList(view));
   }
   return h('main', { class: 'page page-home' },
     appHeader('Moyu Chat β', '会话与分支只保存在本机', iconButton('plus', '新会话', 'new-chat')),

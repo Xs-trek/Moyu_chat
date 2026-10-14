@@ -50,7 +50,8 @@ export type MoyuChatIntent =
   | UiIntent<'chat.attachment.pick', { localSessionId: string }>
   | UiIntent<'chat.attachment.remove', { localSessionId: string; mediaId: string }>
   | UiIntent<'chat.session.interrupt', { localSessionId: string }>
-  | UiIntent<'chat.session.delete', { localSessionId: string }>
+  /** One session (fails when busy), or a multi-select batch: busy sessions are skipped and reported, missing ones ignored. Batch result data: { deleted: number; skipped: string[] }. */
+  | UiIntent<'chat.session.delete', { localSessionId: string } | { localSessionIds: string[] }>
   | UiIntent<'chat.message.edit', { localSessionId: string; localSeq: number }>
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
   /**

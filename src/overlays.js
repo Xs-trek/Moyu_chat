@@ -8,6 +8,7 @@ import { fish } from './mascot.js';
 import { getState } from './state.js';
 import { EASE_STANDARD, flip, morphInto, reducedMotion } from './morph.js';
 import * as vm from './view-model.js';
+import { clearSelection, isSelected, pruneSelection, selectable, selectedIds, selecting, selectionBar } from './session-select.js';
 
 let drawerOpen = false;
 let drawerSignature = '';
@@ -26,12 +27,17 @@ export function sessionItem(session, activeId) {
   if (session.origin) meta.push(h('span', { class: 'meta-branch', title: `分支自 ${session.origin.sourceTitle || ''}` }, icon('branch', 'ico ico-xs'), '分支'));
   meta.push(h('span', { class: 'truncate', text: session.modelName || session.model || '' }));
   meta.push(h('span', { class: `mode-tag ${session.contextMode || 'standard'}`, title: `上下文模式：${vm.contextLabel(session.contextMode)}`, text: vm.contextLabel(session.contextMode) }));
-  return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}`, dataset: { key: session.localSessionId, exit: 'collapse' } },
-    h('button', { type: 'button', class: 'session-open', dataset: { action: 'open-session', sessionId: session.localSessionId } },
+  const picking = selecting();
+  const ticked = picking && isSelected(session.localSessionId);
+  const canPick = selectable(session);
+  const pickAction = canPick ? 'select-toggle' : 'select-blocked';
+  return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}${picking ? ' selecting' : ''}${ticked ? ' selected' : ''}${canPick ? '' : ' unselectable'}`, dataset: { key: session.localSessionId, exit: 'collapse' } },
+    picking ? h('button', { type: 'button', class: 'select-check', 'aria-hidden': 'true', tabindex: '-1', dataset: { action: pickAction, sessionId: session.localSessionId } }, ticked ? icon('check', 'ico ico-xs') : null) : null,
+    h('button', { type: 'button', class: 'session-open', 'aria-pressed': picking ? String(ticked) : null, dataset: { action: picking ? pickAction : 'open-session', sessionId: session.localSessionId } },
       h('b', { class: `session-title${session.blank ? ' is-draft' : ''}`, dataset: { swap: '' }, text: title }),
       preview ? h('span', { class: 'session-preview', text: preview }) : null,
       h('small', { class: 'session-meta' }, meta)),
-    iconButton('more', `${title} 的操作`, 'session-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '', running: running ? '1' : '', blank: session.blank ? '1' : '' }, 'icon-btn session-more'));
+    picking ? null : iconButton('more', `${title} 的操作`, 'session-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '', running: running ? '1' : '', blank: session.blank ? '1' : '' }, 'icon-btn session-more'));
 }
 
 export function sessionList(view) {
@@ -51,13 +57,15 @@ function todayStrip(view) {
 export function renderDrawer(view) {
   const root = document.getElementById('drawer-root');
   if (!root || !view) return;
-  const signature = JSON.stringify([view.sessions, view.activeLocalSessionId, view.usageToday, view.route, view.appearance?.delight]);
+  pruneSelection(view.sessions);
+  const signature = JSON.stringify([view.sessions, view.activeLocalSessionId, view.usageToday, view.route, view.appearance?.delight, selecting(), selectedIds()]);
   if (signature === drawerSignature && root.firstChild) return;
   drawerSignature = signature;
   flip(drawerOpen ? root.querySelector('.drawer-list') : null, () => morphInto(root,
     h('div', { class: 'drawer-scrim', dataset: { action: 'drawer-close' } }),
     h('nav', { class: 'drawer', 'aria-label': '会话' },
-      h('header', { class: 'drawer-head' }, fish('still', 'sm'), h('strong', { class: 'grow', text: 'Moyu Chat β' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
+      selecting() ? h('header', { class: 'drawer-head selecting' }, selectionBar(view.sessions))
+        : h('header', { class: 'drawer-head' }, fish('still', 'sm'), h('strong', { class: 'grow', text: 'Moyu Chat β' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
       h('button', { type: 'button', class: 'drawer-new', dataset: { action: 'new-chat' } }, icon('plus'), '新会话'),
       todayStrip(view),
       h('div', { class: 'drawer-list' }, (view.sessions || []).length ? sessionList(view) : h('p', { class: 'drawer-empty', text: '还没有会话' })),
@@ -72,6 +80,7 @@ export function isDrawerOpen() { return drawerOpen; }
 
 export function setDrawer(open) {
   drawerOpen = Boolean(open);
+  if (!drawerOpen) clearSelection();
   document.getElementById('drawer-root')?.classList.toggle('open', drawerOpen);
   document.documentElement.dataset.drawer = drawerOpen ? 'open' : 'closed';
 }
@@ -454,6 +463,7 @@ export function handleBack() {
   if (document.querySelector('.modal-backdrop[data-moyu-modal]')) { closeDialog(); return true; }
   if (sheet) { closeSheet(); return true; }
   if (panel) { closePanel(); return true; }
+  if (clearSelection()) return true;
   const nav = document.querySelector('.turn-nav.open');
   if (nav) { nav.classList.remove('open'); nav.querySelector('.turn-nav-toggle')?.setAttribute('aria-expanded', 'false'); return true; }
   if (drawerOpen && !window.matchMedia?.('(min-width: 960px)')?.matches) { setDrawer(false); return true; }

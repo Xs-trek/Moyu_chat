@@ -11,8 +11,10 @@ import { getState, setNotice, setOptimisticReasoningEffort, setOptimisticWebMode
 import { forgetRemote, onRemoteChange, refreshRemote, traceKey } from './remote.js';
 import * as vm from './view-model.js';
 import './drawer-gesture.js';
+import { clearSelection, onSelectionChange, selectable, selectAll, selectedIds, toggleSelected } from './session-select.js';
 
 const renderGate = createRenderGate(render);
+onSelectionChange(() => renderGate.request());
 // A requested turn trace arrived: refresh the expanded footer in place.
 onRemoteChange(() => { if (!patchConversation()) renderGate.request(); });
 subscribe((_state, change) => {
@@ -163,6 +165,25 @@ function sessionMenu(target) {
   ]);
 }
 
+/** Multi-select delete: one confirmation, one native batch; sessions that started a turn meanwhile are kept. */
+function deleteSelected() {
+  const ids = selectedIds();
+  if (!ids.length) return;
+  const titles = ids.map((id) => (currentView()?.sessions || []).find((s) => s.localSessionId === id)).filter(Boolean).map((s) => `“${vm.sessionTitle(s)}”`);
+  const named = titles.slice(0, 3).join('、') + (titles.length > 3 ? ` 等 ${titles.length} 个会话` : '');
+  openConfirmDialog({
+    title: `删除 ${ids.length} 个会话`,
+    message: `删除${named}？原会话记录与未被其它分支引用的本地媒体将被删除，此操作不可恢复。`,
+    confirmText: '删除', danger: true,
+    onConfirm: () => {
+      clearSelection();
+      requestIntent('chat.session.delete', { localSessionIds: ids })
+        .then((data) => { const kept = (data?.skipped || []).length; if (kept) setNotice({ level: 'warning', text: `${kept} 个会话正在进行，未删除` }); })
+        .catch((error) => setNotice({ level: 'error', text: `删除失败：${error?.message || error}` }));
+    },
+  });
+}
+
 function conversationMenu(target) {
   const view = currentView();
   const session = view?.activeSession;
@@ -271,6 +292,11 @@ document.addEventListener('click', (event) => {
   else if (action === 'stats-group') { setStatsGroup(target.dataset.group); renderGate.request(); }
   else if (action === 'stats-archived') { setStatsArchived(target.dataset.enabled === 'true'); renderGate.request(); }
   else if (action === 'poke-fish') pokeFish(target);
+  else if (action === 'select-toggle') toggleSelected(sessionId);
+  else if (action === 'select-blocked') setNotice({ level: 'info', text: '回合进行中的会话不能删除' });
+  else if (action === 'select-all') selectAll((currentView()?.sessions || []).filter(selectable).map((s) => s.localSessionId));
+  else if (action === 'select-none' || action === 'select-cancel') clearSelection();
+  else if (action === 'select-delete') deleteSelected();
   else if (action === 'toggle-turn-nav') {
     const nav = target.closest('.turn-nav');
     if (!nav) return;
@@ -340,7 +366,7 @@ document.addEventListener('click', (event) => {
     setOptimisticWebMode(sessionId, webMode);
     postIntent('chat.session.web.set', { localSessionId: sessionId, webMode });
   }
-  else if (action === 'nav') { closeDrawerIfOverlay(); if (target.dataset.route === 'stats') forgetStats(); postIntent('nav.open', { route: target.dataset.route }); }
+  else if (action === 'nav') { clearSelection(); closeDrawerIfOverlay(); if (target.dataset.route === 'stats') forgetStats(); postIntent('nav.open', { route: target.dataset.route }); }
   else if (action === 'theme') { optimisticSegment(target); postIntent('appearance.set', { theme: target.dataset.theme }); }
   else if (action === 'tone') { optimisticSegment(target); postIntent('appearance.set', { tone: target.dataset.tone }); }
   else if (action === 'toggle-delight') { postIntent('ui.delight.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
@@ -402,7 +428,7 @@ document.addEventListener('click', (event) => {
     const localSeq = seqOf(target);
     if (sessionId && localSeq) postIntent('branch.create.local', { localSessionId: sessionId, throughSeq: localSeq });
   }
-  else if (action === 'new-chat') { flushDraft(); closeDrawerIfOverlay(); newChat(currentView()); }
+  else if (action === 'new-chat') { clearSelection(); flushDraft(); closeDrawerIfOverlay(); newChat(currentView()); }
   else if (action === 'new-chat-model') {
     const view = currentView();
     const model = view?.providers?.find((p) => p.providerId === target.dataset.providerId)?.models?.find((m) => m.modelProfileId === target.dataset.modelProfileId);

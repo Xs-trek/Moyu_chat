@@ -175,6 +175,12 @@ public class ChatCoordinatorE2eTest {
         return latestView().optString("activeLocalSessionId");
     }
 
+    private String createSessionAfter(String previous) throws Exception {
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider"));
+        await("another session created", () -> { String id = latestView().optString("activeLocalSessionId", ""); return !id.isEmpty() && !id.equals(previous); });
+        return latestView().optString("activeLocalSessionId");
+    }
+
     private String createResponsesSession(String continuationMode) throws Exception {
         configureProvider(OpenAiCompatibleTransport.RESPONSES);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
@@ -386,6 +392,40 @@ public class ChatCoordinatorE2eTest {
             JSONObject view = latestView(); return view != null && "home".equals(view.optString("route")) && view.optJSONArray("sessions").length() == 0;
         });
         assertFalse("unreferenced private media should be garbage-collected", app.mediaStore().exists(mediaId));
+    }
+
+    @Test public void multiSelectDeleteRemovesIdleSessionsAndSkipsARunningOne() throws Exception {
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                MockResponse response = completion("answer", 12, 4);
+                return body.contains("take your time") ? response.setBodyDelay(1500, TimeUnit.MILLISECONDS) : response;
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String first = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", first).put("text", "one"));
+        await("first answered", () -> "completed".equals(app.database().getSession(first).state));
+        String second = createSessionAfter(first);
+        post("chat.session.send", new JSONObject().put("localSessionId", second).put("text", "two"));
+        await("second answered", () -> "completed".equals(app.database().getSession(second).state));
+        String running = createSessionAfter(second);
+        post("chat.session.send", new JSONObject().put("localSessionId", running).put("text", "take your time"));
+        await("third running", () -> "running".equals(activeSession(latestView()).optString("state")));
+
+        JSONObject outcome = awaitResult(post("chat.session.delete", new JSONObject().put("localSessionIds", new JSONArray().put(first).put(second).put(running).put("no-such-session")))).getJSONObject("data");
+        assertEquals(outcome.toString(), 2, outcome.optInt("deleted"));
+        assertEquals(1, outcome.getJSONArray("skipped").length());
+        assertEquals(running, outcome.getJSONArray("skipped").optString(0));
+        assertNull(app.database().getSession(first));
+        assertNull(app.database().getSession(second));
+        assertNotNull("a session with a turn in flight is kept", app.database().getSession(running));
+        assertEquals(running, latestView().optString("activeLocalSessionId"));
+
+        await("third answered", () -> "completed".equals(app.database().getSession(running).state));
+        JSONObject last = awaitResult(post("chat.session.delete", new JSONObject().put("localSessionIds", new JSONArray().put(running)))).getJSONObject("data");
+        assertEquals(1, last.optInt("deleted"));
+        await("deleting the open session returns home", () -> "home".equals(latestView().optString("route")) && latestView().optJSONArray("sessions").length() == 0);
     }
 
     @Test public void editAndRollbackRewindCurrentSessionWhileBranchingStaysExplicit() throws Exception {

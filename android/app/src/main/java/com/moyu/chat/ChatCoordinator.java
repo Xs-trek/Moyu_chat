@@ -16,6 +16,7 @@ import java.util.concurrent.ScheduledExecutorService;
 /** Native-only domain coordinator. UI knows intents/view models; provider keys never cross the bridge. */
 final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_ITEMS = 500;
+    private static final int MAX_BATCH_DELETE = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
     private static final ContextBudgetManager CONTEXT_BUDGETS = new ContextBudgetManager();
     interface Host { void dispatch(JSONObject envelope); /** Native secure entry for a Provider's API Key: the key goes straight to ChatSecretStore, never through the WebView. */ default void openCredentialEditor(ChatDatabase.Provider provider, String hosts) { } default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } /** A turn ended on its own; the host notifies only while no Activity is visible. */ default void turnSettled(String sessionId, String title, boolean failed) { } /** Asks for the Android 13+ notification permission; {@code onlyOnce} skips it when it was asked before. */ default void requestNotificationPermission(boolean onlyOnce) { } }
@@ -214,7 +215,12 @@ final class ChatCoordinator implements AutoCloseable {
                     break;
                 }
                 case "chat.session.interrupt": interrupt(required(p, "localSessionId")); break;
-                case "chat.session.delete": deleteSession(required(p, "localSessionId")); break;
+                case "chat.session.delete": {
+                    JSONArray many = p.optJSONArray("localSessionIds");
+                    if (many == null) { deleteSession(required(p, "localSessionId")); break; }
+                    result(requestId, true, null, deleteSessions(many)); emitView();
+                    return;
+                }
                 case "chat.message.edit": editMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
                 case "chat.message.rollback": rollbackMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
                 // Configuration editors live in the WebView; only the API Key has a native entry. Saves push
@@ -569,11 +575,38 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void deleteSession(String id) {
-        if (startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id)) throw new IllegalStateException("回合正在准备，请稍后再删除");
-        if (activeTurns.containsKey(id)) throw new IllegalStateException("请先停止当前回合再删除会话");
+        String busy = deleteBlocker(id);
+        if (busy != null) throw new IllegalStateException(busy);
         if (db.getSession(id) == null) throw new IllegalArgumentException("会话不存在");
-        db.deleteSession(id);
+        removeSession(id);
         mediaStore.pruneUnreferenced(db.referencedMediaIds());
+    }
+
+    /** Multi-select delete: busy sessions are skipped (and reported), missing ones ignored; media is pruned once. */
+    private JSONObject deleteSessions(JSONArray ids) throws Exception {
+        if (ids.length() > MAX_BATCH_DELETE) throw new IllegalArgumentException("一次最多删除 " + MAX_BATCH_DELETE + " 个会话");
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < ids.length(); i++) { String id = ids.optString(i, "").trim(); if (!id.isEmpty()) seen.add(id); }
+        JSONArray skipped = new JSONArray();
+        int deleted = 0;
+        for (String id : seen) {
+            if (db.getSession(id) == null) continue;
+            if (deleteBlocker(id) != null) { skipped.put(id); continue; }
+            removeSession(id);
+            deleted++;
+        }
+        if (deleted > 0) mediaStore.pruneUnreferenced(db.referencedMediaIds());
+        return new JSONObject().put("deleted", deleted).put("skipped", skipped);
+    }
+
+    private String deleteBlocker(String id) {
+        if (startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id)) return "回合正在准备，请稍后再删除";
+        if (activeTurns.containsKey(id)) return "请先停止当前回合再删除会话";
+        return null;
+    }
+
+    private void removeSession(String id) {
+        db.deleteSession(id);
         if (id.equals(activeSessionId)) { activeSessionId = null; db.putSetting("activeSessionId", ""); route = "home"; db.putSetting("route", route); }
     }
 

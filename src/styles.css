@@ -291,6 +291,21 @@ h1, h2, h3, p { margin: 0; }
 .meta-warn { color: var(--danger); }
 .meta-branch { display: inline-flex; align-items: center; gap: 2px; }
 .session-more { color: var(--muted); }
+/* Multi-select (src/session-select.js): long press starts it; the list header becomes .select-bar. */
+.session-item { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.select-check {
+  appearance: none; flex: 0 0 auto; display: grid; place-items: center; width: 22px; height: 22px; margin-left: 10px; padding: 0;
+  border: 1.5px solid var(--line-strong); border-radius: 50%; background: transparent; color: var(--accent-ink);
+  transition: background var(--d-small) var(--e-standard), border-color var(--d-small) var(--e-standard);
+}
+.select-check .ico { animation: fx-pop var(--d-small) var(--e-decel) both; }
+.session-item.selected { background: var(--accent-soft); border-color: transparent; }
+.session-item.selected .select-check { background: var(--accent); border-color: var(--accent); }
+.session-item.unselectable { opacity: .55; }
+.select-bar { display: flex; align-items: center; gap: 6px; min-height: 52px; min-width: 0; width: 100%; }
+.select-count { font-size: var(--text-md); font-variant-numeric: tabular-nums; }
+.drawer-head.selecting { padding: 4px 8px 0 4px; }
+.home-list .select-bar { position: sticky; top: 0; z-index: 2; padding: 0 4px; background: var(--canvas); }
 .mode-tag { flex: 0 0 auto; padding: 0 6px; border-radius: 5px; background: var(--inset); color: var(--ink); font-size: .6875rem; line-height: 18px; }
 .mode-tag.smart { background: var(--accent-soft); color: var(--accent); }
 .mode-tag.minimal { background: transparent; border: 1px dashed var(--line-strong); color: var(--muted); }

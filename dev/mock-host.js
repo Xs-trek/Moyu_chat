@@ -370,6 +370,15 @@ window.MoyuHost = {
       }, 160);
       return;
     }
+    if (message.type === 'chat.session.delete' && Array.isArray(message.payload?.localSessionIds)) {
+      const ids = new Set(message.payload.localSessionIds);
+      const skipped = world.sessions.filter((x) => ids.has(x.localSessionId) && x.state === 'running').map((x) => x.localSessionId);
+      const before = world.sessions.length;
+      world.sessions = world.sessions.filter((x) => !ids.has(x.localSessionId) || skipped.includes(x.localSessionId));
+      if (ids.has(world.activeSessionId) && !skipped.includes(world.activeSessionId)) { world.activeSessionId = undefined; world.route = 'home'; }
+      setTimeout(() => { emitView(); result(message.requestId, true, '', { deleted: before - world.sessions.length, skipped }); }, 120);
+      return;
+    }
     if (message.type === 'chat.session.title.auto') {
       const s = findSession(message.payload?.localSessionId);
       setTimeout(() => { s.title = `模拟标题 ${Math.floor(Math.random() * 90 + 10)}`; emitView(); result(message.requestId, true, ''); }, 700);
