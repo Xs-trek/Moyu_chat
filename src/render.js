@@ -1,6 +1,6 @@
 import { captureTimelineAnchor, restoreTimelineAnchor } from './scroll-anchor.js';
 import { renderMarkdownInto } from './markdown.js';
-import { button, fmtTime, h, icon, iconButton, syncSegment } from './dom.js';
+import { button, h, icon, iconButton, syncSegment } from './dom.js';
 import { fish, flash, greeting, MILESTONES, setPose } from './mascot.js';
 import { refreshSheet, renderDrawer, sessionList } from './overlays.js';
 import { getState, setNotice } from './state.js';
@@ -31,7 +31,7 @@ function mediaGallery(items) {
   if (!images.length) return null;
   return h('div', { class: 'media-grid', dataset: { mediaSignature: JSON.stringify(images.map((i) => [i.mediaId, i.url])) } }, images.map((item) => h('figure', { class: 'media-item' },
     // Intrinsic size reserves the box before decode, so late image loads cannot move the reading position.
-    h('img', { src: item.url, alt: item.fileName || '图片', loading: 'lazy', width: item.width || undefined, height: item.height || undefined }),
+    h('img', { src: item.url, alt: item.fileName || '图片', loading: 'lazy', width: item.width || undefined, height: item.height || undefined, dataset: { action: 'view-image', src: item.url, name: item.fileName || '' } }),
     h('figcaption', { class: 'truncate', text: item.fileName || `${item.width || '?'}×${item.height || '?'}` }))));
 }
 
@@ -163,6 +163,7 @@ function settings(view) {
   const reasoningVisible = Boolean(view.ui?.showReasoning);
   const memoryEnabled = Boolean(view.ui?.crossChatMemoryEnabled);
   const wireCapture = view.ui?.wireCapture !== false;
+  const notify = view.ui?.notifyInBackground !== false;
   return h('main', { class: 'page settings-page' }, appHeader('设置', null),
     h('div', { class: 'page-body stack' },
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '外观' }),
@@ -171,6 +172,7 @@ function settings(view) {
         settingRow('动效与彩蛋', '小鱼的动作、问候、校验小印以外的小彩蛋。关闭后界面完全静止。系统开启“减少动画”时动作也会停止。', switchControl('动效与彩蛋', look.delight, 'toggle-delight', { enabled: look.delight ? 'false' : 'true' }))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '对话' }),
         settingRow('显示模型推理', '只展示 endpoint 明确返回的 reasoning/thinking 文本。可见推理不会作为普通历史回灌；Provider-private continuation 只有在 Model Profile 明确声明 native 且标准/智能模式允许时才复用。', switchControl('显示模型推理', reasoningVisible, 'toggle-reasoning', { show: reasoningVisible ? 'false' : 'true' })),
+        settingRow('后台完成通知', '应用在后台时，回答完成或失败会发一条系统通知，点开直接进入对应会话。你自己停止的回合不通知。Android 13 及以上需要允许通知权限。', switchControl('后台完成通知', notify, 'toggle-notify', { enabled: notify ? 'false' : 'true' })),
         settingRow('记录协议报文', '保存最近 30 个回合里每次模型调用的请求和响应原文，在回复详情的调用链里查看。不含请求头和 API Key，图片等长串只保留长度。', switchControl('记录协议报文', wireCapture, 'toggle-wire-capture', { enabled: wireCapture ? 'false' : 'true' })),
         settingRow('跨 Chat 用户记忆', '总开关只决定用户级 Memory/RAG 是否允许使用。关闭时所有模式都不跨 Chat；开启时标准/智能可检索相关本地历史，极简没有 Memory 调用。', switchControl('跨 Chat 用户记忆', memoryEnabled, 'toggle-memory', { enabled: memoryEnabled ? 'false' : 'true' }))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '新会话默认' }),
@@ -214,7 +216,21 @@ function stats() {
 // ---------- Conversation ----------
 
 function conversationSubtitle(session) {
-  return vm.busyLabel(session) || `${session.modelName || session.model} · ${vm.contextLabel(session.contextMode)}模式`;
+  const busy = vm.busyLabel(session);
+  if (busy) return h('small', { class: 'truncate', dataset: { subtitle: busy }, text: busy });
+  const fill = vm.contextFill(session);
+  const base = `${session.modelName || session.model} · ${vm.contextLabel(session.contextMode)}模式`;
+  // The model name gives way on narrow screens; the context fill stays readable.
+  return h('small', { class: 'subtitle-line', dataset: { subtitle: JSON.stringify([base, fill?.percent ?? null, Boolean(fill?.warn)]) } }, h('span', { class: 'truncate', text: base }),
+    fill ? h('span', { class: `ctx-fill${fill.warn ? ' warn' : ''}`, title: `上下文已用 ${vm.full(fill.used)} / ${vm.full(fill.budget)} token`, text: ` · 上下文 ${fill.percent}%` }) : null);
+}
+
+/** Shown while the session still runs on a copy of a model profile that has since been edited. */
+function profileNotice(session) {
+  if (!session.profileChanged || !session.canConfigureTurn || !session.modelProfileId) return null;
+  return h('div', { class: 'profile-notice', dataset: { profileNotice: '1' } },
+    h('span', { class: 'grow', text: '模型配置已更新，这个会话还在用旧配置' }),
+    button('应用', 'apply-profile', { sessionId: session.localSessionId, modelProfileId: session.modelProfileId }, 'btn mini'));
 }
 
 function turnChip(session) {
@@ -236,7 +252,7 @@ function conversation(view) {
   return h('main', { class: 'conversation-layout', dataset: { sessionId: session.localSessionId, configSignature: configSignature(session) } },
     h('header', { class: 'app-head conversation-head' },
       iconButton('menu', '会话列表', 'drawer-open', {}, 'icon-btn nav-toggle'),
-      h('div', { class: 'head-title grow conversation-title' }, h('strong', { class: 'truncate', text: session.title }), h('small', { class: 'truncate', text: conversationSubtitle(session) })),
+      h('div', { class: 'head-title grow conversation-title' }, h('strong', { class: 'truncate', text: session.title }), conversationSubtitle(session)),
       iconButton('more', '会话操作', 'conversation-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '' })),
     turnNavigator(session),
     h('section', { class: 'timeline-scroll', dataset: { sessionId: session.localSessionId } },
@@ -245,6 +261,7 @@ function conversation(view) {
       h('div', { class: 'timeline', dataset: { morph: 'own' } })),
     h('form', { class: 'composer', dataset: { form: 'composer', sessionId: session.localSessionId } },
       iconButton('down', '回到底部', 'jump-latest', {}, 'icon-btn jump-latest is-hidden'),
+      profileNotice(session),
       draftMediaStrip(session.draftMedia, session.localSessionId),
       h('textarea', { name: 'message', rows: '1', value: session.composerDraft || '', dataset: { projectedDraft: session.composerDraft || '' }, placeholder: vm.composerPlaceholder(session), 'aria-label': '消息' }),
       h('div', { class: 'composer-actions' },
@@ -444,7 +461,7 @@ function userNode(item, ctx) {
   return h('article', { class: `msg user${item.inherited ? ' inherited' : ''}`, dataset: { itemKey: vm.timelineKey(item), turnAnchor: 'user' } },
     item.text ? h('div', { class: 'message user-bubble', dataset: { messageBody: 'plain', selectionScope: 'message' }, text: item.text }) : null,
     mediaGallery(item.attachments),
-    h('div', { class: 'msg-meta' }, item.inherited ? h('span', { class: 'chip quiet', text: '历史' }) : null, h('small', { text: fmtTime(item.createdAt) }),
+    h('div', { class: 'msg-meta' }, item.inherited ? h('span', { class: 'chip quiet', text: '历史' }) : null, h('small', { text: vm.messageTime(item.createdAt) }),
       canAct ? iconButton('more', '消息操作', 'message-menu', { sessionId: ctx.sessionId, localSeq: item.localSeq, role: 'user' }, 'icon-btn mini') : null));
 }
 
@@ -562,7 +579,15 @@ function reconcileTimeline(timeline, items, ctx, animate = false) {
   for (const item of desiredItems) {
     place(vm.timelineKey(item), () => timelineItem(item, ctx), item.kind === 'message' ? (node) => patchItem(node, item, ctx) : null);
   }
+  const retry = vm.retrySeq(ctx.session);
+  if (retry) place(`retry:${retry}`, () => retryRow(ctx), null);
   for (const [key, node] of existing) if (!used.has(key)) node.remove();
+}
+
+function retryRow(ctx) {
+  return h('div', { class: 'retry-row' },
+    h('small', { class: 'grow', text: '回退这一轮，用当前设置重新发送' }),
+    button('重试', 'retry-turn', { sessionId: ctx.sessionId }, 'btn mini'));
 }
 
 function conversationHero(session) {
@@ -658,13 +683,17 @@ export function patchConversation() {
   if (title) title.textContent = session.title || '';
   const subtitle = document.querySelector('.conversation-title small');
   const nextSubtitle = conversationSubtitle(session);
-  if (subtitle && subtitle.textContent !== nextSubtitle) { subtitle.textContent = nextSubtitle; swapIn(subtitle); }
+  if (subtitle && subtitle.dataset.subtitle !== nextSubtitle.dataset.subtitle) swapIn(morph(subtitle, nextSubtitle));
   const menu = document.querySelector('.conversation-head [data-action="conversation-menu"]');
   if (menu) menu.dataset.sessionTitle = session.title || '';
 
   const candidate = document.querySelector('form[data-form="composer"]');
   const composer = candidate?.dataset.sessionId === session.localSessionId ? candidate : null;
   if (composer) {
+    const notice = composer.querySelector('[data-profile-notice]');
+    const desiredNotice = profileNotice(session);
+    if (notice && !desiredNotice) notice.remove();
+    else if (!notice && desiredNotice) composer.querySelector('[data-draft-media]')?.before(withFx(desiredNotice, 'fade'));
     const currentDraftMedia = composer.querySelector('[data-draft-media]');
     const desiredDraftMedia = draftMediaStrip(session.draftMedia, session.localSessionId);
     if (currentDraftMedia && currentDraftMedia.dataset.mediaSignature !== desiredDraftMedia.dataset.mediaSignature) currentDraftMedia.replaceWith(desiredDraftMedia);

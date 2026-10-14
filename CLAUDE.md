@@ -68,7 +68,7 @@ JAVA_HOME="$PWD/.tools/jdk-17.0.20+8" ./.tools/gradle-8.5/bin/gradle -p android 
 - 系统 `JAVA_HOME` 可能是 JDK 8，必须使用 `.tools/` 下的 JDK 17（`scripts/verify.sh` 已处理）。
 - Android SDK 来自环境变量 `ANDROID_HOME`（仓库没有 `local.properties`）。
 - 额外任务可以作为参数传入，例如 `bash scripts/verify.sh :app:assembleRelease`。
-- `npm test` 跑 `tests/*.test.mjs`：Node 自带测试运行器 + `tests/dom-shim.mjs`（极简 DOM，无依赖），直接加载 `src/` 模块验证前端行为（Markdown、流式补丁、bridge）。改这些行为时同步补测试。
+- `npm test` 跑 `tests/*.test.mjs`：Node 自带测试运行器 + `tests/dom-shim.mjs`（极简 DOM，无依赖），直接加载 `src/` 模块验证前端行为（Markdown、流式补丁、bridge、view-model）。改这些行为时同步补测试。
 - `scripts/static-check.mjs` 主要是针对源码的字符串断言（版本号、schema 版本、安全边界、关键结构）。修改它断言的代码时要同步修改断言，不要为了通过检查而删掉安全或边界断言。
 - 版本号集中在 `static-check.mjs` 顶部的 `VERSION_NAME` / `VERSION_CODE` / `SCHEMA_VERSION`，并需与 `package.json`、`android/app/build.gradle`、`src/main.js` 的 `uiVersion`、`MoyuWebService` 的 User-Agent 保持一致。
 - `RealEndpointSmokeTest` 需要真实凭据，默认跳过；跳过不代表外部端点已验证。

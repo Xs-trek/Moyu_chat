@@ -91,22 +91,22 @@ final class ReasoningPolicy {
         String normalized = normalizeLevels(levels);
         if (normalized.isEmpty()) return;
         String wire = normalizeWire(provider.reasoningWire, provider.protocol);
-        if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("reasoning levels require an enabled reasoning wire");
+        if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("声明推理档位前需要先启用推理参数格式");
         for (String item : normalized.split(",")) {
             if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol)
                     && (NONE_LEVEL.equals(item) || MINIMAL.equals(item))) {
-                throw new IllegalArgumentException("anthropic-messages effort supports low/medium/high/xhigh/max; thinking on/off is configured separately");
+                throw new IllegalArgumentException("Anthropic Messages 的推理深度只支持 low/medium/high/xhigh/max；思考开关单独配置");
             }
         }
     }
 
     static void validateEffortForProvider(ChatDatabase.Provider provider, String levels, String effort) {
         String normalized = normalizeEffort(effort);
-        if (!allows(levels, normalized)) throw new IllegalArgumentException("reasoning effort not supported by model profile");
+        if (!allows(levels, normalized)) throw new IllegalArgumentException("这个模型不支持所选推理深度");
         if (DEFAULT.equals(normalized)) return;
         validateLevelsForProvider(provider, levels);
         if (AnthropicMessagesTransport.PROTOCOL.equals(provider.protocol) && NONE_LEVEL.equals(normalized)) {
-            throw new IllegalArgumentException("anthropic-messages does not use effort=none; configure thinking separately");
+            throw new IllegalArgumentException("Anthropic Messages 不使用 effort=none；请单独配置思考开关");
         }
     }
 
@@ -127,13 +127,13 @@ final class ReasoningPolicy {
             // Anthropic-compatible Messages has no effort="none". `none` means no effort override;
             // thinking on/off is controlled only by the explicit thinkingMode above.
             if (NONE_LEVEL.equals(level)) return;
-            if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("reasoning effort is not enabled for this Messages endpoint");
-            if (!WIRE_ANTHROPIC_EFFORT.equals(wire)) throw new IllegalArgumentException("reasoning wire is incompatible with anthropic-messages");
+            if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("这个 Messages 路线没有启用推理深度");
+            if (!WIRE_ANTHROPIC_EFFORT.equals(wire)) throw new IllegalArgumentException("推理参数格式与 Anthropic Messages 不兼容");
             body.put("output_config", new JSONObject().put("effort", level));
             return;
         }
 
-        if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("reasoning effort is not supported by this provider configuration");
+        if (WIRE_NONE.equals(wire)) throw new IllegalArgumentException("当前账号配置不支持推理深度");
         if (WIRE_OPENAI_RESPONSES.equals(wire)) {
             body.put("reasoning", new JSONObject().put("effort", level));
         } else if (WIRE_OPENAI_CHAT_EFFORT.equals(wire)) {
@@ -146,7 +146,7 @@ final class ReasoningPolicy {
         String mode = normalizeThinkingMode(provider.thinkingMode);
         if (THINKING_PROVIDER_DEFAULT.equals(mode)) return;
         RouteDialect dialect = provider.dialect == null ? RouteDialect.defaults(provider.protocol) : provider.dialect;
-        if (!dialect.carriesThinking(provider.protocol, mode)) throw new IllegalArgumentException("thinking mode " + mode + " is not carried by this route");
+        if (!dialect.carriesThinking(provider.protocol, mode)) throw new IllegalArgumentException("这条路线不能传递思考模式 " + mode);
         body.put("thinking", new JSONObject().put("type", THINKING_ENABLED.equals(mode) ? "enabled" : "disabled"));
     }
 
@@ -163,7 +163,7 @@ final class ReasoningPolicy {
         }
         int budget = Math.max(0, provider.thinkingBudgetTokens);
         int maxOutput = provider.maxOutputTokens > 0 ? provider.maxOutputTokens : ContextBudgetManager.DEFAULT_OUTPUT_TOKENS;
-        if (budget < 1024 || budget >= maxOutput) throw new IllegalArgumentException("manual thinking budget must be >=1024 and < max output tokens");
+        if (budget < 1024 || budget >= maxOutput) throw new IllegalArgumentException("手动思考预算必须 ≥1024 且小于最大输出 token");
         body.put("thinking", new JSONObject().put("type", "enabled").put("budget_tokens", budget));
     }
 

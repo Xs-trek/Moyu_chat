@@ -31,7 +31,7 @@ final class SnapshotService {
 
     ChatDatabase.Snapshot createLocal(String sessionId, Integer throughSeq) throws Exception {
         ChatDatabase.Session session = db.getSession(sessionId);
-        if (session == null) throw new IllegalArgumentException("source session not found");
+        if (session == null) throw new IllegalArgumentException("原会话不存在");
         JSONArray source = new JSONArray();
         if (session.originSnapshotId != null) append(source, db.snapshotItems(session.originSnapshotId));
         append(source, db.timelineThrough(sessionId, throughSeq));
@@ -79,7 +79,7 @@ final class SnapshotService {
             int turnChars = 0;
             for (JSONObject item : turn) turnChars += item.optString("text", "").length();
             if (keptReverse.isEmpty() && (turn.size() > MAX_ITEMS || turnChars > MAX_TEXT_CHARS)) {
-                throw new IllegalArgumentException("latest snapshot turn exceeds snapshot limit");
+                throw new IllegalArgumentException("最新一轮超出分支快照的大小上限");
             }
             if (keptItems + turn.size() > MAX_ITEMS || chars + turnChars > MAX_TEXT_CHARS) { truncated = true; break; }
             keptReverse.add(turn); keptItems += turn.size(); chars += turnChars;

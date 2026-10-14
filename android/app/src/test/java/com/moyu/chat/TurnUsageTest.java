@@ -40,6 +40,7 @@ public class TurnUsageTest {
         assertEquals(18, result.getInt("inputTokens"));
         assertEquals(5, result.getInt("outputTokens"));
         assertEquals(36, result.getInt("totalInputTokens"));
+        assertEquals("context fill is what the last main call sent, not the sum", 11, result.getInt("lastMainInputTokens"));
         assertEquals(11, result.getInt("totalOutputTokens"));
         assertEquals(4, result.getInt("modelCallCount"));
         assertEquals(1, result.getInt("auxiliaryCallCount"));

@@ -1,6 +1,6 @@
 import { bindHost, postIntent, requestIntent } from './bridge.js';
 import { flash, randomQuote } from './mascot.js';
-import { closeSheet, handleBack, newChatChoice, openActions, openAnswers, openConfirmDialog, openNewChat, openPayload, openRerun, openTextDialog, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
+import { closeImageViewer, closeSheet, handleBack, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
 import { openModelEditor, openProviderEditor } from './editors.js';
 import { syncSegment } from './dom.js';
 import { reducedMotion } from './morph.js';
@@ -333,6 +333,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'toggle-reasoning') { postIntent('chat.reasoning.visibility.set', { show: target.dataset.show === 'true' }); if (target.classList.contains('switch')) optimisticSwitch(target); }
   else if (action === 'toggle-memory') { postIntent('memory.global.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'toggle-wire-capture') { postIntent('inspector.capture.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
+  else if (action === 'toggle-notify') { postIntent('notify.background.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'open-session') {
     document.querySelectorAll('.session-item.active').forEach((item) => item.classList.remove('active'));
     target.closest('.session-item')?.classList.add('active');
@@ -342,7 +343,7 @@ document.addEventListener('click', (event) => {
   else if (action === 'rename-session') {
     const title = target.dataset.sessionTitle || currentView()?.activeSession?.title || '';
     if (!sessionId) return;
-    openTextDialog({ title: '重命名会话', value: title, onConfirm: (nextTitle) => postIntent('chat.session.rename', { localSessionId: sessionId, title: nextTitle }) });
+    openTextDialog({ title: '重命名会话', value: title, maxLength: vm.SESSION_TITLE_MAX, onConfirm: (nextTitle) => postIntent('chat.session.rename', { localSessionId: sessionId, title: nextTitle }) });
   }
   else if (action === 'delete-session') {
     if (!sessionId) return;
@@ -390,6 +391,10 @@ document.addEventListener('click', (event) => {
   }
   else if (action === 'branch-local') postIntent('branch.create.local', { localSessionId: sessionId });
   else if (action === 'interrupt') postIntent('chat.session.interrupt', { localSessionId: sessionId });
+  else if (action === 'retry-turn') retryTurn(sessionId);
+  else if (action === 'apply-profile') postIntent('chat.session.model.set', { localSessionId: sessionId, modelProfileId: target.dataset.modelProfileId });
+  else if (action === 'view-image') openImageViewer(target.dataset.src, target.dataset.name);
+  else if (action === 'viewer-close') closeImageViewer();
   else if (action === 'open-source' && target.dataset.url) postIntent('external.open', { url: target.dataset.url });
   else if (action === 'jump-latest') {
     const node = document.querySelector('.timeline-scroll');
@@ -425,6 +430,20 @@ function advanceDraftGeneration(sessionId) {
 function resizeComposerTextarea(input) {
   if (!input || input.name !== 'message') return;
   resizeTextarea(input);
+}
+
+/** Retry rewinds the failed turn natively; text being typed is saved first so it stays in the composer. */
+function retryTurn(sessionId) {
+  if (!sessionId) return;
+  const form = document.querySelector('form[data-form="composer"]');
+  const input = form?.dataset.sessionId === sessionId ? form.elements.namedItem('message') : null;
+  if (input) {
+    clearTimeout(draftTimer);
+    draftTimer = 0;
+    advanceDraftGeneration(sessionId);
+    postIntent('chat.session.saveDraft', { localSessionId: sessionId, text: String(input.value || '') });
+  }
+  postIntent('chat.turn.retry', { localSessionId: sessionId });
 }
 
 /** Put a rejected message back into a composer the user has not typed into since. */

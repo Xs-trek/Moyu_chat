@@ -17,7 +17,8 @@ import java.util.concurrent.ScheduledExecutorService;
 final class ChatCoordinator implements AutoCloseable {
     private static final int MAX_UI_INHERITED_ITEMS = 500;
     private static final int MAX_UI_INHERITED_CHARS = 512_000;
-    interface Host { void dispatch(JSONObject envelope); /** Native secure entry for a Provider's API Key: the key goes straight to ChatSecretStore, never through the WebView. */ default void openCredentialEditor(ChatDatabase.Provider provider, String hosts) { } default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } }
+    private static final ContextBudgetManager CONTEXT_BUDGETS = new ContextBudgetManager();
+    interface Host { void dispatch(JSONObject envelope); /** Native secure entry for a Provider's API Key: the key goes straight to ChatSecretStore, never through the WebView. */ default void openCredentialEditor(ChatDatabase.Provider provider, String hosts) { } default void openImagePicker(String sessionId) { } default void openExternalUrl(String url) { } default boolean setTurnRuntimeActive(String sessionId, boolean active) { return true; } void showMessage(String text); /** Native window chrome (system bars, window background) follows the resolved UI theme. */ default void applyAppearance(String resolvedTheme, String tone) { } /** A turn ended on its own; the host notifies only while no Activity is visible. */ default void turnSettled(String sessionId, String title, boolean failed) { } /** Asks for the Android 13+ notification permission; {@code onlyOnce} skips it when it was asked before. */ default void requestNotificationPermission(boolean onlyOnce) { } }
 
     private final ChatDatabase db;
     private final ChatSecretStore secrets;
@@ -45,6 +46,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
     /** Branch session → the turn its next turn re-answers (set by turn.rerun, consumed when that turn starts). */
     private final Map<String, String> pendingReruns = new ConcurrentHashMap<>();
+    private final Map<String, String> pendingKeptDrafts = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
     private volatile boolean uiReady;
@@ -59,6 +61,8 @@ final class ChatCoordinator implements AutoCloseable {
     private JSONObject usageTodayCache;
     private boolean showReasoning;
     private boolean crossChatMemoryEnabled;
+    /** Read by turn threads when a turn settles. */
+    private volatile boolean notifyInBackground;
     private boolean wireCapture;
     private String defaultContextMode;
     private String defaultWebMode;
@@ -83,6 +87,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
         this.crossChatMemoryEnabled = "true".equals(db.setting("crossChatMemoryEnabled", "false"));
         this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
+        this.notifyInBackground = !"false".equals(db.setting("notifyInBackground", "true"));
         this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
@@ -95,7 +100,7 @@ final class ChatCoordinator implements AutoCloseable {
             for (ChatDatabase.Provider p : db.listProviders()) providerIds.add(p.id);
             secrets.retainOnly(providerIds);
             mediaStore.pruneUnreferenced(db.referencedMediaIds());
-        } catch (Exception error) { host.showMessage("startup cleanup failed: " + safe(error)); }
+        } catch (Exception error) { host.showMessage("启动清理失败：" + safe(error)); }
     }
 
     void postIntent(String raw) { if (raw == null || raw.length() > 1024 * 1024) return; worker.execute(() -> handle(raw)); }
@@ -141,6 +146,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.reasoning.visibility.set": showReasoning = p.optBoolean("show", false); db.putSetting("showReasoning", showReasoning ? "true" : "false"); break;
                 case "inspector.capture.set": wireCapture = p.optBoolean("enabled", true); db.putSetting("wireCapture", wireCapture ? "true" : "false"); break;
                 case "memory.global.set": crossChatMemoryEnabled = p.optBoolean("enabled", false); db.putSetting("crossChatMemoryEnabled", crossChatMemoryEnabled ? "true" : "false"); break;
+                case "notify.background.set": notifyInBackground = p.optBoolean("enabled", true); db.putSetting("notifyInBackground", notifyInBackground ? "true" : "false"); if (notifyInBackground) host.requestNotificationPermission(false); break;
                 case "context.mode.default.set": defaultContextMode = ContextMode.normalize(required(p, "mode")); db.putSetting("defaultContextMode", defaultContextMode); break;
                 case "web.mode.default.set": defaultWebMode = ChatTurnOptions.normalizeWebMode(required(p, "mode")); db.putSetting("defaultWebMode", defaultWebMode); break;
                 case "subagent.standard.default.set": standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(required(p, "mode")); db.putSetting("standardSubagentMode", standardSubagentMode); break;
@@ -154,67 +160,17 @@ final class ChatCoordinator implements AutoCloseable {
                 case "chat.session.reasoning.set": setSessionReasoning(required(p, "localSessionId"), required(p, "reasoningEffort")); break;
                 case "chat.session.web.set": setSessionWebMode(required(p, "localSessionId"), required(p, "webMode")); break;
                 case "chat.session.send": {
-                    final String sessionId = required(p, "localSessionId");
-                    final String message = p.optString("text", "");
+                    String sessionId = required(p, "localSessionId");
+                    String message = p.optString("text", "");
                     if (sessionBusy(sessionId)) {
                         if (!message.trim().isEmpty()) db.setDraft(sessionId, message);
-                        throw new IllegalStateException("session busy; message kept as next draft");
+                        throw new IllegalStateException("上一轮还没结束，消息已留在输入框");
                     }
                     if (message.trim().isEmpty() && db.draftMedia(sessionId).length() == 0) break;
-                    final String asyncRequestId = requestId;
-                    final TurnConfig turnConfig;
-                    final TurnControl turnControl = new TurnControl();
-                    try {
-                        // Send is self-contained with respect to the visible turn setting. A preceding
-                        // reasoning.set bridge message is still persisted normally, but Send must not rely
-                        // on cross-bridge scheduling order to know what the user selected for this turn.
-                        if (p.has("reasoningEffort")) setSessionReasoning(sessionId, p.optString("reasoningEffort", ReasoningPolicy.DEFAULT));
-                        if (p.has("webMode")) setSessionWebMode(sessionId, p.optString("webMode", ChatTurnOptions.WEB_AUTO));
-                        // All user-selected wire/session capabilities plus provider config/secret/credential epoch
-                        // are frozen while this serialized intent worker owns the turn. UI navigation or profile
-                        // edits cannot relabel an already accepted request.
-                        turnConfig = freezeTurnConfig(sessionId);
-                        if (!host.setTurnRuntimeActive(sessionId, true)) throw new IllegalStateException("unable to acquire foreground generation runtime");
-                        if (turnControls.putIfAbsent(sessionId, turnControl) != null) {
-                            host.setTurnRuntimeActive(sessionId, false);
-                            throw new IllegalStateException("session busy");
-                        }
-                    } catch (Exception rejected) { sendRejected(requestId, sessionId, message, rejected); return; }
-                    // The composer is cleared only after the runtime lease makes this an accepted turn.
-                    db.setDraft(sessionId, "");
-                    startingSessions.add(sessionId);
-                    emitView(); // accepted turn is immediately visible and immediately interruptible.
-                    try {
-                        preparationWorker.execute(() -> {
-                            turnControl.bindCurrentThread();
-                            try {
-                                pipeline.run(sessionId, message, turnConfig, turnControl);
-                                result(asyncRequestId, true, null);
-                            } catch (Exception error) {
-                                // Last-resort durable terminal guard: if beginTurn() already committed a live row,
-                                // no escaping preparation exception may leave the DB stuck in running/streaming.
-                                pipeline.abandon(sessionId, turnControl, turnControl.isCancelled() ? "cancelled" : "turn_internal_error");
-                                try { db.failUnhandledTurn(sessionId, turnControl.isCancelled() ? "cancelled" : "turn_internal_error", safe(error)); } catch (Exception ignored) { }
-                                turnControls.remove(sessionId, turnControl);
-                                startingSessions.remove(sessionId);
-                                preparingSessions.remove(sessionId);
-                                webPreparingStages.remove(sessionId);
-                                postProcessingStages.remove(sessionId);
-                                host.setTurnRuntimeActive(sessionId, false);
-                                result(asyncRequestId, false, safe(error));
-                            } finally {
-                                turnControl.clearCurrentThread();
-                                emitView();
-                            }
-                        });
-                    } catch (Exception schedulingError) {
-                        turnControls.remove(sessionId, turnControl);
-                        startingSessions.remove(sessionId);
-                        host.setTurnRuntimeActive(sessionId, false);
-                        sendRejected(requestId, sessionId, message, schedulingError);
-                    }
+                    startTurn(requestId, sessionId, message, p, "", message);
                     return;
                 }
+                case "chat.turn.retry": retryTurn(requestId, required(p, "localSessionId")); return;
                 // The composer already shows what was typed: saving it changes nothing on screen, so no view push.
                 case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); result(requestId, true, null); return;
                 case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;
@@ -233,7 +189,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "provider.delete": config.deleteAccount(required(p, "providerId")); break;
                 case "provider.credential.edit": {
                     ChatDatabase.Provider provider = db.getProvider(required(p, "providerId"));
-                    if (provider == null) throw new IllegalArgumentException("provider not found");
+                    if (provider == null) throw new IllegalArgumentException("账号不存在");
                     host.openCredentialEditor(provider, config.hostsOf(provider.id));
                     break;
                 }
@@ -260,7 +216,7 @@ final class ChatCoordinator implements AutoCloseable {
                 }
                 case "turn.answers.get": {
                     JSONObject group = db.answerGroup(required(p, "localSessionId"), required(p, "turnId"));
-                    if (group == null) throw new IllegalArgumentException("turn not found");
+                    if (group == null) throw new IllegalArgumentException("找不到这一轮的记录");
                     result(requestId, true, null, group);
                     return; // read-only: no view change
                 }
@@ -273,13 +229,13 @@ final class ChatCoordinator implements AutoCloseable {
                 case "turn.payload.get": {
                     if (!p.has("callIndex")) throw new IllegalArgumentException("missing callIndex");
                     JSONObject payload = db.turnPayload(required(p, "localSessionId"), required(p, "turnId"), p.optInt("callIndex", -1));
-                    if (payload == null) throw new IllegalArgumentException("turn not found");
+                    if (payload == null) throw new IllegalArgumentException("找不到这一轮的记录");
                     result(requestId, true, null, payload);
                     return; // read-only: no view change
                 }
                 case "turn.trace.get": {
                     JSONObject trace = db.turnTrace(required(p, "localSessionId"), required(p, "turnId"));
-                    if (trace == null) throw new IllegalArgumentException("turn not found");
+                    if (trace == null) throw new IllegalArgumentException("找不到这一轮的记录");
                     result(requestId, true, null, trace);
                     return; // read-only: no view change
                 }
@@ -289,18 +245,81 @@ final class ChatCoordinator implements AutoCloseable {
         } catch (Exception error) { result(requestId, false, safe(error)); emitView(); }
     }
 
+    /**
+     * Starts a turn for {@code message} plus the session's draft images. {@code keptDraft} is what the composer
+     * holds once the turn is accepted; a refused send puts {@code restoreOnReject} back as the draft.
+     */
+    private void startTurn(String requestId, String sessionId, String message, JSONObject p, String keptDraft, String restoreOnReject) {
+        final String asyncRequestId = requestId;
+        final TurnConfig turnConfig;
+        final TurnControl turnControl = new TurnControl();
+        try {
+            // Send is self-contained with respect to the visible turn setting. A preceding
+            // reasoning.set bridge message is still persisted normally, but Send must not rely
+            // on cross-bridge scheduling order to know what the user selected for this turn.
+            if (p.has("reasoningEffort")) setSessionReasoning(sessionId, p.optString("reasoningEffort", ReasoningPolicy.DEFAULT));
+            if (p.has("webMode")) setSessionWebMode(sessionId, p.optString("webMode", ChatTurnOptions.WEB_AUTO));
+            // All user-selected wire/session capabilities plus provider config/secret/credential epoch
+            // are frozen while this serialized intent worker owns the turn. UI navigation or profile
+            // edits cannot relabel an already accepted request.
+            turnConfig = freezeTurnConfig(sessionId);
+            if (!host.setTurnRuntimeActive(sessionId, true)) throw new IllegalStateException("系统没有允许启动后台生成服务，请稍后再试");
+            if (turnControls.putIfAbsent(sessionId, turnControl) != null) {
+                host.setTurnRuntimeActive(sessionId, false);
+                throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
+            }
+        } catch (Exception rejected) { sendRejected(requestId, sessionId, restoreOnReject, rejected); return; }
+        // The composer is cleared only after the runtime lease makes this an accepted turn.
+        db.setDraft(sessionId, keptDraft);
+        if (keptDraft.isEmpty()) pendingKeptDrafts.remove(sessionId); else pendingKeptDrafts.put(sessionId, keptDraft);
+        startingSessions.add(sessionId);
+        // The first accepted turn is when a result notification starts to matter.
+        if (notifyInBackground) host.requestNotificationPermission(true);
+        emitView(); // accepted turn is immediately visible and immediately interruptible.
+        try {
+            preparationWorker.execute(() -> {
+                turnControl.bindCurrentThread();
+                try {
+                    pipeline.run(sessionId, message, turnConfig, turnControl);
+                    result(asyncRequestId, true, null);
+                } catch (Exception error) {
+                    // Last-resort durable terminal guard: if beginTurn() already committed a live row,
+                    // no escaping preparation exception may leave the DB stuck in running/streaming.
+                    pipeline.abandon(sessionId, turnControl, turnControl.isCancelled() ? "cancelled" : "turn_internal_error");
+                    try { db.failUnhandledTurn(sessionId, turnControl.isCancelled() ? "cancelled" : "turn_internal_error", safe(error)); } catch (Exception ignored) { }
+                    if (turnControls.get(sessionId) == turnControl) notifySettled(sessionId, turnControl); // not yet released, so not yet notified
+                    turnControls.remove(sessionId, turnControl);
+                    startingSessions.remove(sessionId);
+                    preparingSessions.remove(sessionId);
+                    webPreparingStages.remove(sessionId);
+                    postProcessingStages.remove(sessionId);
+                    host.setTurnRuntimeActive(sessionId, false);
+                    result(asyncRequestId, false, safe(error));
+                } finally {
+                    turnControl.clearCurrentThread();
+                    emitView();
+                }
+            });
+        } catch (Exception schedulingError) {
+            turnControls.remove(sessionId, turnControl);
+            startingSessions.remove(sessionId);
+            host.setTurnRuntimeActive(sessionId, false);
+            sendRejected(requestId, sessionId, restoreOnReject, schedulingError);
+        }
+    }
+
     private void requestImagePicker(String sessionId) {
-        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
-        if (!ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this model profile does not declare image input support");
-        if (db.draftMedia(sessionId).length() >= ChatMediaStore.MAX_DRAFT_IMAGES) throw new IllegalStateException("image attachment limit reached");
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
+        if (!ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("当前模型没有声明图片输入能力");
+        if (db.draftMedia(sessionId).length() >= ChatMediaStore.MAX_DRAFT_IMAGES) throw new IllegalStateException("图片数量已达上限");
         host.openImagePicker(sessionId);
     }
 
     void attachImageFromUri(String sessionId, Uri uri, ContentResolver resolver) {
         worker.execute(() -> {
             try {
-                ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
-                if (!ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("this model profile does not support image input");
+                ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
+                if (!ChatDatabase.supportsModality(session.inputModalities, "image")) throw new IllegalStateException("当前模型没有声明图片输入能力");
                 JSONObject descriptor = mediaStore.importImage(resolver, uri); db.addDraftMedia(sessionId, descriptor); emitView();
             } catch (Exception error) { host.showMessage(safe(error)); emitView(); }
         });
@@ -309,7 +328,7 @@ final class ChatCoordinator implements AutoCloseable {
     private void createSession(JSONObject p) {
         String providerId = required(p, "providerId");
         ChatDatabase.Provider provider = db.getProvider(providerId);
-        if (provider == null) throw new IllegalStateException("provider not configured");
+        if (provider == null) throw new IllegalStateException("账号未配置");
         ChatDatabase.ModelProfile profile = null;
         String profileId = p.optString("modelProfileId", "").trim();
         if (!profileId.isEmpty()) profile = db.getModelProfile(profileId);
@@ -317,12 +336,12 @@ final class ChatCoordinator implements AutoCloseable {
             String requestedModel = p.optString("model", "").trim();
             profile = requestedModel.isEmpty() ? db.firstModelProfile(providerId) : db.findModelProfile(providerId, requestedModel);
         }
-        if (profile == null || !providerId.equals(profile.providerId)) throw new IllegalStateException("model profile not configured");
-        if (!profile.enabled) throw new IllegalStateException("model is disabled");
+        if (profile == null || !providerId.equals(profile.providerId)) throw new IllegalStateException("模型未配置");
+        if (!profile.enabled) throw new IllegalStateException("这个模型已停用");
         ChatDatabase.Route route = db.getRoute(profile.routeId);
-        if (route == null) throw new IllegalStateException("model route not found");
+        if (route == null) throw new IllegalStateException("模型使用的路线已删除");
         String requestedTitle = p.optString("title", "").trim();
-        String title = requestedTitle.isEmpty() ? null : bounded(requestedTitle, 200, "title");
+        String title = requestedTitle.isEmpty() ? null : bounded(requestedTitle, 200, "标题");
         String effort = p.has("reasoningEffort") ? ReasoningPolicy.normalizeEffort(p.optString("reasoningEffort", ReasoningPolicy.DEFAULT)) : ReasoningPolicy.DEFAULT;
         ReasoningPolicy.validateEffortForProvider(ChatDatabase.deploymentProvider(provider, route, profile), profile.reasoningLevels, effort);
         String contextMode = ContextMode.normalize(p.optString("contextMode", defaultContextMode));
@@ -332,23 +351,12 @@ final class ChatCoordinator implements AutoCloseable {
         activate(s.id);
     }
 
-    private void openSession(String id) { if (db.getSession(id) == null) throw new IllegalArgumentException("session not found"); activate(id); }
-    private void renameSession(String id, String title) { db.renameSession(id, bounded(title, 200, "session title")); }
+    private void openSession(String id) { if (db.getSession(id) == null) throw new IllegalArgumentException("会话不存在"); activate(id); }
+    private void renameSession(String id, String title) { db.renameSession(id, bounded(title, 200, "会话标题")); }
     private void activate(String id) { activeSessionId = id; db.putSetting("activeSessionId", id); route = "conversation"; db.putSetting("route", route); }
 
-    /** Model selection changes the configuration for future turns only; prior assistant rows keep per-turn metadata. */
-    private void setSessionModel(String sessionId, String modelProfileId) {
-        if (activeTurns.containsKey(sessionId) || startingSessions.contains(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId) || postProcessingStages.containsKey(sessionId)) {
-            throw new IllegalStateException("wait for the current turn before switching model");
-        }
-        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
-        ChatDatabase.ModelProfile profile = db.getModelProfile(modelProfileId); if (profile == null) throw new IllegalArgumentException("model profile not found");
-        if (!profile.enabled) throw new IllegalStateException("model is disabled");
-        ChatDatabase.Provider provider = db.getProvider(profile.providerId);
-        if (provider == null || !secrets.has(profile.providerId)) throw new IllegalStateException("target provider credential missing");
-        if (db.draftMedia(sessionId).length() > 0 && !ChatDatabase.supportsModality(profile.inputModalities, "image")) {
-            throw new IllegalStateException("remove image attachments before switching to a text-only model");
-        }
+    /** Copies what a session freezes from its model profile; switching models and applying an edited profile share it. */
+    static void adoptProfile(ChatDatabase.Session session, ChatDatabase.ModelProfile profile) {
         session.providerId = profile.providerId;
         session.modelProfileId = profile.id;
         session.model = profile.modelId;
@@ -365,11 +373,43 @@ final class ChatCoordinator implements AutoCloseable {
         session.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
         session.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
         session.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
+    }
+
+    /** True when the session's frozen copy no longer matches its (enabled) model profile, i.e. the profile was edited. */
+    static boolean profileChanged(ChatDatabase.Session session, ChatDatabase.ModelProfile profile) {
+        if (session == null || profile == null || !profile.enabled || !profile.id.equals(session.modelProfileId)) return false;
+        ChatDatabase.Session current = new ChatDatabase.Session();
+        adoptProfile(current, profile);
+        return !frozenSignature(current).equals(frozenSignature(session));
+    }
+
+    private static String frozenSignature(ChatDatabase.Session s) {
+        return String.join("|", s.providerId, s.model, String.valueOf(s.contextTokens), String.valueOf(s.inputTokens), String.valueOf(s.maxOutputTokens),
+                ChatDatabase.normalizeModalities(s.inputModalities), ChatDatabase.normalizeModalities(s.outputModalities), ChatTurnOptions.normalizeCapabilities(s.toolCapabilities),
+                String.valueOf(s.routeId), ChatDatabase.normalizeProtocol(s.protocol), String.valueOf(s.reasoningWire), String.valueOf(s.serviceTier), String.valueOf(s.sendOutputCap),
+                ReasoningPolicy.normalizeThinkingMode(s.thinkingMode), String.valueOf(Math.max(0, s.thinkingBudgetTokens)), ProviderContinuationPolicy.normalize(s.continuationMode),
+                HarnessProfile.normalize(s.harnessPreset), ClientToolRuntime.normalizeCalling(s.clientToolCalling), ReasoningPolicy.normalizeLevels(s.reasoningLevels));
+    }
+
+    /** Model selection changes the configuration for future turns only; prior assistant rows keep per-turn metadata. */
+    private void setSessionModel(String sessionId, String modelProfileId) {
+        if (activeTurns.containsKey(sessionId) || startingSessions.contains(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId) || postProcessingStages.containsKey(sessionId)) {
+            throw new IllegalStateException("请等当前回合结束再切换模型");
+        }
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
+        ChatDatabase.ModelProfile profile = db.getModelProfile(modelProfileId); if (profile == null) throw new IllegalArgumentException("模型不存在");
+        if (!profile.enabled) throw new IllegalStateException("这个模型已停用");
+        ChatDatabase.Provider provider = db.getProvider(profile.providerId);
+        if (provider == null || !secrets.has(profile.providerId)) throw new IllegalStateException("目标账号还没有填写 API Key");
+        if (db.draftMedia(sessionId).length() > 0 && !ChatDatabase.supportsModality(profile.inputModalities, "image")) {
+            throw new IllegalStateException("目标模型不支持图片，请先移除待发送的图片");
+        }
+        adoptProfile(session, profile);
         session.subagentMode = ContextMode.MINIMAL.equals(ContextMode.normalize(session.contextMode)) ? HarnessPolicyResolver.SUBAGENT_OFF
                 : ContextMode.SMART.equals(ContextMode.normalize(session.contextMode)) ? HarnessPolicyResolver.SUBAGENT_AUTO
                 : standardSubagentMode;
         ChatDatabase.Route route = db.getRoute(profile.routeId);
-        if (route == null) throw new IllegalStateException("model route not found");
+        if (route == null) throw new IllegalStateException("模型使用的路线已删除");
         ReasoningPolicy.validateLevelsForProvider(ChatDatabase.deploymentProvider(provider, route, session), session.reasoningLevels);
         String previousEffort = ReasoningPolicy.normalizeEffort(session.reasoningEffort);
         session.reasoningEffort = ReasoningPolicy.allows(session.reasoningLevels, previousEffort) ? previousEffort : ReasoningPolicy.DEFAULT;
@@ -379,10 +419,10 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** Reasoning effort is a durable future-turn setting and is validated against the active model profile. */
     private void setSessionReasoning(String sessionId, String effort) {
-        if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before changing reasoning effort");
-        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请等当前回合结束再调整推理深度");
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
         ChatDatabase.Provider deployment = db.sessionDeployment(session);
-        if (deployment == null) throw new IllegalStateException("provider not found");
+        if (deployment == null) throw new IllegalStateException("账号不存在");
         String normalized = ReasoningPolicy.normalizeEffort(effort);
         ReasoningPolicy.validateEffortForProvider(deployment, session.reasoningLevels, normalized);
         session.reasoningEffort = normalized;
@@ -392,8 +432,8 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** Web mode is a durable future-turn session setting; it never changes model capability declarations. */
     private void setSessionWebMode(String sessionId, String webMode) {
-        if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before changing Web mode");
-        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请等当前回合结束再调整联网模式");
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
         session.webMode = ChatTurnOptions.normalizeWebMode(webMode);
         session.updatedAt = Instant.now().toString();
         db.saveSession(session);
@@ -412,17 +452,17 @@ final class ChatCoordinator implements AutoCloseable {
 
     private TurnConfig freezeTurnConfig(String sessionId) {
         ChatDatabase.Session session = db.getSession(sessionId);
-        if (session == null) throw new IllegalArgumentException("session not found");
+        if (session == null) throw new IllegalArgumentException("会话不存在");
         ChatDatabase.Provider sharedProvider = db.getProvider(session.providerId);
         String key = secrets.get(session.providerId);
-        if (sharedProvider == null || key == null) throw new IllegalStateException("provider credential missing");
+        if (sharedProvider == null || key == null) throw new IllegalStateException("这个账号还没有填写 API Key");
         ChatDatabase.ModelProfile profile = session.modelProfileId == null ? null : db.getModelProfile(session.modelProfileId);
-        if (profile == null) throw new IllegalStateException("model profile not found");
+        if (profile == null) throw new IllegalStateException("模型不存在");
         ChatDatabase.Route route = db.getRoute(session.routeId);
         if (route == null) throw new IllegalStateException("这个 Chat 使用的路线已删除，请切换模型");
         config.requireConfirmedHost(route);
         ChatDatabase.Provider provider = ChatDatabase.deploymentProvider(sharedProvider, route, session);
-        if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("provider protocol unsupported");
+        if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("不支持这个账号的协议");
         ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
         ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort);
         return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile);
@@ -449,16 +489,16 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void saveDraft(String id, String text) {
-        if (db.getSession(id) == null) throw new IllegalArgumentException("session not found");
+        if (db.getSession(id) == null) throw new IllegalArgumentException("会话不存在");
         // A running turn may coexist with the user's next-turn draft. Frontend draft generations
         // suppress stale pre-send debounce writes, so Native must not discard legitimate typing here.
         db.setDraft(id, text == null ? "" : text);
     }
 
     private void deleteSession(String id) {
-        if (startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id)) throw new IllegalStateException("wait for preparation before deleting this session");
-        if (activeTurns.containsKey(id)) throw new IllegalStateException("interrupt the current turn before deleting this session");
-        if (db.getSession(id) == null) throw new IllegalArgumentException("session not found");
+        if (startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id)) throw new IllegalStateException("回合正在准备，请稍后再删除");
+        if (activeTurns.containsKey(id)) throw new IllegalStateException("请先停止当前回合再删除会话");
+        if (db.getSession(id) == null) throw new IllegalArgumentException("会话不存在");
         db.deleteSession(id);
         mediaStore.pruneUnreferenced(db.referencedMediaIds());
         if (id.equals(activeSessionId)) { activeSessionId = null; db.putSetting("activeSessionId", ""); route = "home"; db.putSetting("route", route); }
@@ -486,17 +526,36 @@ final class ChatCoordinator implements AutoCloseable {
         @Override public boolean ownsTurn(String sessionId, TurnControl control) { return turnControls.get(sessionId) == control; }
         @Override public boolean wireCaptureEnabled() { return wireCapture; }
         @Override public String takeRerunOf(String sessionId) { return pendingReruns.remove(sessionId); }
+        @Override public String takeKeptDraft(String sessionId) { String kept = pendingKeptDrafts.remove(sessionId); return kept == null ? "" : kept; }
         @Override public void releaseTurn(String id) {
             activeTurns.remove(id);
-            turnControls.remove(id);
+            TurnControl control = turnControls.remove(id);
             startingSessions.remove(id);
             preparingSessions.remove(id);
             webPreparingStages.remove(id);
             postProcessingStages.remove(id);
             lastStreamViewNanos.remove(id);
             host.setTurnRuntimeActive(id, false);
+            notifySettled(id, control);
             ChatCoordinator.this.emitView();
         }
+    }
+
+    /** A turn that ended on its own (the user did not stop it) is reported to the host with its outcome. */
+    private void notifySettled(String id, TurnControl control) {
+        if (!notifyInBackground || control == null || control.isCancelled()) return;
+        try {
+            ChatDatabase.Session s = db.getSession(id);
+            if (s != null) host.turnSettled(id, s.title, "failed".equals(s.state));
+        } catch (Exception ignored) { }
+    }
+
+    /** A tapped result notification opens its session. */
+    void openFromNotification(String sessionId) {
+        worker.execute(() -> {
+            if (sessionId != null && db.getSession(sessionId) != null) activate(sessionId);
+            emitView();
+        });
     }
 
     private void interrupt(String id) {
@@ -513,10 +572,10 @@ final class ChatCoordinator implements AutoCloseable {
      * caller sends the returned text; that turn is recorded as a re-answer of the original turn.
      */
     private JSONObject rerunTurn(String sourceSessionId, int userSeq, String modelProfileId, String contextMode) throws Exception {
-        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
-        if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before re-answering");
+        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("原会话不存在");
+        if (sessionBusy(sourceSessionId)) throw new IllegalStateException("请等当前回合结束再重答");
         JSONObject question = messageAt(sourceSessionId, userSeq);
-        if (!"user".equals(question.optString("role"))) throw new IllegalArgumentException("only user messages can be re-answered");
+        if (!"user".equals(question.optString("role"))) throw new IllegalArgumentException("只能对用户消息重答");
         String originalTurn = db.turnAt(sourceSessionId, userSeq);
         String snapshotId = userSeq > 1 || source.originSnapshotId != null ? snapshots.createLocal(sourceSessionId, userSeq - 1).id : null;
         ChatDatabase.Session branch = db.branchSession(source, "重答 · " + source.title, snapshotId, sourceSessionId);
@@ -543,8 +602,8 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private void createLocalBranch(String sourceSessionId, Integer throughSeq) throws Exception {
-        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("source session not found");
-        if (sessionBusy(sourceSessionId)) throw new IllegalStateException("wait for the current turn before branching");
+        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("原会话不存在");
+        if (sessionBusy(sourceSessionId)) throw new IllegalStateException("请等当前回合结束再创建分支");
         ChatDatabase.Snapshot snapshot = snapshots.createLocal(sourceSessionId, throughSeq);
         ChatDatabase.Session branch = db.branchSession(source, "分支 · " + source.title, snapshot.id, sourceSessionId);
         activate(branch.id);
@@ -552,10 +611,10 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** Edit rewinds the current local session and restores the selected user input into the composer. */
     private void editMessageInPlace(String sessionId, int localSeq) throws Exception {
-        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("session not found");
-        if (sessionBusy(sessionId)) throw new IllegalStateException("interrupt the current turn before editing history");
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请先停止当前回合再编辑历史");
         JSONObject selected = messageAt(sessionId, localSeq);
-        if (!"user".equals(selected.optString("role"))) throw new IllegalArgumentException("only user messages can be edited");
+        if (!"user".equals(selected.optString("role"))) throw new IllegalArgumentException("只能编辑用户消息");
         String text = selected.optString("text", "");
         JSONArray attachments = selected.optJSONArray("attachments");
         db.truncateTimelineFrom(sessionId, localSeq);
@@ -565,10 +624,52 @@ final class ChatCoordinator implements AutoCloseable {
         activate(sessionId);
     }
 
+    /**
+     * Retry rewinds the last turn when it failed or did not finish and sends the same question again with the
+     * session's current settings. Like edit, the failed turn's record goes with it; text typed in the composer stays.
+     */
+    private void retryTurn(String requestId, String sessionId) throws Exception {
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
+        JSONObject question = retryTarget(db.timeline(sessionId));
+        if (question == null) throw new IllegalStateException("最后一轮已经完成，不需要重试");
+        if (db.draftMedia(sessionId).length() > 0) throw new IllegalStateException("输入框里还有待发送的图片，请先发送或移除再重试");
+        freezeTurnConfig(sessionId); // a turn that could not start is refused before anything is rewound
+        String keptDraft = session.draft == null ? "" : session.draft;
+        String text = question.optString("text", "");
+        JSONArray attachments = question.optJSONArray("attachments");
+        db.truncateTimelineFrom(sessionId, question.optInt("localSeq"));
+        db.replaceDraftMedia(sessionId, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
+        db.setDraft(sessionId, keptDraft);
+        startTurn(requestId, sessionId, text, new JSONObject(), keptDraft, keptDraft.trim().isEmpty() ? text : text + "\n\n" + keptDraft);
+    }
+
+    /** The last local question when its turn failed or did not finish (error row, unfinished or missing answer), else null. */
+    static JSONObject retryTarget(JSONArray items) {
+        if (items == null) return null;
+        for (int i = items.length() - 1; i >= 0; i--) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null || !"message".equals(item.optString("kind")) || !"user".equals(item.optString("role"))) continue;
+            if (item.optBoolean("inherited", false) || item.optInt("localSeq", -1) < 1) return null;
+            boolean answered = false;
+            for (int j = i + 1; j < items.length(); j++) {
+                JSONObject after = items.optJSONObject(j);
+                if (after == null) continue;
+                if ("error".equals(after.optString("kind"))) return item;
+                if ("message".equals(after.optString("kind")) && "assistant".equals(after.optString("role"))) {
+                    if (after.optBoolean("incomplete", false) || after.optBoolean("streaming", false)) return item;
+                    answered = true;
+                }
+            }
+            return answered ? null : item;
+        }
+        return null;
+    }
+
     /** Rollback rewinds the current local session; branching is a separate explicit user action. */
     private void rollbackMessageInPlace(String sessionId, int localSeq) throws Exception {
-        if (db.getSession(sessionId) == null) throw new IllegalArgumentException("session not found");
-        if (sessionBusy(sessionId)) throw new IllegalStateException("interrupt the current turn before rolling back");
+        if (db.getSession(sessionId) == null) throw new IllegalArgumentException("会话不存在");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请先停止当前回合再回退");
         messageAt(sessionId, localSeq);
         db.truncateTimelineFrom(sessionId, localSeq);
         mediaStore.pruneUnreferenced(db.referencedMediaIds());
@@ -581,16 +682,16 @@ final class ChatCoordinator implements AutoCloseable {
         for (int i = 0; i < timeline.length(); i++) {
             JSONObject item = timeline.optJSONObject(i);
             if (item == null || item.optInt("localSeq", -1) != localSeq) continue;
-            if (!"message".equals(item.optString("kind")) || item.optBoolean("streaming", false)) throw new IllegalArgumentException("target is not a finalized message");
+            if (!"message".equals(item.optString("kind")) || item.optBoolean("streaming", false)) throw new IllegalArgumentException("这条消息还没有生成完");
             String role = item.optString("role", "");
-            if (!("user".equals(role) || "assistant".equals(role))) throw new IllegalArgumentException("target message role cannot be branched");
+            if (!("user".equals(role) || "assistant".equals(role))) throw new IllegalArgumentException("这条消息不能用作分支起点");
             return item;
         }
-        throw new IllegalArgumentException("message not found");
+        throw new IllegalArgumentException("找不到这条消息");
     }
 
     private void recordVerificationFeedback(String sessionId, int localSeq, String label) {
-        if (sessionBusy(sessionId)) throw new IllegalStateException("wait for the current turn before rating verification");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请等当前回合结束再评价校验");
         String normalized = label == null ? "" : label.trim().toLowerCase(java.util.Locale.ROOT);
         if (!("accurate".equals(normalized) || "false_alarm".equals(normalized) || "missed_error".equals(normalized))) {
             throw new IllegalArgumentException("unsupported verification feedback label");
@@ -629,7 +730,7 @@ final class ChatCoordinator implements AutoCloseable {
             JSONObject patch = new JSONObject().put("scope", "conversation.stream").put("localSessionId", sessionId)
                     .put("session", sessionPatch).put("item", item);
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.patch").put("revision", ++revision).put("patch", patch));
-        } catch (Exception error) { host.showMessage("stream patch failed: " + safe(error)); }
+        } catch (Exception error) { host.showMessage("流式更新失败：" + safe(error)); }
     }
 
     private void emitStreamingView(String sessionId) {
@@ -663,11 +764,11 @@ final class ChatCoordinator implements AutoCloseable {
                 }
             }
             view.put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
-                    .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture)
+                    .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture).put("notifyInBackground", notifyInBackground)
                     .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
                     .put("standardSubagentMode", standardSubagentMode));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));
-        } catch (Exception error) { host.showMessage("view update failed: " + safe(error)); }
+        } catch (Exception error) { host.showMessage("界面更新失败：" + safe(error)); }
     }
 
     static final class DisplayTimeline {
@@ -835,6 +936,13 @@ final class ChatCoordinator implements AutoCloseable {
                     .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", turnControls.containsKey(s.id))
                     .put("canConfigureTurn", !active).put("contextPreparing", preparing);
             if (display.omittedInheritedItems > 0) o.put("displayOmittedInheritedItems", display.omittedInheritedItems);
+            if (!active) {
+                JSONObject retry = retryTarget(display.items);
+                if (retry != null) o.put("retryLocalSeq", retry.optInt("localSeq"));
+                if (profileChanged(s, modelProfile)) o.put("profileChanged", true);
+            }
+            try { o.put("contextBudgetTokens", CONTEXT_BUDGETS.effectiveInputBudget(s.contextTokens, s.inputTokens, s.maxOutputTokens)); }
+            catch (IllegalArgumentException unusable) { /* no usable input window: the send path reports it */ }
             if (webPreparing) o.put("webPreparingStage", webPreparingStage);
             if (postProcessing) o.put("postProcessingStage", postProcessingStage);
         }
@@ -848,7 +956,7 @@ final class ChatCoordinator implements AutoCloseable {
     private static String safe(Exception e) { String m = e.getMessage(); return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m; }
     private static String nonEmpty(String value, String fallback) { return value == null || value.trim().isEmpty() ? fallback : value.trim(); }
     private static String empty(String v) { return v == null || v.isEmpty() ? null : v; }
-    private static String bounded(String value, int max, String label) { String v = value == null ? "" : value.trim(); if (v.isEmpty()) throw new IllegalArgumentException(label + " required"); if (v.length() > max) throw new IllegalArgumentException(label + " too long"); return v; }
+    private static String bounded(String value, int max, String label) { String v = value == null ? "" : value.trim(); if (v.isEmpty()) throw new IllegalArgumentException(label + "不能为空"); if (v.length() > max) throw new IllegalArgumentException(label + "不能超过 " + max + " 字"); return v; }
     private static String validRoute(String value) { String v = value == null ? "" : value.trim(); if (!("home".equals(v) || "conversation".equals(v) || "providers".equals(v) || "settings".equals(v) || "stats".equals(v))) return "home"; return v; }
     /** "system" follows the Android night mode; the WebView never has to guess from prefers-color-scheme. */
     private String resolvedTheme() {

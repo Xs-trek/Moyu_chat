@@ -98,6 +98,69 @@ export function modelChoices(view) {
 }
 
 /** Capabilities exactly as the session's frozen deployment declares them (protocol ≠ capability). */
+/** Enabled models grouped by account, in the order the native view lists them. */
+export function modelGroups(view) {
+  const groups = [];
+  for (const choice of modelChoices(view)) {
+    const last = groups.at(-1);
+    if (last && last.provider === choice.provider) last.models.push(choice.model);
+    else groups.push({ provider: choice.provider, models: [choice.model] });
+  }
+  return groups;
+}
+
+/** Native and dialog agree on this limit (ChatCoordinator.renameSession). */
+export const SESSION_TITLE_MAX = 200;
+
+/** Message time: just the clock today, the date before that, and the year once it is not this year. */
+export function messageTime(value, now = new Date()) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (localDay(date) === localDay(now)) return clock;
+  const day = `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
+  return date.getFullYear() === now.getFullYear() ? day : `${date.getFullYear()}年${day}`;
+}
+
+/** One plain line for the session list: Markdown marks dropped, whitespace collapsed. */
+export function sessionPreview(session) {
+  const text = String(session?.preview || '')
+    .replace(/```[^\n]*\n?/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+(?:\[[ xX]\]\s+)?|\d{1,9}[.)]\s+)/gm, '')
+    .replace(/(\*\*|__|~~|`)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+}
+
+/**
+ * How full the context is: what the last main call actually sent (estimated when the provider reported nothing)
+ * against the session's usable input budget. Null before the first reply.
+ */
+export function contextFill(session) {
+  const budget = Number(session?.contextBudgetTokens);
+  if (!(budget > 0)) return null;
+  const items = session?.messages || [];
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (item?.kind !== 'usage' || item.inherited) continue;
+    const used = count(item.lastMainInputTokens) ?? count(item.context?.estimatedInputTokens);
+    if (used === null) continue;
+    const ratio = used / budget;
+    return { used, budget, ratio, percent: Math.min(999, Math.round(ratio * 100)), warn: ratio >= 0.8 };
+  }
+  return null;
+}
+
+/** The failed or unfinished question the composer can send again, when the session is idle. */
+export function retrySeq(session) {
+  const seq = Number(session?.retryLocalSeq);
+  return session?.canSend && Number.isInteger(seq) && seq > 0 ? seq : null;
+}
+
 export function capabilities(session) {
   const input = list(session?.inputModalities);
   const output = list(session?.outputModalities);

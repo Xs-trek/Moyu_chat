@@ -299,7 +299,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.webMode = ChatTurnOptions.normalizeWebMode(webMode);
         s.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
         s.reasoningEffort = ReasoningPolicy.normalizeEffort(reasoningEffort == null ? ReasoningPolicy.DEFAULT : reasoningEffort);
-        if (!ReasoningPolicy.allows(s.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("reasoning effort not supported by frozen session capability");
+        if (!ReasoningPolicy.allows(s.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("这个会话的模型不支持所选推理深度");
         s.title = title == null || title.trim().isEmpty() ? "新 Chat" : title.trim();
         s.state = "idle";
         s.updatedAt = Instant.now().toString();
@@ -439,7 +439,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         String originSnapshotId = null;
         try (Cursor c = db.rawQuery("SELECT origin_snapshot_id FROM sessions WHERE local_id=?", new String[]{id})) {
-            if (!c.moveToFirst()) throw new IllegalArgumentException("session not found");
+            if (!c.moveToFirst()) throw new IllegalArgumentException("会话不存在");
             if (!c.isNull(0)) originSnapshotId = c.getString(0);
         }
         db.beginTransaction();
@@ -466,14 +466,14 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         try (Cursor c = db.rawQuery("SELECT item_key,body FROM timeline WHERE session_id=? AND local_seq=? LIMIT 1",
                 new String[]{sessionId, String.valueOf(localSeq)})) {
-            if (!c.moveToFirst()) throw new IllegalArgumentException("assistant message not found");
+            if (!c.moveToFirst()) throw new IllegalArgumentException("找不到这条回答");
             JSONObject body = new JSONObject(c.getString(1));
             if (!"message".equals(body.optString("kind")) || !"assistant".equals(body.optString("role")) || body.optBoolean("streaming", false)) {
-                throw new IllegalArgumentException("verification feedback requires a finalized assistant message");
+                throw new IllegalArgumentException("只能对已完成的回答反馈校验结果");
             }
             JSONObject verification = body.optJSONObject("verification");
-            if (verification == null) throw new IllegalArgumentException("this answer has no Smart verification record");
-            if (verification.has("feedbackLabel")) throw new IllegalStateException("verification feedback already recorded");
+            if (verification == null) throw new IllegalArgumentException("这条回答没有智能校验记录");
+            if (verification.has("feedbackLabel")) throw new IllegalStateException("已经记录过这条回答的校验反馈");
             if (!SmartVerifierCalibration.recordFeedback(this, verification, label)) throw new IllegalArgumentException("feedback label is not valid for this verifier verdict");
             verification.put("feedbackLabel", label).put("feedbackRecordedAt", Instant.now().toString());
             body.put("verification", verification);
@@ -520,10 +520,10 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized void renameSession(String id, String title) {
         if (id == null || id.trim().isEmpty()) throw new IllegalArgumentException("session id required");
         String value = title == null ? "" : title.trim();
-        if (value.isEmpty()) throw new IllegalArgumentException("session title required");
-        if (value.length() > 200) throw new IllegalArgumentException("session title too long");
+        if (value.isEmpty()) throw new IllegalArgumentException("会话标题不能为空");
+        if (value.length() > 200) throw new IllegalArgumentException("会话标题不能超过 200 字");
         ContentValues v = new ContentValues(); v.put("title", value);
-        if (getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}) != 1) throw new IllegalArgumentException("session not found");
+        if (getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}) != 1) throw new IllegalArgumentException("会话不存在");
     }
 
     public synchronized void setDraft(String id, String draft) { ContentValues v = new ContentValues(); v.put("draft", draft == null ? "" : draft); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
@@ -536,7 +536,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized void addDraftMedia(String id, JSONObject descriptor) {
         if (descriptor == null || descriptor.optString("mediaId", "").trim().isEmpty()) throw new IllegalArgumentException("image descriptor required");
         JSONArray items = draftMedia(id);
-        if (items.length() >= ChatMediaStore.MAX_DRAFT_IMAGES) throw new IllegalArgumentException("at most " + ChatMediaStore.MAX_DRAFT_IMAGES + " images per message");
+        if (items.length() >= ChatMediaStore.MAX_DRAFT_IMAGES) throw new IllegalArgumentException("每条消息最多 " + ChatMediaStore.MAX_DRAFT_IMAGES + " 张图片");
         items.put(descriptor);
         ContentValues v = new ContentValues(); v.put("draft_media", items.toString()); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
     }
@@ -570,7 +570,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             state.put("state", "idle"); state.put("updated_at", Instant.now().toString()); state.put("draft", ""); state.put("draft_media", "[]");
             state.put("task_profile", ""); state.put("context_checkpoint", ""); state.put("checkpoint_covered_items", 0); state.put("knowledge_indexed_at", "");
             state.putNull("preview");
-            if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalArgumentException("session not found");
+            if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalArgumentException("会话不存在");
             try (Cursor c = db.rawQuery("SELECT body FROM timeline WHERE session_id=? ORDER BY local_seq DESC", new String[]{sessionId})) {
                 while (c.moveToNext()) {
                     try {
@@ -591,6 +591,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** Atomically commits the user's turn, one unique live assistant projection and the turn record before network streaming starts. */
     public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody,
                                        String turnId, JSONObject config) {
+        beginTurn(sessionId, userKey, userBody, streamKey, liveBody, turnId, config, "");
+    }
+
+    /** As above; the composer is left holding {@code keptDraft} instead of being cleared. */
+    public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody,
+                                       String turnId, JSONObject config, String keptDraft) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -618,7 +624,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.insertWithOnConflict("turns", null, turn, SQLiteDatabase.CONFLICT_ABORT);
 
             ContentValues state = new ContentValues(); state.put("state", "running"); state.put("updated_at", Instant.now().toString());
-            state.put("draft", ""); state.put("draft_media", "[]");
+            state.put("draft", keptDraft == null ? "" : keptDraft); state.put("draft_media", "[]");
             if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalStateException("session missing while starting turn");
             db.setTransactionSuccessful();
         } catch (org.json.JSONException error) {
@@ -673,7 +679,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                     seq = c.getInt(0);
                 }
                 JSONObject error = new JSONObject().put("kind", "error").put("code", errorCode)
-                        .put("summary", errorSummary == null ? "Provider error" : errorSummary)
+                        .put("summary", errorSummary == null ? "模型服务出错" : errorSummary)
                         .put("createdAt", Instant.now().toString()).put("localSeq", seq);
                 ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
                 row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
@@ -709,7 +715,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                     seq = c.getInt(0);
                 }
                 JSONObject error = new JSONObject().put("kind", "error").put("code", code == null ? "turn_internal_error" : code)
-                        .put("summary", summary == null ? "Turn failed before provider ownership" : summary)
+                        .put("summary", summary == null ? "回合在请求发出前失败" : summary)
                         .put("createdAt", Instant.now().toString()).put("localSeq", seq);
                 ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
                 row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
@@ -859,7 +865,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (!(rating == 1 || rating == -1 || rating == 0)) throw new IllegalArgumentException("rating must be 1, -1 or 0");
         ContentValues v = new ContentValues();
         if (rating == 0) v.putNull("rating"); else v.put("rating", rating);
-        if (getWritableDatabase().update("turns", v, "session_id=? AND turn_id=?", new String[]{sessionId, turnId}) != 1) throw new IllegalArgumentException("turn not found");
+        if (getWritableDatabase().update("turns", v, "session_id=? AND turn_id=?", new String[]{sessionId, turnId}) != 1) throw new IllegalArgumentException("找不到这一轮的记录");
     }
 
     /**
@@ -1284,7 +1290,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         String continuationMode = ProviderContinuationPolicy.normalize(p.continuationMode);
         int thinkingBudget = Math.max(0, p.thinkingBudgetTokens);
         if (ReasoningPolicy.THINKING_MANUAL.equals(thinkingMode)) {
-            if (thinkingBudget < 1024 || thinkingBudget >= output) throw new IllegalArgumentException("manual thinking budget must be >=1024 and < max output tokens");
+            if (thinkingBudget < 1024 || thinkingBudget >= output) throw new IllegalArgumentException("手动思考预算必须 ≥1024 且小于最大输出 token");
         } else thinkingBudget = 0;
         ContentValues v = new ContentValues();
         v.put("profile_id", p.id); v.put("provider_id", p.providerId); v.put("route_id", p.routeId); v.put("model_id", modelId);

@@ -44,6 +44,8 @@ final class TurnPipeline {
         boolean ownsTurn(String sessionId, TurnControl control);
         /** The turn this session's next turn re-answers (from turn.rerun), or null; consumed on read. */
         String takeRerunOf(String sessionId);
+        /** What the composer keeps once this turn starts (a retry keeps text typed meanwhile), or ""; consumed on read. */
+        default String takeKeptDraft(String sessionId) { return ""; }
         /** Whether redacted request / response text is recorded for the protocol inspector. */
         boolean wireCaptureEnabled();
         /** Clears every busy flag for the session, releases the runtime lease and emits a full view. */
@@ -79,16 +81,16 @@ final class TurnPipeline {
     private TurnRun accept(String id, String text, TurnConfig turnConfig, TurnControl turnControl) throws Exception {
         // trim is an emptiness check only; the stored/prompted/sent text stays byte-for-byte original.
         String input = text == null ? "" : text;
-        ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("session not found");
+        ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("会话不存在");
         JSONArray pendingMedia = db.draftMedia(id);
         if (input.trim().isEmpty() && pendingMedia.length() == 0) return null;
         if (turnConfig == null || turnConfig.provider == null || turnConfig.apiKey == null) throw new IllegalStateException("turn configuration missing");
-        if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(turnConfig.inputModalities, "image")) throw new IllegalStateException("this session model does not support image input");
-        if (env.hasActiveTurn(id)) throw new IllegalStateException("session busy");
+        if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(turnConfig.inputModalities, "image")) throw new IllegalStateException("当前模型没有声明图片输入能力");
+        if (env.hasActiveTurn(id)) throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
         TurnRun r = new TurnRun(id, input, turnConfig, turnControl, session, pendingMedia);
         TurnTrace.Span span = r.trace().begin(TurnTrace.ACCEPT);
         ChatDatabase.Provider provider = r.provider;
-        ChatTransport rawTransport = transports.forProtocol(provider.protocol); if (rawTransport == null) throw new IllegalStateException("provider protocol unsupported");
+        ChatTransport rawTransport = transports.forProtocol(provider.protocol); if (rawTransport == null) throw new IllegalStateException("不支持这个账号的协议");
         TurnUsage usage = turnControl.usage;
         r.mainTransport = usage.track(rawTransport, TurnUsage.Kind.MAIN, TurnTrace.GENERATE);
         r.routeTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE);
@@ -133,7 +135,7 @@ final class TurnPipeline {
         JSONObject config = turnConfigJson(r);
         String rerunOf = env.takeRerunOf(id);
         if (rerunOf != null) config.put("rerunOf", rerunOf);
-        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config);
+        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(id));
         turnControl.usageState = new JSONObject().put("createdAt", Instant.now().toString());
         env.setStarting(id, true);
         r.requestStartedNanos = System.nanoTime();
@@ -346,7 +348,7 @@ final class TurnPipeline {
         } catch (Exception webError) {
             boolean cancelled = r.control.isCancelled();
             r.trace().fail(span, cancelled ? "cancelled" : "web_prepare_failed");
-            finishEarly(r, cancelled ? "cancelled" : "web_prepare_failed", cancelled ? "Generation stopped" : safe(webError));
+            finishEarly(r, cancelled ? "cancelled" : "web_prepare_failed", cancelled ? "已停止生成" : safe(webError));
             return false;
         } finally {
             if (env.clearWebStage(id)) env.emitStreamingView(id);
@@ -421,7 +423,7 @@ final class TurnPipeline {
         String finalText = candidate == null ? "" : candidate;
         String finalReasoning = candidateReasoning == null ? "" : candidateReasoning;
         if (r.control.isCancelled()) {
-            finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "Generation stopped"});
+            finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "已停止生成"});
             return;
         }
         TurnTrace.Span verifySpan = r.trace().begin(TurnTrace.VERIFY);
@@ -435,7 +437,7 @@ final class TurnPipeline {
         SmartVerifierService.Result verification = smartVerifier.verify(r.verifyTransport, r.provider, r.key, session,
                 mainPrompt, currentUserText, finalText, evidence);
         if (r.control.isCancelled()) {
-            finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "Generation stopped"});
+            finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "已停止生成"});
             return;
         }
         SmartVerifierCalibration.Decision decision = SmartVerifierCalibration.decide(db, calibrationKey, verification);
@@ -450,7 +452,7 @@ final class TurnPipeline {
             String repairedText = smartVerifier.repair(r.repairTransport, r.provider, r.key, session,
                     currentUserText, finalText, verification, evidence);
             if (r.control.isCancelled()) {
-                finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "Generation stopped"});
+                finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "已停止生成"});
                 return;
             }
             if (repairedText != null && !repairedText.trim().isEmpty()) {
@@ -463,7 +465,7 @@ final class TurnPipeline {
                 verification = smartVerifier.verify(r.verifyTransport, r.provider, r.key, session,
                         mainPrompt, currentUserText, finalText, evidence);
                 if (r.control.isCancelled()) {
-                    finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "Generation stopped"});
+                    finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "已停止生成"});
                     return;
                 }
                 decision = SmartVerifierCalibration.decide(db, calibrationKey, verification);
@@ -521,7 +523,7 @@ final class TurnPipeline {
     /** Cancellation check at a stage boundary; a cancelled turn is finished here. */
     private boolean cancelled(TurnRun r) {
         if (!r.control.isCancelled()) return false;
-        finishEarly(r, "cancelled", "Generation stopped");
+        finishEarly(r, "cancelled", "已停止生成");
         return true;
     }
 
@@ -578,7 +580,7 @@ final class TurnPipeline {
         boolean hasProjection = hasVisibleOutput || (reasoning != null && !reasoning.isEmpty());
         String[] terminalError = error;
         if (terminalError == null && !hasVisibleOutput) {
-            terminalError = new String[]{"empty_assistant_output", "Provider completed without visible text or image output"};
+            terminalError = new String[]{"empty_assistant_output", "模型结束了回答，但没有输出文字或图片"};
         }
         String finalState = terminalError == null || "cancelled".equals(terminalError[0]) ? "completed" : "failed";
         try {
@@ -601,7 +603,7 @@ final class TurnPipeline {
                 ChatDatabase.Session s = db.getSession(id);
                 if (s != null) { s.state = "failed"; s.updatedAt = Instant.now().toString(); db.saveSession(s); }
             } catch (Exception ignored) { }
-            env.showMessage("turn finalization failed: " + safe(finalizeError));
+            env.showMessage("回合收尾失败：" + safe(finalizeError));
         } finally {
             // The turn record is settled last: once it reads as finished, its reply text is already final.
             recordTrace(r.control, terminalError);
@@ -617,7 +619,7 @@ final class TurnPipeline {
             // A turn that never reached a model keeps no usage summary, so it never shows as a usage row.
             db.completeTurn(control.turnId, control.trace.terminalStatus(), terminalError == null ? "" : terminalError[0],
                     control.usage.hasRequests() ? control.usageState : null, control.trace.toJson());
-        } catch (Exception error) { env.showMessage("turn trace not saved: " + safe(error)); }
+        } catch (Exception error) { env.showMessage("调用链没有保存：" + safe(error)); }
     }
 
     /** Last-resort path for an exception that escaped the stages: keep whatever usage and trace the turn produced. */

@@ -245,7 +245,7 @@ final class ProviderRoundLoop {
                     JSONObject image = p.mediaStore.saveBase64Image(mimeType, base64, fileName);
                     outputMedia.put(image);
                     projectNow();
-                } catch (Exception error) { env.showMessage("image output ignored: " + TurnPipeline.safe(error)); }
+                } catch (Exception error) { env.showMessage("模型输出的图片无法保存：" + TurnPipeline.safe(error)); }
             });
         }
         @Override public void onToolActivity(String tool, String state) { env.authority().execute(() -> { try {
@@ -300,7 +300,7 @@ final class ProviderRoundLoop {
             providerRoundGeneration.incrementAndGet();
             env.authority().execute(() -> {
                 settle();
-                finish(new String[]{"unexpected_tool_call", "Provider requested a client tool after tools were disabled"});
+                finish(new String[]{"unexpected_tool_call", "工具已关闭，模型仍然请求调用工具"});
             });
             return;
         }
@@ -308,13 +308,13 @@ final class ProviderRoundLoop {
         if (batchCalls.length() == 0) {
             streamTerminal.set(true);
             providerRoundGeneration.incrementAndGet();
-            env.authority().execute(() -> finish(new String[]{"invalid_tool_call", "Provider emitted an empty client tool batch"}));
+            env.authority().execute(() -> finish(new String[]{"invalid_tool_call", "模型发出了空的工具调用"}));
             return;
         }
         if (batchCalls.length() > ClientToolRuntime.MAX_TOOL_CALLS_PER_BATCH) {
             streamTerminal.set(true);
             providerRoundGeneration.incrementAndGet();
-            env.authority().execute(() -> finish(new String[]{"tool_batch_limit", "Client tool batch limit exceeded"}));
+            env.authority().execute(() -> finish(new String[]{"tool_batch_limit", "单轮工具调用数量超出上限"}));
             return;
         }
 
@@ -326,7 +326,7 @@ final class ProviderRoundLoop {
         int batchNumber = (int) clientToolBatchCount.incrementAndGet();
         if (batchNumber > MAX_CLIENT_TOOL_ROUNDS) {
             streamTerminal.set(true);
-            env.authority().execute(() -> finish(new String[]{"tool_round_limit", "Client tool round limit exceeded"}));
+            env.authority().execute(() -> finish(new String[]{"tool_round_limit", "工具调用轮数超出上限"}));
             return;
         }
 
@@ -344,7 +344,7 @@ final class ProviderRoundLoop {
                 if (providerContinuationOverflow) {
                     streamTerminal.set(true);
                     settle();
-                    finish(new String[]{"provider_round_state_overflow", "Provider round state is too large to replay safely"});
+                    finish(new String[]{"provider_round_state_overflow", "多轮调用的状态过大，无法安全续接"});
                     return;
                 }
                 clearIntermediateContinuation();
@@ -353,7 +353,7 @@ final class ProviderRoundLoop {
             if (turnControl.isCancelled()) {
                 streamTerminal.set(true);
                 settle();
-                finish(new String[]{"cancelled", "Generation stopped"});
+                finish(new String[]{"cancelled", "已停止生成"});
                 return;
             }
             try {
@@ -379,7 +379,7 @@ final class ProviderRoundLoop {
             if (turnControl.isCancelled()) {
                 streamTerminal.set(true);
                 settle();
-                finish(new String[]{"cancelled", "Generation stopped"});
+                finish(new String[]{"cancelled", "已停止生成"});
                 return;
             }
             TurnConfig c = r.config;

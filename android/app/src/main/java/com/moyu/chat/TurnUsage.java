@@ -141,9 +141,11 @@ final class TurnUsage {
         boolean[][] known = new boolean[Kind.values().length][2];
         int[] counts = new int[Kind.values().length];
         boolean incomplete = false;
+        Integer lastMainInput = null;
         for (RequestUsage request : requests) {
             int kind = request.kind.ordinal();
             counts[kind]++;
+            if (request.kind == Kind.MAIN && request.input != null) lastMainInput = request.input;
             if (request.input != null) { totals[kind][0] += request.input; known[kind][0] = true; }
             if (request.output != null) { totals[kind][1] += request.output; known[kind][1] = true; }
             incomplete |= request.input == null || request.output == null;
@@ -159,6 +161,8 @@ final class TurnUsage {
         }
         if (inputKnown) target.put("totalInputTokens", input);
         if (outputKnown) target.put("totalOutputTokens", output);
+        // inputTokens sums every main call of a tool loop; context fill is what the last one actually sent.
+        if (lastMainInput != null) target.put("lastMainInputTokens", lastMainInput.longValue());
         target.put("modelCallCount", requests.size());
         target.put("auxiliaryCallCount", counts[Kind.AUXILIARY.ordinal()]);
         target.put("subagentCallCount", counts[Kind.SUBAGENT.ordinal()]);

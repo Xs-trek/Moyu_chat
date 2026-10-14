@@ -58,6 +58,10 @@ public class ChatCoordinatorE2eTest {
         @Override public boolean setTurnRuntimeActive(String sessionId, boolean active) { return !active || runtimeLeaseAllowed; }
         @Override public void showMessage(String text) { toasts.add(text); }
         @Override public void applyAppearance(String resolvedTheme, String tone) { appearance = resolvedTheme + ":" + tone; }
+        final List<String> settled = Collections.synchronizedList(new ArrayList<>());
+        final List<Boolean> permissionAsks = Collections.synchronizedList(new ArrayList<>());
+        @Override public void turnSettled(String sessionId, String title, boolean failed) { settled.add(sessionId + (failed ? ":failed" : ":completed")); }
+        @Override public void requestNotificationPermission(boolean onlyOnce) { permissionAsks.add(onlyOnce); }
     }
 
     /** JVM stand-in: same contract as the Keystore-backed store, which Robolectric cannot host. */
@@ -1729,5 +1733,128 @@ public class ChatCoordinatorE2eTest {
         assertEquals("anthropic-version header present", "2023-06-01", request.getHeader("anthropic-version"));
         assertTrue("claude system prompt is the canonical instruction",
                 new JSONObject(request.getBody().readUtf8()).optString("system").contains("Moyu Chat"));
+    }
+
+    // ---------- Retry, result notifications, edited profiles, context budget ----------
+
+    private void failFirstRequest() {
+        AtomicInteger calls = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                if (calls.getAndIncrement() == 0) return new MockResponse().setResponseCode(500).setBody("{\"error\":{\"message\":\"boom\"}}");
+                return sse("data: {\"choices\":[{\"delta\":{\"content\":\"mock answer\"}}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}\n\n"
+                        + "data: [DONE]\n\n");
+            }
+        });
+    }
+
+    @Test public void retryRewindsTheFailedTurnSendsTheQuestionAgainAndKeepsTheComposer() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        failFirstRequest();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "the question"));
+        await("turn failed", () -> "failed".equals(app.database().getSession(sessionId).state));
+        await("idle view offers a retry", () -> {
+            JSONObject active = activeSession(latestView());
+            return active != null && active.optInt("retryLocalSeq") == 1 && active.optBoolean("canSend");
+        });
+        assertTrue("a failed turn is reported to the host", host.settled.contains(sessionId + ":failed"));
+
+        app.database().setDraft(sessionId, "something new being typed");
+        post("chat.turn.retry", new JSONObject().put("localSessionId", sessionId));
+        await("retried turn completed", () -> {
+            ChatDatabase.Session s = app.database().getSession(sessionId);
+            return "completed".equals(s.state) && app.database().timeline(sessionId).length() == 2;
+        });
+        JSONArray rows = app.database().timeline(sessionId);
+        assertEquals("the question", rows.getJSONObject(0).optString("text"));
+        assertEquals("mock answer", rows.getJSONObject(1).optString("text"));
+        for (int i = 0; i < rows.length(); i++) assertNotEquals("the failed turn's error row is gone", "error", rows.getJSONObject(i).optString("kind"));
+        assertEquals("text typed meanwhile stays in the composer", "something new being typed", app.database().getSession(sessionId).draft);
+        await("no retry once the turn completed", () -> {
+            JSONObject active = activeSession(latestView());
+            return active != null && "completed".equals(active.optString("state")) && !active.has("retryLocalSeq");
+        });
+        assertTrue(host.settled.contains(sessionId + ":completed"));
+    }
+
+    @Test public void retryIsRefusedWhenTheLastTurnCompleted() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "fine"));
+        await("turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+        JSONObject refused = awaitResult(post("chat.turn.retry", new JSONObject().put("localSessionId", sessionId)));
+        assertFalse(refused.optBoolean("ok"));
+        assertEquals("最后一轮已经完成，不需要重试", refused.optJSONObject("error").optString("summary"));
+        assertEquals(2, app.database().timeline(sessionId).length());
+
+        JSONArray failedTurn = new JSONArray().put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 3).put("text", "q"))
+                .put(new JSONObject().put("kind", "error").put("localSeq", 4));
+        assertNotNull(ChatCoordinator.retryTarget(failedTurn));
+        JSONArray interrupted = new JSONArray().put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 3))
+                .put(new JSONObject().put("kind", "message").put("role", "assistant").put("localSeq", 4).put("incomplete", true));
+        assertNotNull("an unfinished answer can be retried", ChatCoordinator.retryTarget(interrupted));
+        JSONArray unanswered = new JSONArray().put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 3));
+        assertNotNull("a question whose empty answer was dropped can be retried", ChatCoordinator.retryTarget(unanswered));
+        JSONArray inherited = new JSONArray().put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 3).put("inherited", true));
+        assertNull("history inherited from another session is not this session's to rewind", ChatCoordinator.retryTarget(inherited));
+    }
+
+    @Test public void resultNotificationsSkipStoppedTurnsAndFollowTheSetting() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first"));
+        await("completed turn reported", () -> host.settled.contains(sessionId + ":completed"));
+        assertEquals("the first accepted turn asks once for the notification permission", Boolean.TRUE, host.permissionAsks.get(0));
+
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return sse("data: {\"choices\":[{\"delta\":{\"content\":\"slow\"}}]}\n\n").setBodyDelay(10, TimeUnit.SECONDS);
+            }
+        });
+        host.settled.clear();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "stop me"));
+        await("turn running", () -> { JSONObject a = activeSession(latestView()); return a != null && a.optBoolean("canInterrupt"); });
+        post("chat.session.interrupt", new JSONObject().put("localSessionId", sessionId));
+        await("stopped turn settled", () -> { JSONObject a = activeSession(latestView()); return a != null && a.optBoolean("canSend") && !a.optBoolean("canInterrupt"); });
+        assertTrue("a turn the user stopped is not notified", host.settled.isEmpty());
+
+        post("notify.background.set", new JSONObject().put("enabled", false));
+        await("setting projected", () -> latestView() != null && !latestView().optJSONObject("ui").optBoolean("notifyInBackground", true));
+        failFirstRequest();
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "quiet failure"));
+        await("turn failed", () -> "failed".equals(app.database().getSession(sessionId).state));
+        assertTrue("notifications switched off", host.settled.isEmpty());
+        post("notify.background.set", new JSONObject().put("enabled", true));
+        await("turning it on asks for the permission again", () -> host.permissionAsks.contains(Boolean.FALSE));
+    }
+
+    @Test public void anEditedModelProfileIsFlaggedUntilTheSessionAppliesIt() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        String sessionId = createSession();
+        ChatDatabase.ModelProfile profile = app.database().getModelProfile(app.database().getSession(sessionId).modelProfileId);
+        assertFalse(ChatCoordinator.profileChanged(app.database().getSession(sessionId), profile));
+        JSONObject first = activeSession(latestView());
+        assertFalse(first.has("profileChanged"));
+        ChatDatabase.Session frozen = app.database().getSession(sessionId);
+        assertEquals("the view carries the budget the context builder fills",
+                new ContextBudgetManager().effectiveInputBudget(frozen.contextTokens, frozen.inputTokens, frozen.maxOutputTokens), first.optInt("contextBudgetTokens"));
+
+        profile.maxOutputTokens = profile.maxOutputTokens / 2;
+        app.database().saveModelProfile(profile);
+        post("view.reload", new JSONObject());
+        await("edited profile flagged", () -> activeSession(latestView()).optBoolean("profileChanged"));
+
+        post("chat.session.model.set", new JSONObject().put("localSessionId", sessionId).put("modelProfileId", profile.id));
+        await("applying it clears the flag", () -> {
+            JSONObject active = activeSession(latestView());
+            return active != null && !active.has("profileChanged");
+        });
+        assertEquals(profile.maxOutputTokens, app.database().getSession(sessionId).maxOutputTokens);
+
+        profile.enabled = false;
+        profile.maxOutputTokens = profile.maxOutputTokens / 2;
+        assertFalse("a disabled profile is not offered", ChatCoordinator.profileChanged(app.database().getSession(sessionId), profile));
     }
 }

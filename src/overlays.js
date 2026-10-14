@@ -18,6 +18,7 @@ let sheet = null;
 export function sessionItem(session, activeId) {
   const running = session.state === 'running';
   const active = session.localSessionId === activeId;
+  const preview = vm.sessionPreview(session);
   const meta = [];
   if (running) meta.push(fish('write', 'sm'), h('span', { text: '生成中' }));
   else if (session.state === 'failed') meta.push(h('span', { class: 'meta-warn', text: '失败' }));
@@ -27,6 +28,7 @@ export function sessionItem(session, activeId) {
   return h('div', { class: `session-item${active ? ' active' : ''}${running ? ' running' : ''}`, dataset: { key: session.localSessionId, exit: 'collapse' } },
     h('button', { type: 'button', class: 'session-open', dataset: { action: 'open-session', sessionId: session.localSessionId } },
       h('b', { class: 'session-title', text: session.title || '新会话' }),
+      preview ? h('span', { class: 'session-preview', text: preview }) : null,
       h('small', { class: 'session-meta' }, meta)),
     iconButton('more', `${session.title || '会话'} 的操作`, 'session-menu', { sessionId: session.localSessionId, sessionTitle: session.title || '', running: running ? '1' : '' }, 'icon-btn session-more'));
 }
@@ -144,17 +146,25 @@ export function setRerunChoice(choice) {
 /** The pending re-answer choice, or null when the sheet is not open. */
 export function rerunChoice() { return sheet?.kind === 'rerun' ? { ...sheet } : null; }
 
+/** Enabled models under their account's name; with a single account there is nothing to group. */
+function modelChoiceList(view, selectedId, dataFor, disabled = false) {
+  const groups = vm.modelGroups(view);
+  const titled = groups.length > 1;
+  return h('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': '模型' }, groups.map(({ provider, models }) => [
+    titled ? h('div', { class: 'choice-group truncate', dataset: { key: `group:${provider.providerId}` }, text: provider.displayName }) : null,
+    models.map((model) => {
+      const selected = model.modelProfileId === selectedId;
+      return h('button', { type: 'button', role: 'radio', 'aria-checked': selected ? 'true' : 'false', class: `choice-row${selected ? ' selected' : ''}`, disabled,
+        dataset: { key: model.modelProfileId, ...dataFor(model) } },
+      h('span', { class: 'radio' }), h('span', { class: 'grow truncate', text: model.displayName || model.modelId }));
+    })]));
+}
+
 function rerunSheet(view, state) {
-  const choices = vm.modelChoices(view);
   return [h('h2', { class: 'sheet-title', text: '换个方式重答' }),
     h('p', { class: 'sheet-note', text: '在新分支里重新发送这条消息，只带它之前的对话；原会话不变，两次回答可以放在一起对比。' }),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '模型' }),
-      h('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': '模型' }, choices.map(({ provider, model }) => {
-        const selected = model.modelProfileId === state.modelProfileId;
-        return h('button', { type: 'button', role: 'radio', 'aria-checked': selected ? 'true' : 'false', class: `choice-row${selected ? ' selected' : ''}`,
-          dataset: { action: 'rerun-model', modelProfileId: model.modelProfileId } },
-        h('span', { class: 'radio' }), h('span', { class: 'grow truncate', text: model.displayName || model.modelId }), h('small', { class: 'truncate', text: provider.displayName }));
-      }))),
+      modelChoiceList(view, state.modelProfileId, (model) => ({ action: 'rerun-model', modelProfileId: model.modelProfileId }))),
     segmented('上下文模式', ['minimal', 'standard', 'smart'], state.contextMode, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '',
       dataset: { action: 'rerun-mode', contextMode: value }, text: vm.contextLabel(value) })),
     h('div', { class: 'sheet-foot' }, button('重答', 'rerun-confirm', {}, 'btn primary'))];
@@ -293,7 +303,6 @@ function segmented(label, values, current, render) {
 
 function turnSettings(view, session) {
   const locked = !session.canConfigureTurn;
-  const choices = vm.modelChoices(view);
   const levels = vm.reasoningChoices(session);
   const effort = session.reasoningEffort || 'default';
   const web = ['off', 'auto', 'on'].includes(session.webMode) ? session.webMode : 'auto';
@@ -302,12 +311,7 @@ function turnSettings(view, session) {
     h('h2', { class: 'sheet-title', text: '本轮设置' }),
     locked ? h('p', { class: 'sheet-note', text: '当前回合进行中，结束后可以修改。' }) : null,
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '模型' }),
-      h('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': '模型' }, choices.map(({ provider, model }) => {
-        const selected = model.modelProfileId === session.modelProfileId;
-        return h('button', { type: 'button', role: 'radio', 'aria-checked': selected ? 'true' : 'false', class: `choice-row${selected ? ' selected' : ''}`, disabled: locked,
-          dataset: { action: 'session-model-set', sessionId: session.localSessionId, modelProfileId: model.modelProfileId } },
-        h('span', { class: 'radio' }), h('span', { class: 'grow truncate', text: model.displayName || model.modelId }), h('small', { class: 'truncate', text: provider.displayName }));
-      }))),
+      modelChoiceList(view, session.modelProfileId, (model) => ({ action: 'session-model-set', sessionId: session.localSessionId, modelProfileId: model.modelProfileId }), locked)),
     levels.length
       ? segmented('推理深度', levels, effort, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '', disabled: locked,
         dataset: { action: 'session-reasoning-set', sessionId: session.localSessionId, reasoningEffort: value }, text: vm.effortLabel(value) }))
@@ -373,9 +377,9 @@ export function openConfirmDialog({ title, message, confirmText = '确认', dang
   confirm.focus();
 }
 
-export function openTextDialog({ title, value = '', confirmText = '保存', note = '', inputmode = '', onConfirm }) {
+export function openTextDialog({ title, value = '', confirmText = '保存', note = '', inputmode = '', maxLength = 400, onConfirm }) {
   closeDialog(true);
-  const input = h('input', { class: 'modal-input', type: 'text', value, maxlength: '400', inputmode: inputmode || undefined, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': title || '输入内容' });
+  const input = h('input', { class: 'modal-input', type: 'text', value, maxlength: String(maxLength), inputmode: inputmode || undefined, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': title || '输入内容' });
   const cancel = button('取消', 'modal-cancel', {}, 'btn');
   const confirm = button(confirmText, 'modal-confirm', {}, 'btn primary');
   const overlay = h('div', { class: 'modal-backdrop', dataset: { moyuModal: '1' } },
@@ -394,8 +398,45 @@ export function openTextDialog({ title, value = '', confirmText = '保存', note
   input.focus(); input.select();
 }
 
+/**
+ * A chat image on its own, fitted to the screen. Tapping a picture larger than the screen shows it at full size
+ * around the tapped point (scroll to pan) and tapping again fits it back; tapping outside it or Back closes.
+ */
+export function openImageViewer(src, name = '') {
+  closeImageViewer(true);
+  if (!src) return;
+  const img = h('img', { class: 'viewer-img', src, alt: name || '图片', draggable: 'false' });
+  const stage = h('div', { class: 'viewer-stage' }, img);
+  const viewer = h('div', { class: 'image-viewer', role: 'dialog', 'aria-modal': 'true', 'aria-label': name || '图片', dataset: { imageViewer: '1' } },
+    stage, iconButton('close', '关闭', 'viewer-close', {}, 'icon-btn viewer-close'));
+  stage.addEventListener('click', (event) => {
+    if (event.target !== img) { closeImageViewer(); return; }
+    const full = viewer.classList.contains('actual');
+    if (!full && img.naturalWidth <= img.clientWidth + 1 && img.naturalHeight <= img.clientHeight + 1) return;
+    const rect = img.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / Math.max(1, rect.width);
+    const y = (event.clientY - rect.top) / Math.max(1, rect.height);
+    viewer.classList.toggle('actual', !full);
+    if (!full) {
+      stage.scrollLeft = x * img.naturalWidth - stage.clientWidth / 2;
+      stage.scrollTop = y * img.naturalHeight - stage.clientHeight / 2;
+    }
+  });
+  document.body.append(viewer);
+}
+
+export function closeImageViewer(immediate = false) {
+  const node = document.querySelector('.image-viewer[data-image-viewer]');
+  if (!node) return false;
+  node.removeAttribute('data-image-viewer');
+  if (immediate) node.remove();
+  else { node.classList.add('closing'); setTimeout(() => node.remove(), 180); }
+  return true;
+}
+
 /** Android Back: close the top-most transient surface. Returns true when something was closed. */
 export function handleBack() {
+  if (closeImageViewer()) return true;
   if (document.querySelector('.modal-backdrop[data-moyu-modal]')) { closeDialog(); return true; }
   if (sheet) { closeSheet(); return true; }
   if (panel) { closePanel(); return true; }

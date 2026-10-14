@@ -84,6 +84,16 @@ final class ChatRuntime implements ChatCoordinator.Host {
         if (current != null) current.openExternalUrl(url);
     }
 
+    @Override public void turnSettled(String sessionId, String title, boolean failed) {
+        if (visibleActivity() != null) return; // the user is looking at the app already
+        ChatTurnService.notifySettled(app, sessionId, title, failed);
+    }
+
+    @Override public void requestNotificationPermission(boolean onlyOnce) {
+        MainActivity current = visibleActivity();
+        if (current != null) current.requestNotificationPermission(onlyOnce);
+    }
+
     @Override public synchronized boolean setTurnRuntimeActive(String sessionId, boolean active) {
         if (sessionId == null || sessionId.isEmpty()) return false;
         if (active) {

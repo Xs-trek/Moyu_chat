@@ -34,6 +34,9 @@ import java.util.Map;
 public final class MainActivity extends Activity implements ChatCoordinator.Host {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final int REQUEST_IMAGE = 4201;
+    private static final int REQUEST_NOTIFICATIONS = 4202;
+    private static final String PREFS = "moyu_host";
+    private static final String PREF_NOTIFICATIONS_ASKED = "notificationPermissionAsked";
     private static final String STATE_PENDING_IMAGE_SESSION = "pendingImageSessionId";
     private WebView webView;
     private ChatRuntime runtime;
@@ -50,6 +53,32 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
         runtime.attach(this);
         coordinator = runtime.coordinator();
         createWebView();
+        if (state == null) openNotifiedSession(getIntent());
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        openNotifiedSession(intent);
+    }
+
+    /** A tapped result notification carries the session it reports on. */
+    private void openNotifiedSession(Intent intent) {
+        String sessionId = intent == null ? null : intent.getStringExtra(ChatTurnService.EXTRA_SESSION);
+        ChatCoordinator c = coordinator;
+        if (c != null && sessionId != null && !sessionId.isEmpty()) c.openFromNotification(sessionId);
+    }
+
+    /** Android 13+ shows result notifications only with this permission; {@code onlyOnce} never asks a second time. */
+    @Override public void requestNotificationPermission(boolean onlyOnce) {
+        if (Build.VERSION.SDK_INT < 33) return;
+        runOnUiThread(() -> {
+            if (isFinishing() || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+            android.content.SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+            if (onlyOnce && prefs.getBoolean(PREF_NOTIFICATIONS_ASKED, false)) return;
+            prefs.edit().putBoolean(PREF_NOTIFICATIONS_ASKED, true).apply();
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
+        });
     }
 
     private void createWebView() {
@@ -148,7 +177,7 @@ public final class MainActivity extends Activity implements ChatCoordinator.Host
             try {
                 Uri uri = Uri.parse(url == null ? "" : url.trim());
                 if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getHost().trim().isEmpty()) {
-                    throw new IllegalArgumentException("Only HTTPS external links are allowed");
+                    throw new IllegalArgumentException("只能打开 HTTPS 外部链接");
                 }
                 startActivity(new Intent(Intent.ACTION_VIEW, uri));
             } catch (Exception error) {

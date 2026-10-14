@@ -84,7 +84,7 @@ export function timeline(turns, startMinute = 0) {
 export function usage(extra = {}) {
   const input = extra.inputTokens ?? 18432;
   return {
-    inputTokens: 18432, outputTokens: 1260, cachedInputTokens: Math.round(input * 0.83), cacheHitBaseTokens: input, cacheWriteInputTokens: 0, reasoningTokens: 640,
+    inputTokens: 18432, lastMainInputTokens: input, outputTokens: 1260, cachedInputTokens: Math.round(input * 0.83), cacheHitBaseTokens: input, cacheWriteInputTokens: 0, reasoningTokens: 640,
     outputTokensPerSecond: 58.4, firstOutputLatencyMs: 1840, outputDurationMs: 21500, requestDurationMs: 23900, modelCallCount: 1, ...extra,
   };
 }
@@ -178,7 +178,7 @@ function mainSessions() {
           usage: { subagentCallCount: 2, childInputTokens: 9100, childOutputTokens: 820, totalInputTokens: 30100, totalOutputTokens: 2010 } },
       ], 30),
     }),
-    session('s-long', '项目问答（长会话）', 'm-gpt', { updatedAt: at(20), preview: '关于“导出会话的格式”，要点有三个…', messages: timeline(longTurns(30)) }),
+    session('s-long', '项目问答（长会话）', 'm-gpt', { updatedAt: at(20), contextBudgetTokens: 64000, profileChanged: true, preview: '关于“导出会话的格式”，要点有三个…', messages: timeline(longTurns(30)) }),
     session('s-errors', '限流与中断', 'm-ds', {
       contextMode: 'minimal', effectiveContextMode: 'minimal', state: 'failed', updatedAt: at(10), preview: 'Provider 返回 429',
       messages: timeline([
@@ -193,7 +193,7 @@ function mainSessions() {
   ];
 }
 
-const baseUi = { pendingRequestIds: [], showReasoning: true, crossChatMemoryEnabled: true, defaultContextMode: 'standard', defaultWebMode: 'auto', standardSubagentMode: 'off' };
+const baseUi = { pendingRequestIds: [], showReasoning: true, crossChatMemoryEnabled: true, notifyInBackground: true, defaultContextMode: 'standard', defaultWebMode: 'auto', standardSubagentMode: 'off' };
 
 /** Each fixture returns a fresh mutable world for the mock host. */
 export const fixtures = {

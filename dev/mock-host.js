@@ -51,6 +51,22 @@ function summary(s) {
 
 function busy(s) { return Boolean(stream && stream.sessionId === s.localSessionId); }
 
+/** Same rule as ChatCoordinator.retryTarget. */
+function retrySeq(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const item = messages[i];
+    if (item.kind !== 'message' || item.role !== 'user') continue;
+    if (item.inherited) return undefined;
+    let answered = false;
+    for (const after of messages.slice(i + 1)) {
+      if (after.kind === 'error') return item.localSeq;
+      if (after.kind === 'message' && after.role === 'assistant') { if (after.incomplete) return item.localSeq; answered = true; }
+    }
+    return answered ? undefined : item.localSeq;
+  }
+  return undefined;
+}
+
 function detail(s) {
   const running = busy(s);
   return {
@@ -58,6 +74,7 @@ function detail(s) {
     canAttachImage: !running && s.inputModalities.split(',').includes('image'), canSend: !running, canInterrupt: running, canConfigureTurn: !running,
     contextPreparing: running && stream.stage === 'preparing', webPreparingStage: running && /^web_/.test(stream.stage) ? stream.stage : undefined,
     postProcessingStage: running && ['verifying', 'repairing'].includes(stream.stage) ? stream.stage : undefined,
+    retryLocalSeq: running ? undefined : retrySeq(s.messages), profileChanged: !running && s.profileChanged ? true : undefined, contextBudgetTokens: s.contextBudgetTokens ?? 180000,
   };
 }
 
@@ -172,7 +189,7 @@ function mockStats(days) {
 function notice(text) { window.dispatchEvent(new CustomEvent('moyu:notice', { detail: { level: 'info', text: `[mock] ${text}` } })); }
 
 /** Simulates one turn: stages → reasoning deltas → answer deltas → final row + usage, at native patch cadence. */
-function startStream(s, text, { web = s.webMode === 'on', fail = false } = {}) {
+function startStream(s, text, { web = s.webMode === 'on', fail = false, keepDraft = false } = {}) {
   const user = { localSeq: nextSeq(s), kind: 'message', role: 'user', text, createdAt: now() };
   s.messages.push(user);
   const rerunOf = world.pendingReruns?.[s.localSessionId];
@@ -180,7 +197,7 @@ function startStream(s, text, { web = s.webMode === 'on', fail = false } = {}) {
   const reply = { localSeq: nextSeq(s), turnId: `turn-live-${Date.now()}`, ...(rerunOf ? { rerunOf } : {}), kind: 'message', role: 'assistant', text: '', reasoning: '', model: s.model, modelName: s.modelName, modelProfileId: s.modelProfileId,
     reasoningAvailable: Boolean(s.reasoningLevels), reasoningEffort: s.reasoningEffort, streaming: true, streamStage: 'preparing', createdAt: now() };
   s.messages.push(reply);
-  s.composerDraft = '';
+  if (!keepDraft) s.composerDraft = ''; // a retry keeps what is being typed, like native
   s.updatedAt = now();
   const stages = [['preparing', 500], ...(web ? [['web_planning', 500], ['web_search', 900], ['web_fetch', 700]] : []), ['connecting', 300], ['connected', 700]];
   stream = { sessionId: s.localSessionId, stage: 'preparing', reply, timer: 0, started: performance.now(), firstOutput: 0 };
@@ -258,6 +275,7 @@ function handle(type, p) {
     case 'chat.reasoning.visibility.set': world.ui.showReasoning = Boolean(p.show); break;
     case 'memory.global.set': world.ui.crossChatMemoryEnabled = Boolean(p.enabled); break;
     case 'inspector.capture.set': world.ui.wireCapture = Boolean(p.enabled); break;
+    case 'notify.background.set': world.ui.notifyInBackground = Boolean(p.enabled); break;
     case 'context.mode.default.set': world.ui.defaultContextMode = p.mode; break;
     case 'web.mode.default.set': world.ui.defaultWebMode = p.mode; break;
     case 'subagent.standard.default.set': world.ui.standardSubagentMode = p.mode; break;
@@ -276,13 +294,21 @@ function handle(type, p) {
     case 'chat.session.delete': world.sessions = world.sessions.filter((x) => x !== s); if (world.activeSessionId === p.localSessionId) { world.activeSessionId = undefined; world.route = 'home'; } break;
     case 'chat.session.model.set': {
       for (const provider of world.providers) for (const m of provider.models) if (m.modelProfileId === p.modelProfileId && s) Object.assign(s, { providerId: provider.providerId,
-        providerName: provider.displayName, modelProfileId: m.modelProfileId, model: m.modelId, modelName: m.displayName, reasoningLevels: m.reasoningLevels, reasoningEffort: 'default', inputModalities: m.inputModalities });
+        providerName: provider.displayName, modelProfileId: m.modelProfileId, model: m.modelId, modelName: m.displayName, reasoningLevels: m.reasoningLevels, reasoningEffort: 'default', inputModalities: m.inputModalities, profileChanged: false });
       break;
     }
     case 'chat.session.reasoning.set': if (s) s.reasoningEffort = p.reasoningEffort; break;
     case 'chat.session.web.set': if (s) s.webMode = p.webMode; break;
     case 'chat.session.saveDraft': if (s) s.composerDraft = p.text; return; // native does not re-emit for drafts
     case 'chat.session.send': if (s) { if (p.reasoningEffort) s.reasoningEffort = p.reasoningEffort; startStream(s, p.text); } return;
+    case 'chat.turn.retry': {
+      const seq = s && retrySeq(s.messages);
+      const question = seq && s.messages.find((x) => x.localSeq === seq);
+      if (!question) throw new Error('最后一轮已经完成，不需要重试');
+      s.messages = s.messages.filter((x) => Number(x.localSeq) < seq);
+      startStream(s, question.text, { keepDraft: true });
+      return;
+    }
     case 'chat.session.interrupt': if (stream && s) finish(s, stream.reply, { interrupted: true }); return;
     case 'chat.attachment.pick': if (s) { s.draftMedia = [...(s.draftMedia || []), image(`d-${Date.now()}`, 800, 600, Math.floor(Math.random() * 360), '附件')]; } break;
     case 'chat.attachment.remove': if (s) s.draftMedia = s.draftMedia.filter((x) => x.mediaId !== p.mediaId); break;

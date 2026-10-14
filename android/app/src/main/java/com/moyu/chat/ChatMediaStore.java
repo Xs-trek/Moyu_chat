@@ -32,16 +32,16 @@ final class ChatMediaStore {
 
     ChatMediaStore(android.content.Context context) {
         root = new File(context.getFilesDir(), "chat-media");
-        if (!root.exists() && !root.mkdirs()) throw new IllegalStateException("cannot create chat media directory");
+        if (!root.exists() && !root.mkdirs()) throw new IllegalStateException("无法创建图片目录");
     }
 
     JSONObject importImage(ContentResolver resolver, Uri uri) throws Exception {
-        if (resolver == null || uri == null) throw new IllegalArgumentException("image required");
+        if (resolver == null || uri == null) throw new IllegalArgumentException("没有选择图片");
         String mime = normalizeMime(resolver.getType(uri));
         String name = displayName(resolver, uri);
         byte[] bytes;
         try (InputStream in = resolver.openInputStream(uri)) {
-            if (in == null) throw new IllegalArgumentException("cannot open selected image");
+            if (in == null) throw new IllegalArgumentException("无法打开所选图片");
             bytes = readBounded(in);
         }
         Encoded encoded = prepareImport(bytes, mime);
@@ -139,11 +139,11 @@ final class ChatMediaStore {
     JSONObject saveBase64Image(String mimeType, String base64, String fileName) throws Exception {
         String mime = normalizeMime(mimeType);
         if (base64 == null || base64.trim().isEmpty()) throw new IllegalArgumentException("empty image payload");
-        if (base64.length() > (MAX_IMAGE_BYTES * 4L / 3L) + 1024L) throw new IllegalArgumentException("image exceeds local size limit");
+        if (base64.length() > (MAX_IMAGE_BYTES * 4L / 3L) + 1024L) throw new IllegalArgumentException("图片超过本地大小上限");
         byte[] bytes;
         try { bytes = Base64.decode(base64, Base64.DEFAULT); }
         catch (IllegalArgumentException error) { throw new IllegalArgumentException("invalid image payload"); }
-        if (bytes.length == 0 || bytes.length > MAX_IMAGE_BYTES) throw new IllegalArgumentException("image exceeds local size limit");
+        if (bytes.length == 0 || bytes.length > MAX_IMAGE_BYTES) throw new IllegalArgumentException("图片超过本地大小上限");
         return persist(bytes, mime, fileName);
     }
 
@@ -180,7 +180,7 @@ final class ChatMediaStore {
     }
 
     private JSONObject persist(byte[] bytes, String mime, String requestedName) throws Exception {
-        if (bytes == null || bytes.length == 0 || bytes.length > MAX_IMAGE_BYTES) throw new IllegalArgumentException("image exceeds local size limit");
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_IMAGE_BYTES) throw new IllegalArgumentException("图片超过本地大小上限");
         BitmapFactory.Options options = new BitmapFactory.Options(); options.inJustDecodeBounds = true;
         BitmapFactory.decodeStream(new ByteArrayInputStream(bytes), null, options);
         validateDimensions(options.outWidth, options.outHeight);
@@ -194,7 +194,7 @@ final class ChatMediaStore {
     }
 
     static void validateDimensions(int width, int height) {
-        if (width <= 0 || height <= 0) throw new IllegalArgumentException("unsupported or invalid image");
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("图片无法解析或格式不受支持");
         if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION || (long) width * height > MAX_IMAGE_PIXELS) {
             throw new IllegalArgumentException("图片尺寸过大，请缩小至 16777216 像素以内，且单边不超过 8192 像素");
         }
@@ -216,7 +216,7 @@ final class ChatMediaStore {
         int total = 0;
         for (int n; (n = in.read(buffer)) >= 0;) {
             if (n == 0) continue;
-            total += n; if (total > MAX_IMAGE_BYTES) throw new IllegalArgumentException("image exceeds 12 MiB local limit");
+            total += n; if (total > MAX_IMAGE_BYTES) throw new IllegalArgumentException("图片超过 12 MiB 本地上限");
             out.write(buffer, 0, n);
         }
         return out.toByteArray();
@@ -233,7 +233,7 @@ final class ChatMediaStore {
         String value = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
         if ("image/jpg".equals(value)) value = "image/jpeg";
         if (!("image/jpeg".equals(value) || "image/png".equals(value) || "image/webp".equals(value) || "image/gif".equals(value))) {
-            throw new IllegalArgumentException("supported image types: JPEG / PNG / WebP / GIF");
+            throw new IllegalArgumentException("只支持 JPEG / PNG / WebP / GIF 图片");
         }
         return value;
     }

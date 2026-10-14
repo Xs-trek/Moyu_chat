@@ -45,6 +45,12 @@ export type MoyuChatIntent =
   | UiIntent<'chat.message.edit', { localSessionId: string; localSeq: number }>
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
   /**
+   * Rewinds the last turn when it failed or did not finish (`SessionDetailView.retryLocalSeq`) and sends the same
+   * question and images again with the session's current settings; the failed turn's record is removed, the
+   * composer's text is kept. Refused (nothing rewound) while images wait in the composer.
+   */
+  | UiIntent<'chat.turn.retry', { localSessionId: string }>
+  /**
    * Account editor: name, preset (creation only) and, when present, the complete route set (omitted routes are
    * deleted with their models; a new route identical to a stored one reuses it). Native pushes the view before
    * the result. Result `data: { providerId, hasCredential, routeIds }`, `routeIds` in the submitted order. Never carries a key.
@@ -73,6 +79,8 @@ export type MoyuChatIntent =
   | UiIntent<'turn.payload.get', { localSessionId: string; turnId: string; callIndex: number }>
   /** Protocol inspector on/off: record redacted request / response text of each model call (recent turns only). */
   | UiIntent<'inspector.capture.set', { enabled: boolean }>
+  /** Result notification while the app is in the background (completed or failed turns; not ones the user stopped). */
+  | UiIntent<'notify.background.set', { enabled: boolean }>
   /** 1 = good answer, -1 = bad answer, 0 clears. */
   | UiIntent<'turn.rate', { localSessionId: string; turnId: string; rating: 1 | -1 | 0 }>
   /** Re-ask the user message at localSeq in a new branch; result `data: { localSessionId, text }`, then send `text` there. */
@@ -294,7 +302,7 @@ export interface SessionView {
 export type TimelineItem =
   | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question across re-answers, when more than one. */ answers?: number; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'connecting' | 'connected' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
   /** Projected from the turn record (not a stored timeline row): placed right after the turn's reply, or after its user row when there is none. */
-  | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
+  | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; /** Input the last main call sent (inputTokens sums every main call of a tool loop). */ lastMainInputTokens?: number; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
 
 /** One pipeline stage of a turn. Skipped stages say why (`reason`); `usage` is the stage's own model calls. */
@@ -369,6 +377,12 @@ export interface SessionDetailView extends SessionView {
   contextPreparing?: boolean;
   webPreparingStage?: 'web_search' | 'web_fetch' | string;
   postProcessingStage?: 'verifying' | 'repairing' | string;
+  /** localSeq of the question a retry would send again; present only while idle after a failed or unfinished last turn. */
+  retryLocalSeq?: number;
+  /** The session's frozen copy differs from its (enabled) model profile, which was edited; `chat.session.model.set` with the same id applies it. */
+  profileChanged?: boolean;
+  /** Usable input window (context − output − safety margin), the same budget the context builder fills. */
+  contextBudgetTokens?: number;
 }
 
 export interface ConversationStreamPatch {
@@ -401,7 +415,7 @@ export interface AppViewModel {
   sessions: SessionView[];
   activeLocalSessionId?: string;
   activeSession?: SessionDetailView;
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {
