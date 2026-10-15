@@ -85,6 +85,26 @@ final class LocalKnowledgeStore {
         }
     }
 
+    /**
+     * This Chat's own history (history_recall): its index is brought up to date first, so the result can include
+     * anything up to the current turn. The caller drops what its prompt already carries. Separate from user memory.
+     */
+    List<Hit> searchSessionHistory(String sessionId, String query, int limit) {
+        if (sessionId == null || sessionId.trim().isEmpty() || limit <= 0) return new ArrayList<>();
+        try {
+            Integer newest = db.latestTimelineSeqs().get(sessionId);
+            if (newest != null) {
+                int indexed = indexedThrough(db.knowledgeIndexedAt(sessionId));
+                if (indexed < newest) indexSession(sessionId, indexed);
+            }
+            ChatDatabase.Session session = db.getSession(sessionId);
+            String title = session == null ? "" : session.title;
+            return search("scope_id=?", new String[]{chatScope(sessionId)}, query, limit, scope -> new String[]{sessionId, title});
+        } catch (Exception ignored) {
+            return new ArrayList<>(); // a broken index is a failed lookup, not a failed turn
+        }
+    }
+
     private interface Source { String[] of(String scope); }
 
     private List<Hit> search(String scopeWhere, String[] scopeArgs, String query, int limit, Source source) {

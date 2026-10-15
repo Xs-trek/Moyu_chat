@@ -28,3 +28,10 @@ test('a failure without a waiter still shows a notice', () => {
   deliver({ type: 'intent.result', requestId, ok: false, error: { summary: '失败了' } });
   assert.deepEqual(notices.at(-1), { level: 'error', text: '失败了' });
 });
+
+test('network checks wait longer than Native does; other reads keep the short default', async () => {
+  const { INTENT_TIMEOUTS } = await import('../src/bridge.js');
+  assert.ok(INTENT_TIMEOUTS['model.probe'] > 60000, 'a connection test may take Native 60 s');
+  for (const type of ['provider.key.verify', 'route.models.list', 'provider.balance.get']) assert.ok(INTENT_TIMEOUTS[type] > 30000, type);
+  assert.equal(INTENT_TIMEOUTS['turn.trace.get'], undefined);
+});

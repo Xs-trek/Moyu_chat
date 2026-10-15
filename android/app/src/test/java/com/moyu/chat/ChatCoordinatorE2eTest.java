@@ -739,6 +739,7 @@ public class ChatCoordinatorE2eTest {
     // ---------- multi-turn + interrupt ----------
 
     @Test public void interruptIsAvailableDuringSmartPreparationAndPreventsMainProviderTurn() throws Exception {
+        post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true)); // the Router starts off
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
                 return sse("data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"domain\\\":\\\"general\\\",\\\"taskType\\\":\\\"answer\\\",\\\"depth\\\":\\\"standard\\\",\\\"responseMode\\\":\\\"direct\\\",\\\"contextPolicy\\\":\\\"recent\\\",\\\"modules\\\":[],\\\"confidence\\\":0.9}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
@@ -1672,6 +1673,7 @@ public class ChatCoordinatorE2eTest {
     }
 
     @Test public void smartRouterVerificationRepairAndRecheckSettleIntoSameUsageRow() throws Exception {
+        post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true)); // the Router starts off
         AtomicInteger verifications = new AtomicInteger();
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
@@ -1717,6 +1719,179 @@ public class ChatCoordinatorE2eTest {
         assertEquals(14, usage.getInt("totalOutputTokens"));
         assertFalse(usage.getBoolean("usageIncomplete"));
         assertTrue(app.database().timeline(sessionId).toString().contains("fixed answer"));
+    }
+
+    /** A verifier reply: every rule passes, or constraint_adherence fails hard. */
+    private static String verdict(boolean fail) {
+        try {
+            JSONArray checks = new JSONArray();
+            for (String rule : new String[]{"constraint_adherence", "evidence_integrity", "completion_honesty",
+                    "uncertainty_honesty", "material_factual_support"}) {
+                boolean violation = fail && "constraint_adherence".equals(rule);
+                checks.put(new JSONObject().put("rule", rule).put("result", violation ? "fail" : "pass")
+                        .put("severity", violation ? "hard" : "minor")
+                        .put("evidenceIds", new JSONArray().put("user:current")).put("note", "fixture"));
+            }
+            return new JSONObject().put("verdict", fail ? "fail" : "pass").put("selfConfidence", 0.9).put("checks", checks).toString();
+        } catch (Exception error) { throw new AssertionError(error); }
+    }
+
+    @Test public void aRouterCallOutlastingEditsNeverPutsTheOldSessionBack() throws Exception {
+        java.util.concurrent.CountDownLatch routing = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+                if (request.getBody().clone().readUtf8().contains("Classify the conversation")) {
+                    routing.countDown();
+                    release.await(10, TimeUnit.SECONDS);
+                    return completion("{\"domain\":\"software\",\"taskType\":\"answer\",\"depth\":\"standard\",\"responseMode\":\"direct\",\"contextPolicy\":\"recent\",\"modules\":[],\"confidence\":0.9}", 5, 2);
+                }
+                return completion("plain answer", 7, 2);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true));
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.SMART).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("smart session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first question"));
+        assertTrue("router call started", routing.await(10, TimeUnit.SECONDS));
+        assertTrue(awaitResult(post("chat.session.saveDraft", new JSONObject().put("localSessionId", sessionId).put("text", "typed while routing"))).optBoolean("ok"));
+        assertTrue(awaitResult(post("chat.session.rename", new JSONObject().put("localSessionId", sessionId).put("title", "Renamed meanwhile"))).optBoolean("ok"));
+        release.countDown();
+        await("turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+
+        ChatDatabase.Session stored = app.database().getSession(sessionId);
+        assertEquals("typed while routing", stored.draft);
+        assertEquals("Renamed meanwhile", stored.title);
+        assertEquals(0, app.database().draftMedia(sessionId).length());
+        assertEquals("software", TaskProfile.fromStored(stored.taskProfile).domain);
+    }
+
+    @Test public void aRepairTheRecheckDoesNotAcceptIsKeptBesideTheFirstAnswer() throws Exception {
+        AtomicInteger verifications = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("Repair the candidate answer")) return completion("fixed answer", 13, 4);
+                if (body.contains("You are a verification component")) { verifications.incrementAndGet(); return completion(verdict(true), 11, 3); }
+                return completion("candidate answer", 7, 2);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.harnessPreset = HarnessProfile.REINFORCED;
+        app.database().saveModelProfile(profile);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.SMART).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("smart session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Reply with fixed answer."));
+        await("turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+
+        assertEquals(2, verifications.get());
+        JSONObject answer = app.database().timeline(sessionId).getJSONObject(1);
+        assertEquals("the first answer stays", "candidate answer", answer.getString("text"));
+        JSONObject verification = answer.getJSONObject("verification");
+        assertFalse(verification.getBoolean("repaired"));
+        assertTrue(verification.getBoolean("repairRejected"));
+        assertEquals("fixed answer", verification.getString("repairCandidateText"));
+        assertEquals("its own verdict stays on it", "fail", verification.getString("verdict"));
+        assertEquals(SmartVerifierCalibration.ACTION_ABSTAIN, verification.getString("action"));
+        assertEquals(2, verification.getJSONArray("attempts").length());
+    }
+
+    @Test public void autoWebOffersTheAnsweringModelWebToolsWhenThePlanSaysNo() throws Exception {
+        List<String> bodies = Collections.synchronizedList(new ArrayList<>());
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                bodies.add(request.getBody().clone().readUtf8());
+                return completion("a poem", 7, 2);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
+        app.database().saveModelProfile(profile);
+        post("helper.switch.set", new JSONObject().put("helper", "webPlan").put("enabled", false)); // rules only: no planner call
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.STANDARD).put("webMode", ChatTurnOptions.WEB_AUTO));
+        await("session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Write a short poem about tea."));
+        await("first turn", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+        String first = null;
+        for (String body : new ArrayList<>(bodies)) if (body.contains("poem about tea") && !body.contains("You name chat conversations")) first = body;
+        assertNotNull(first);
+        assertTrue("the tools are offered", first.contains("\"web_search\"") && first.contains("\"web_fetch\""));
+        assertTrue(first.contains("No Web search was run in advance"));
+        String turnId = app.database().timeline(sessionId).getJSONObject(1).optString("turnId");
+        JSONArray spans = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data").getJSONArray("spans");
+        boolean seen = false;
+        for (int i = 0; i < spans.length(); i++) if (TurnTrace.TOOLS.equals(spans.getJSONObject(i).optString("stage"))) {
+            assertTrue(spans.getJSONObject(i).getJSONObject("detail").getBoolean("webOnDemand"));
+            seen = true;
+        }
+        assertTrue(seen);
+
+        post("helper.switch.set", new JSONObject().put("helper", "webTools").put("enabled", false));
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Another one about coffee."));
+        await("second turn", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 4);
+        String second = null;
+        for (String body : new ArrayList<>(bodies)) if (body.contains("about coffee") && !body.contains("You name chat conversations")) second = body;
+        assertNotNull(second);
+        assertFalse("switched off: no tools, no guidance", second.contains("web_search"));
+    }
+
+    @Test public void theRouterStartsSwitchedOff() throws Exception {
+        await("view", () -> latestView() != null && latestView().optJSONObject("ui") != null);
+        assertEquals("[\"router\"]", String.valueOf(latestView().getJSONObject("ui").optJSONArray("helpersOff")));
+        assertEquals(String.valueOf(HelperSwitches.DEFAULTS_REVISION), app.database().setting(HelperSwitches.DEFAULTS_KEY, ""));
+    }
+
+    @Test public void historyRecallReturnsTheVerbatimTurnsTheCheckpointReplaced() throws Exception {
+        List<String> toolRounds = Collections.synchronizedList(new ArrayList<>());
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("\"role\":\"tool\"")) {
+                    toolRounds.add(body);
+                    return completion("It was 4471.", 11, 3);
+                }
+                if (body.contains("What was the vault code")) {
+                    return sse("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_recall\",\"type\":\"function\",\"function\":{\"name\":\"history_recall\",\"arguments\":\"{\\\"query\\\":\\\"vault code\\\"}\"}}]}}]}\n\n"
+                            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":1}}\n\n");
+                }
+                return completion("Noted.", 5, 1);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
+        app.database().saveModelProfile(profile);
+        post("helper.switch.set", new JSONObject().put("helper", "compaction").put("enabled", false));
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.STANDARD).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Remember this: the vault code is 4471."));
+        await("first turn", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+        // As if an earlier compaction had summarized the first exchange: it is no longer in the prompt word for word.
+        app.database().setContextCheckpoint(sessionId, new JSONObject().put("summary", "The user shared a code earlier.").toString(), 2);
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "What was the vault code exactly?"));
+        await("second turn", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 4);
+        assertEquals("It was 4471.", app.database().timeline(sessionId).getJSONObject(3).getString("text"));
+        assertEquals(1, toolRounds.size());
+        assertTrue("the excerpt is verbatim, with its message number", toolRounds.get(0).contains("the vault code is 4471.") && toolRounds.get(0).contains("[message #1, user]"));
+        String turnId = app.database().timeline(sessionId).getJSONObject(3).optString("turnId");
+        JSONArray spans = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data").getJSONArray("spans");
+        for (int i = 0; i < spans.length(); i++) {
+            JSONObject span = spans.getJSONObject(i);
+            if (TurnTrace.TOOLS.equals(span.optString("stage"))) assertTrue(span.getJSONObject("detail").getBoolean("recall"));
+            if (TurnTrace.GENERATE.equals(span.optString("stage"))) assertEquals(1, span.getJSONObject("detail").getInt("recalls"));
+        }
     }
 
     @Test public void standardSubagentToolLoopReturnsOneFinalParentAnswerAndAggregatesChildUsage() throws Exception {

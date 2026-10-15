@@ -64,6 +64,8 @@ final class ProviderRoundLoop {
     private final AtomicLong clientToolBatchCount = new AtomicLong(0L);
     private int childInputTokens = 0, childOutputTokens = 0, subagentCount = 0;
     private boolean usedClientWeb = false;
+    /** history_recall calls answered this turn (bounded by ClientToolRuntime.MAX_RECALLS_PER_TURN). */
+    private int recallCalls = 0;
     private final StringBuilder clientEvidenceContext = new StringBuilder();
     private final AtomicReference<ChatTurnOptions> activeRoundOptions;
     private final AtomicReference<CanonicalPrompt> activeRoundPrompt;
@@ -194,7 +196,7 @@ final class ProviderRoundLoop {
 
     private JSONObject generateDetail() throws Exception {
         return new JSONObject().put("rounds", clientToolBatchCount.get() + 1).put("clientToolBatches", clientToolBatchCount.get())
-                .put("subagents", subagentCount).put("usedClientWeb", usedClientWeb).put("sources", webSources.size())
+                .put("subagents", subagentCount).put("usedClientWeb", usedClientWeb).put("recalls", recallCalls).put("sources", webSources.size())
                 .put("outputChars", textOut.length()).put("reasoningChars", reasoningOut.length())
                 .put("retries", providerRetries).put("retryCodes", retryCodes);
     }
@@ -415,13 +417,15 @@ final class ProviderRoundLoop {
                 finish(new String[]{"cancelled", "已停止生成"});
                 return;
             }
+            final int recallsLeft = ClientToolRuntime.MAX_RECALLS_PER_TURN - recallCalls; // read on the authority thread
             try {
                 env.preparation().execute(() -> {
                     turnControl.bindCurrentThread();
                     try {
                         ClientToolRuntime.BatchResult batch = ClientToolRuntime.executeBatch(batchCalls, batchNumber, r.clientToolCsv,
                                 env.clientTools(), p.webService, p.focusedSubagent, r.subagentTransport, r.provider, r.key, r.config.model,
-                                r.config.reasoningEffort, turnControl);
+                                r.config.reasoningEffort, turnControl, query -> p.recallHistory(id, mainPrompt, query),
+                                recallsLeft);
                         env.authority().execute(() -> applyToolBatch(batch, batchNumber));
                     } finally { turnControl.clearCurrentThread(); }
                 });
@@ -472,6 +476,7 @@ final class ProviderRoundLoop {
                 JSONObject entry = boundedBatch.optJSONObject(i); if (entry == null) continue;
                 clientToolHistory.put(new JSONObject(entry.toString()));
                 String toolName = entry.optString("name", "");
+                if (ClientToolRuntime.HISTORY_RECALL.equals(toolName) && !entry.has("error")) recallCalls++;
                 if (ClientToolRuntime.WEB_SEARCH.equals(toolName) || ClientToolRuntime.WEB_FETCH.equals(toolName)) {
                     usedClientWeb = true;
                     if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = "Moyu client Web";
@@ -515,7 +520,7 @@ final class ProviderRoundLoop {
         boolean usedExternalEvidence = webPrepared.hasContext() || usedClientWeb || !webSources.isEmpty();
         boolean verifyOn = r.config.helperOn(HelperSwitches.VERIFY);
         boolean shouldVerify = r.contextPolicy.verifierEnabled && r.adaptivePolicy.verifierAvailable && verifyOn
-                && HarnessPolicyResolver.shouldVerify(r.session, r.taskProfile, usedExternalEvidence,
+                && HarnessPolicyResolver.shouldVerify(r.session, r.taskProfile, r.input, usedExternalEvidence,
                 mainPrompt.truncated, subagentCount > 0);
         if (!shouldVerify) {
             r.trace().skip(TurnTrace.VERIFY, !r.contextPolicy.verifierEnabled ? "mode_off"

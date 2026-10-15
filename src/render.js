@@ -455,6 +455,9 @@ function detailRows(item, sessionId, canAct) {
   if (verification?.preRepairText) {
     out.push(h('div', { class: 'compare-row' }, button('看修正前的回答', 'show-pre-repair', { sessionId, localSeq: item.localSeq }, 'btn small ghost')));
   }
+  if (verification?.repairCandidateText) {
+    out.push(h('div', { class: 'compare-row' }, button('看没采用的修正版', 'show-repair-candidate', { sessionId, localSeq: item.localSeq }, 'btn small ghost')));
+  }
   if (item.turnId && !item.inherited && Number(item.answers) > 1) {
     out.push(h('div', { class: 'compare-row' }, button(`对比这个问题的 ${item.answers} 次回答`, 'open-answers', { sessionId, turnId: item.turnId }, 'btn small ghost')));
   }

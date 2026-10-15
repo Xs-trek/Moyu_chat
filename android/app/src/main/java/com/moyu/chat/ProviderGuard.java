@@ -98,12 +98,18 @@ final class ProviderGuard {
         Call call = get(route, url);
         if (!call.ok) return out.put("ok", false).put("status", call.status).put("code", call.code).put("summary", call.summary);
         Map<String, JSONObject> models = parseModels(call.body);
-        if (!endpoint.equals(ProviderConfigService.endpointKey(db.getRoute(route.id)))) {
-            // The route was edited while the list was being read: it describes the old endpoint, so drop it.
-            return out.put("ok", false).put("code", "endpoint_changed").put("summary", "读取期间路线地址已更改，这次结果已丢弃，请重新读取");
+        // Check and write under the database lock (every ChatDatabase method locks it), so an edit saved meanwhile
+        // is either seen by the check or lands after the write: the result never describes an endpoint that the
+        // route no longer has, and a model edit is never overwritten with the copy read before it.
+        synchronized (db) {
+            ChatDatabase.Route current = db.getRoute(route.id);
+            if (!endpoint.equals(ProviderConfigService.endpointKey(current))) {
+                // The route was edited while the list was being read: it describes the old endpoint, so drop it.
+                return out.put("ok", false).put("code", "endpoint_changed").put("summary", "读取期间路线地址已更改，这次结果已丢弃，请重新读取");
+            }
+            config.rememberDiscovered(route.id, endpoint, models);
+            applyDiscovered(current, models);
         }
-        config.rememberDiscovered(route.id, endpoint, models);
-        applyDiscovered(route, models);
         JSONArray list = new JSONArray();
         for (Map.Entry<String, JSONObject> e : models.entrySet()) list.put(new JSONObject(e.getValue().toString()).put("id", e.getKey()));
         return out.put("ok", true).put("status", call.status).put("models", list);
@@ -270,13 +276,16 @@ final class ProviderGuard {
                 .put("reply", reply.length() > 80 ? reply.substring(0, 80) : reply);
         if (first.get() > 0L) result.put("firstOutputMs", TimeUnit.NANOSECONDS.toMillis(first.get() - started));
         if (failed != null) result.put("code", failed[0] == null ? "" : failed[0]).put("summary", failed[1] == null ? "" : failed[1]);
-        ChatDatabase.ModelProfile current = db.getModelProfile(profileId);
-        // Stored only while the model still points at the endpoint and model id that were tested.
-        if (current != null && route.id.equals(current.routeId) && profile.modelId.equals(current.modelId)
-                && ProviderConfigService.endpointKey(route).equals(ProviderConfigService.endpointKey(db.getRoute(route.id)))) {
-            JSONObject probe = DeploymentResolver.json(current.probe).put("result", result);
-            current.probe = probe.toString();
-            db.saveModelProfile(current);
+        // Stored only while the model still points at the endpoint and model id that were tested; checked and
+        // written under the database lock so a model edit saved meanwhile is never overwritten (see listModels).
+        synchronized (db) {
+            ChatDatabase.ModelProfile current = db.getModelProfile(profileId);
+            if (current != null && route.id.equals(current.routeId) && profile.modelId.equals(current.modelId)
+                    && ProviderConfigService.endpointKey(route).equals(ProviderConfigService.endpointKey(db.getRoute(route.id)))) {
+                JSONObject probe = DeploymentResolver.json(current.probe).put("result", result);
+                current.probe = probe.toString();
+                db.saveModelProfile(current);
+            }
         }
         if (failed == null) db.setKeyStatus(account.id, KEY_VALID, Instant.now().toString());
         else if ("http_401".equals(failed[0])) db.setKeyStatus(account.id, KEY_INVALID, Instant.now().toString());

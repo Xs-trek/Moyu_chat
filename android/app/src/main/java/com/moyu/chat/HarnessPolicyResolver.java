@@ -47,10 +47,23 @@ final class HarnessPolicyResolver {
     }
 
     /**
-     * Smart verification is selective for lean models and broader for models that need more help.
-     * All inputs are harness-observed state; no extra classifier call is introduced.
+     * Requests whose wording asks for checking work (review, debug, compare, analyze, research, verify). Read from
+     * this turn's own text, so it never outlives the turn the way a stored first-turn TaskProfile does; no model call.
      */
-    static boolean shouldVerify(ChatDatabase.Session session, TaskProfile taskProfile,
+    private static final java.util.regex.Pattern CHECKING_REQUEST = java.util.regex.Pattern.compile(
+            "(?iu)审查|审核|检查|校对|核对|核实|查证|调试|排查|报错|异常|对比|比较|区别|分析|评估|调研|研究|论证|"
+                    + "\\b(?:review|audit|debug\\w*|bugs?|troubleshoot\\w*|diagnos\\w*|compare|comparison|analy[sz]\\w*|research|verify|fact-?check)\\b");
+
+    static boolean checkingRequest(String userText) {
+        return userText != null && CHECKING_REQUEST.matcher(userText).find();
+    }
+
+    /**
+     * Smart verification is selective for lean models and broader for models that need more help.
+     * All inputs are harness-observed state; no extra classifier call is introduced. Without a TaskProfile
+     * (the Router is off by default) Balanced reads the task kind from this turn's request.
+     */
+    static boolean shouldVerify(ChatDatabase.Session session, TaskProfile taskProfile, String userText,
                                 boolean usedExternalEvidence, boolean contextTruncated,
                                 boolean usedSubagent) {
         if (session == null || !ContextMode.SMART.equals(ContextMode.normalize(session.contextMode))) return false;
@@ -62,7 +75,7 @@ final class HarnessPolicyResolver {
         }
         if (HarnessProfile.BALANCED.equals(preset)) {
             if (usedExternalEvidence || contextTruncated || usedSubagent) return true;
-            if (taskProfile == null) return false;
+            if (taskProfile == null) return checkingRequest(userText);
             String type = taskProfile.taskType == null ? "" : taskProfile.taskType;
             return "research".equals(type) || "review".equals(type) || "debug".equals(type)
                     || "compare".equals(type) || "analyze".equals(type);

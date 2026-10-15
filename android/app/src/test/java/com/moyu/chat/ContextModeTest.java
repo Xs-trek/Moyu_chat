@@ -33,4 +33,21 @@ public class ContextModeTest {
         assertTrue(policy.retrievalEnabled);
         assertEquals("standard", policy.effectiveLabel);
     }
+
+    @Test public void balancedVerifiesCheckingRequestsWithoutARouterProfile() {
+        ChatDatabase.Session session = new ChatDatabase.Session();
+        session.contextMode = ContextMode.SMART; session.harnessPreset = HarnessProfile.BALANCED;
+        assertTrue(HarnessPolicyResolver.shouldVerify(session, null, "帮我审查这段代码有没有问题", false, false, false));
+        assertTrue(HarnessPolicyResolver.shouldVerify(session, null, "Please debug this crash", false, false, false));
+        assertFalse(HarnessPolicyResolver.shouldVerify(session, null, "写一首关于秋天的诗", false, false, false));
+        assertFalse("a word that merely contains one is not one", HarnessPolicyResolver.checkingRequest("the debutante arrived"));
+        assertTrue("evidence still triggers", HarnessPolicyResolver.shouldVerify(session, null, "写诗", true, false, false));
+    }
+
+    @Test public void theRouterStartsOffOnceAndAChoiceToTurnItOnIsKept() {
+        assertEquals(java.util.Collections.singleton(HelperSwitches.ROUTER),
+                HelperSwitches.withDefaults(java.util.Collections.<String>emptySet(), 1));
+        assertTrue(HelperSwitches.withDefaults(java.util.Collections.<String>emptySet(), HelperSwitches.DEFAULTS_REVISION).isEmpty());
+        assertTrue(HelperSwitches.known(HelperSwitches.RECALL) && HelperSwitches.known(HelperSwitches.WEB_TOOLS));
+    }
 }

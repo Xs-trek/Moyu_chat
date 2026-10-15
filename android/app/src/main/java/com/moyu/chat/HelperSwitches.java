@@ -12,9 +12,24 @@ import java.util.Set;
  * frozen into each turn's configuration, so results stay attributable and statistics can compare combinations.
  */
 final class HelperSwitches {
-    static final String ROUTER = "router", COMPACTION = "compaction", WEB_PLAN = "webPlan", VERIFY = "verify", SUBAGENT = "subagent";
-    static final String[] ALL = {ROUTER, COMPACTION, WEB_PLAN, VERIFY, SUBAGENT};
+    static final String ROUTER = "router", COMPACTION = "compaction", WEB_PLAN = "webPlan", WEB_TOOLS = "webTools",
+            RECALL = "recall", VERIFY = "verify", SUBAGENT = "subagent";
+    static final String[] ALL = {ROUTER, COMPACTION, RECALL, WEB_PLAN, WEB_TOOLS, VERIFY, SUBAGENT};
     static final String SETTING_KEY = "helpersOff";
+    /**
+     * Revision of the default switch set, applied once per install (settings key {@link #DEFAULTS_KEY}).
+     * 2: the Router starts off. A session-long first-turn classification is an experiment to opt into, not a
+     * default; switching it back on is kept.
+     */
+    static final int DEFAULTS_REVISION = 2;
+    static final String DEFAULTS_KEY = "helpersDefaults";
+
+    /** The switched-off set after applying default revisions newer than {@code appliedRevision}. */
+    static Set<String> withDefaults(Set<String> off, int appliedRevision) {
+        Set<String> out = new LinkedHashSet<>(off == null ? Collections.<String>emptySet() : off);
+        if (appliedRevision < 2) out.add(ROUTER);
+        return canonical(out);
+    }
     /** Trace skip reason of a helper the user switched off. */
     static final String USER_OFF = "user_off";
 

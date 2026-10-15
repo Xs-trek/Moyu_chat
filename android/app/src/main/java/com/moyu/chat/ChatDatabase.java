@@ -598,20 +598,15 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             JSONObject usage;
             int ordinal;
             try (Cursor c = db.rawQuery("SELECT usage,(SELECT COALESCE(MAX(ordinal),-1)+1 FROM turn_spans WHERE turn_id=?) FROM turns WHERE turn_id=?", new String[]{turnId, turnId})) {
-                if (!c.moveToFirst()) { db.setTransactionSuccessful(); return; }
+                if (!c.moveToFirst()) {
+                    // Deleted or rewound while the helper ran: the turn lives on in the archive, and so does its bill.
+                    addHelperToArchivedTurn(db, turnId, span, delta);
+                    db.setTransactionSuccessful();
+                    return;
+                }
                 usage = new JSONObject(c.getString(0)); ordinal = c.getInt(1);
             }
-            if (delta != null) {
-                for (String key : new String[]{"auxiliaryInputTokens", "auxiliaryOutputTokens", "totalInputTokens", "totalOutputTokens", "modelCallCount", "auxiliaryCallCount"}) {
-                    if (delta.has(key)) usage.put(key, usage.optLong(key, 0L) + delta.optLong(key, 0L));
-                }
-                if (delta.optBoolean("usageIncomplete", false)) usage.put("usageIncomplete", true);
-                JSONObject cost = usage.optJSONObject("cost"), add = delta.optJSONObject("cost");
-                if (cost != null && add != null && cost.optString("currency").equals(add.optString("currency"))) {
-                    cost.put("amount", cost.optDouble("amount", 0d) + add.optDouble("amount", 0d));
-                    if (add.optBoolean("partial", false)) cost.put("partial", true);
-                }
-            }
+            addHelperUsage(usage, delta);
             ContentValues turn = new ContentValues(); turn.put("usage", usage.toString());
             db.update("turns", turn, "turn_id=?", new String[]{turnId});
             JSONObject spanUsage = span.optJSONObject("usage");
@@ -630,6 +625,49 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         finally { db.endTransaction(); }
     }
 
+    /** Adds a helper's calls, tokens and cost to a turn's usage summary (cost only in the same currency). */
+    private static void addHelperUsage(JSONObject usage, JSONObject delta) throws org.json.JSONException {
+        if (delta == null) return;
+        for (String key : new String[]{"auxiliaryInputTokens", "auxiliaryOutputTokens", "totalInputTokens", "totalOutputTokens", "modelCallCount", "auxiliaryCallCount"}) {
+            if (delta.has(key)) usage.put(key, usage.optLong(key, 0L) + delta.optLong(key, 0L));
+        }
+        if (delta.optBoolean("usageIncomplete", false)) usage.put("usageIncomplete", true);
+        JSONObject cost = usage.optJSONObject("cost"), add = delta.optJSONObject("cost");
+        if (cost != null && add != null && cost.optString("currency").equals(add.optString("currency"))) {
+            cost.put("amount", cost.optDouble("amount", 0d) + add.optDouble("amount", 0d));
+            if (add.optBoolean("partial", false)) cost.put("partial", true);
+        }
+    }
+
+    /** The archived form of {@link #addHelperToTurn}: usage summed in, the span kept as the archive keeps spans. */
+    private static void addHelperToArchivedTurn(SQLiteDatabase db, String turnId, JSONObject span, JSONObject delta) throws org.json.JSONException {
+        JSONObject usage; JSONArray spans;
+        try (Cursor c = db.rawQuery("SELECT usage,spans FROM turn_archive WHERE turn_id=?", new String[]{turnId})) {
+            if (!c.moveToFirst()) return; // never recorded, or already aged out of the archive
+            usage = new JSONObject(c.isNull(0) || c.getString(0).isEmpty() ? "{}" : c.getString(0));
+            spans = new JSONArray(c.isNull(1) || c.getString(1).isEmpty() ? "[]" : c.getString(1));
+        }
+        addHelperUsage(usage, delta);
+        JSONObject kept = new JSONObject().put("stage", span.optString("stage", "")).put("status", span.optString("status", ""))
+                .put("durationMs", span.optLong("durationMs", -1L));
+        String reason = span.optString("reason", "");
+        if (REASON_CODE.matcher(reason).matches()) kept.put("reason", reason);
+        JSONObject spanUsage = span.optJSONObject("usage");
+        if (spanUsage != null) {
+            if (spanUsage.optInt("calls", 0) > 0) kept.put("calls", spanUsage.optInt("calls"));
+            if (spanUsage.has("inputTokens")) kept.put("inputTokens", spanUsage.optLong("inputTokens"));
+            if (spanUsage.has("outputTokens")) kept.put("outputTokens", spanUsage.optLong("outputTokens"));
+        }
+        JSONObject detail = span.optJSONObject("detail"), keptDetail = new JSONObject();
+        if (detail != null) for (java.util.Iterator<String> keys = detail.keys(); keys.hasNext(); ) {
+            String key = keys.next(); Object value = detail.opt(key);
+            if (value instanceof Boolean || value instanceof Number) keptDetail.put(key, value);
+        }
+        spans.put(kept.put("detail", keptDetail));
+        ContentValues v = new ContentValues(); v.put("usage", usage.toString()); v.put("spans", spans.toString());
+        db.update("turn_archive", v, "turn_id=?", new String[]{turnId});
+    }
+
     public synchronized void renameSession(String id, String title) {
         if (id == null || id.trim().isEmpty()) throw new IllegalArgumentException("session id required");
         String value = title == null ? "" : title.trim();
@@ -640,6 +678,23 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     public synchronized void setDraft(String id, String draft) { ContentValues v = new ContentValues(); v.put("draft", draft == null ? "" : draft); getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id}); }
+
+    /**
+     * A turn's helper stages write only what they produced. The Session they read at accept time is older than
+     * beginTurn (draft, images, state, preview) and than anything the user changes while they wait (draft, title),
+     * so saving it whole would put those back.
+     */
+    public synchronized void setTaskProfile(String id, String taskProfile) {
+        ContentValues v = new ContentValues(); v.put("task_profile", taskProfile == null ? "" : taskProfile);
+        getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
+    }
+
+    /** See {@link #setTaskProfile}: the checkpoint and how many items it covers, nothing else. */
+    public synchronized void setContextCheckpoint(String id, String checkpoint, int coveredItems) {
+        ContentValues v = new ContentValues(); v.put("context_checkpoint", checkpoint == null ? "" : checkpoint);
+        v.put("checkpoint_covered_items", Math.max(0, coveredItems));
+        getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
+    }
 
     public synchronized JSONArray draftMedia(String id) {
         Session s = getSession(id); if (s == null || s.draftMedia == null || s.draftMedia.trim().isEmpty()) return new JSONArray();

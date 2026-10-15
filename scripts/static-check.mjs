@@ -520,4 +520,28 @@ if (!coordinatorOnly.includes('db.replaceTitleIf(sessionId, expectedTitle, named
     || !coordinatorOnly.includes('ModelPreflight.runLight(usage.track(transport, TurnUsage.Kind.AUXILIARY, SessionTitles.STAGE)') || !coordinatorOnly.includes('db.addHelperToTurn(exchange.turnId, span, delta)'))
   fail('automatic titles must compare-and-set the title and record the naming call as a helper stage of the named turn');
 if (!coordinatorOnly.includes('dropBlankSessions(null); // a new Chat replaces') || !coordinatorOnly.includes('if (draft.isEmpty() && !images) continue;')) fail('blank Chats must be replaced by a new Chat and listed only with an unsent draft');
+// Runtime consistency (6Astra audit A01-A05): helper stages write only what they produced, a Router that does not run
+// leaves no trace in the prompt, late helper calls are billed even to archived turns, account checks re-check and write
+// under the database lock, and the page never gives up on a check before Native does.
+const providerGuard = read('android/app/src/main/java/com/moyu/chat/ProviderGuard.java');
+const helperSwitches = read('android/app/src/main/java/com/moyu/chat/HelperSwitches.java');
+if (/db\.saveSession\(session\)/.test(turnPipeline) || !turnPipeline.includes('db.setTaskProfile(session.id, session.taskProfile)') || !turnPipeline.includes('db.setContextCheckpoint(session.id, session.contextCheckpoint, session.checkpointCoveredItems)'))
+  fail('turn helper stages must write only their own fields, never the Session read at accept time');
+if (!turnPipeline.includes('if (r.taskProfile == null) session.taskProfile = "";')) fail('a Router that does not run this turn must not shape the prompt through a stored TaskProfile');
+if (!db.includes('addHelperToArchivedTurn(db, turnId, span, delta)')) fail('a helper call finishing after its turn was archived must still be billed to it');
+if (!/synchronized \(db\) \{\s*ChatDatabase\.Route current = db\.getRoute\(route\.id\);/.test(providerGuard) || !/synchronized \(db\) \{\s*ChatDatabase\.ModelProfile current = db\.getModelProfile\(profileId\);/.test(providerGuard))
+  fail('account checks must re-check the endpoint and write under the database lock');
+if (!bridge.includes("'model.probe': 80000") || !bridge.includes('timeoutMs = INTENT_TIMEOUTS[type] || 15000') || !coordinatorOnly.includes('titleWorker.execute(() -> {'))
+  fail('the page must wait longer than Native for network checks, and naming must not queue behind them');
+// Orchestration semantics: a repair replaces the answer only after its re-check accepts it; Web tools on demand only in
+// Auto (never Off) and only on declared client tool calling; history_recall reads this Chat only; the Router starts off.
+if (!turnPipeline.includes('SmartVerifierCalibration.ACTION_ACCEPT.equals(recheckDecision.action)') || !turnPipeline.includes('meta.put("repairRejected", true).put("repairCandidateText", repairCandidate)'))
+  fail('a repair must not replace the answer unless the re-check accepts it; a rejected repair is kept for comparison');
+if (!turnPipeline.includes('ChatTurnOptions.WEB_AUTO.equals(ChatTurnOptions.normalizeWebMode(c.webMode))') || !/r\.webOnDemand = !webPlan\.useWeb && r\.clientCalling/.test(turnPipeline))
+  fail('on-demand Web tools are only for Auto on a deployment that declares client tool calling');
+if (!knowledgeStore.includes('List<Hit> searchSessionHistory(') || !/searchSessionHistory[\s\S]*?search\("scope_id=\?", new String\[\]\{chatScope\(sessionId\)\}/.test(knowledgeStore) || !turnPipeline.includes('inPrompt.contains(hit.text)'))
+  fail('history_recall must search only this Chat and skip what the prompt already carries');
+if (!clientTools.includes('MAX_RECALLS_PER_TURN = 3') || !clientTools.includes('history_recall limit is')) fail('history_recall must be bounded per turn');
+if (!helperSwitches.includes('if (appliedRevision < 2) out.add(ROUTER);') || !coordinatorOnly.includes('HelperSwitches.withDefaults(storedOff, defaultsApplied)')) fail('the Router must start off once per install, keeping a later choice to turn it on');
+if (failed) process.exit(1); // the checks above run after the first exit and must fail the build too
 console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);

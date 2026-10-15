@@ -152,6 +152,52 @@ public class ChatDatabaseTest {
         assertEquals(0, db.turnStats("", null, false).length());
     }
 
+    @Test public void aHelperFinishingAfterItsTurnWasRewoundIsBilledToTheArchive() throws Exception {
+        TestDeployments.save(db, provider("p-late"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-late", "model", null, null);
+        String turnId = "turn-late";
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
+        db.beginTurn(s.id, "u:" + turnId, message("user", "question"), "live:" + turnId, live, turnId, new JSONObject().put("providerId", "p-late"));
+        db.completeTurn(turnId, "ok", "", new JSONObject().put("auxiliaryCallCount", 1).put("totalInputTokens", 10)
+                .put("cost", new JSONObject().put("amount", 0.5).put("currency", "USD")), new JSONArray());
+        db.finalizeTurn(s.id, "live:" + turnId, message("assistant", "answer"), null, null, "completed");
+        db.truncateTimelineFrom(s.id, 1, ChatDatabase.ARCHIVE_REWIND); // rewound while the title call was out
+
+        JSONObject span = new JSONObject().put("stage", "title").put("status", "ok").put("durationMs", 900)
+                .put("usage", new JSONObject().put("calls", 1).put("inputTokens", 40).put("outputTokens", 6))
+                .put("detail", new JSONObject().put("applied", false).put("note", "dropped: text is not kept in the archive"));
+        db.addHelperToTurn(turnId, span, new JSONObject().put("auxiliaryCallCount", 1).put("totalInputTokens", 40)
+                .put("cost", new JSONObject().put("amount", 0.25).put("currency", "USD")));
+
+        assertEquals(0.75, db.spendSince("p-late", "").optDouble("USD"), 1e-9);
+        try (android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT usage,spans FROM turn_archive WHERE turn_id=?", new String[]{turnId})) {
+            assertTrue(c.moveToFirst());
+            JSONObject usage = new JSONObject(c.getString(0));
+            assertEquals(2, usage.getInt("auxiliaryCallCount"));
+            assertEquals(50, usage.getInt("totalInputTokens"));
+            JSONObject title = new JSONArray(c.getString(1)).getJSONObject(0);
+            assertEquals("title", title.getString("stage"));
+            assertEquals(40, title.getInt("inputTokens"));
+            assertFalse(title.getJSONObject("detail").getBoolean("applied"));
+            assertFalse(title.getJSONObject("detail").has("note"));
+        }
+        db.addHelperToTurn("never-recorded", span, null); // nothing to bill: no error
+    }
+
+    @Test public void helperStagesWriteOnlyWhatTheyProduced() throws Exception {
+        TestDeployments.save(db, provider("p-narrow"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-narrow", "model", null, null);
+        s.title = "renamed"; s.draft = "typed meanwhile"; db.saveSession(s);
+        db.setTaskProfile(s.id, "{\"domain\":\"software\"}");
+        db.setContextCheckpoint(s.id, "{\"summary\":\"s\"}", 4);
+        ChatDatabase.Session stored = db.getSession(s.id);
+        assertEquals("renamed", stored.title);
+        assertEquals("typed meanwhile", stored.draft);
+        assertEquals("{\"domain\":\"software\"}", stored.taskProfile);
+        assertEquals("{\"summary\":\"s\"}", stored.contextCheckpoint);
+        assertEquals(4, stored.checkpointCoveredItems);
+    }
+
     @Test public void newerDatabaseIsResetInsteadOfGuessed() throws Exception {
         TestDeployments.save(db, provider("p-new"));
         db.getWritableDatabase().setVersion(99);

@@ -29,6 +29,10 @@ final class TurnRun {
     HarnessPolicyResolver.Policy adaptivePolicy;
     TaskProfile taskProfile;
     boolean needsRouter, checkpointAllowed, mayPrepare, allowProviderContinuation;
+    /** Client web tools offered although the Web plan said no (Auto, on demand); the model decides whether to search. */
+    boolean webOnDemand;
+    /** history_recall is offered: older turns of this Chat are out of the prompt (dropped or summarized). */
+    boolean recallOffered;
 
     JSONObject live;
     String streamKey;

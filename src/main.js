@@ -10,7 +10,7 @@ import { createRenderGate } from './render-gate.js';
 import { forgetStats, patchConversation, patchStreamItem, render, renderNotice, resizeTextarea, setStatsArchived, setStatsDays, setStatsGroup, syncTurnNavigator, toggleTurnDetails } from './render.js';
 import { noteTimelineScroll, setTimelineFollowLatest } from './scroll-anchor.js';
 import { getState, setNotice, setOptimisticDisguise, setOptimisticReasoningEffort, setOptimisticWebMode, setView, subscribe } from './state.js';
-import { forgetRemote, onRemoteChange, refreshRemote, traceKey } from './remote.js';
+import { forgetRemote, onRemoteChange, peekRemote, refreshRemote, traceKey } from './remote.js';
 import * as vm from './view-model.js';
 import './drawer-gesture.js';
 import { clearSelection, onSelectionChange, selectable, selectAll, selectedIds, toggleSelected } from './session-select.js';
@@ -516,6 +516,11 @@ document.addEventListener('click', (event) => {
     const text = vm.verificationState(item?.verification)?.preRepairText;
     if (text) openTextSheet({ title: '修正前的回答', note: '智能校验认为这一版有问题，修正后换成了现在显示的回答。', markdown: text });
   }
+  else if (action === 'show-repair-candidate') {
+    const item = (currentView()?.activeSession?.messages || []).find((m) => Number(m.localSeq) === Number(target.dataset.localSeq));
+    const text = vm.verificationState(item?.verification)?.repairCandidateText;
+    if (text) openTextSheet({ title: '没采用的修正版', note: '智能校验认为原回答有问题并改写了一版，但改写版没有通过第二次检查，所以仍显示原回答。两版可以对照着看。', markdown: text });
+  }
   else if (action === 'viewer-close') closeImageViewer();
   else if (action === 'open-source' && target.dataset.url) postIntent('external.open', { url: target.dataset.url });
   else if (action === 'jump-latest') {
@@ -557,6 +562,8 @@ function resizeComposerTextarea(input) {
 
 /** Account checks: the remote cache shows "running" on the page; the outcome comes back as a notice. */
 function guardCheck(key, type, payload, notice) {
+  // One check per target at a time: tapping again while it runs only says so.
+  if (peekRemote(key)?.state === 'loading') { setNotice({ level: 'info', text: '正在检查，请稍候…' }); return; }
   refreshRemote(key, type, payload)
     .then((data) => { if (notice) setNotice(notice(data)); })
     .catch((error) => setNotice({ level: 'error', text: String(error?.message || error || '') }));

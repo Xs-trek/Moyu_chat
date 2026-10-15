@@ -27,8 +27,19 @@ export function postIntent(type, payload = {}, waiter = null) {
   return requestId;
 }
 
+/**
+ * How long to wait for checks that make network calls on the native side, so the page never gives up before
+ * Native does: account checks run up to 30 s (OkHttp call timeout), a connection test up to 60 s, plus queueing.
+ */
+export const INTENT_TIMEOUTS = Object.freeze({
+  'provider.key.verify': 45000,
+  'route.models.list': 45000,
+  'provider.balance.get': 45000,
+  'model.probe': 80000,
+});
+
 /** Read-style intent: resolves with the result's data, rejects with its error. Failures are the caller's to show. */
-export function requestIntent(type, payload = {}, timeoutMs = 15000) {
+export function requestIntent(type, payload = {}, timeoutMs = INTENT_TIMEOUTS[type] || 15000) {
   return new Promise((resolve, reject) => {
     const waiter = { resolve, reject, timer: 0 };
     const requestId = postIntent(type, payload, waiter);

@@ -18,6 +18,9 @@ final class ClientToolRuntime {
     static final String WEB_SEARCH = "web_search";
     static final String WEB_FETCH = "web_fetch";
     static final String DELEGATE_SUBTASK = "delegate_subtask";
+    static final String HISTORY_RECALL = "history_recall";
+    /** history_recall calls answered per turn; later ones get a tool error instead of another search. */
+    static final int MAX_RECALLS_PER_TURN = 3;
     static final int MAX_PARALLEL_SUBAGENTS = 4;
     static final int MAX_TOOL_CALLS_PER_BATCH = 8;
 
@@ -33,6 +36,9 @@ final class ClientToolRuntime {
             this.childOutputTokens = childOutputTokens;
         }
     }
+
+    /** Searches the parts of this Chat the prompt no longer carries word for word; returns the tool result text. */
+    interface HistoryRecall { String recall(String query) throws Exception; }
 
     private ClientToolRuntime() { }
 
@@ -73,6 +79,12 @@ final class ClientToolRuntime {
                     .put("parameters", new JSONObject().put("type", "object")
                             .put("properties", new JSONObject().put("task", new JSONObject().put("type", "string")))
                             .put("required", new JSONArray().put("task")).put("additionalProperties", false)));
+            if (names.contains(HISTORY_RECALL)) out.put(new JSONObject().put("name", HISTORY_RECALL)
+                    .put("description", "Search earlier messages of this conversation that are no longer in your context word for word (dropped for length or only summarized). Returns verbatim excerpts with their message numbers. Use it when an exact earlier detail matters and the summary or visible history does not have it; it does not search the web or other conversations.")
+                    .put("parameters", new JSONObject().put("type", "object")
+                            .put("properties", new JSONObject().put("query", new JSONObject().put("type", "string")
+                                    .put("description", "Distinctive words of the detail to find, e.g. a name, number, file or term.").put("maxLength", 400)))
+                            .put("required", new JSONArray().put("query")).put("additionalProperties", false)));
         } catch (Exception ignored) { }
         return out;
     }
@@ -82,6 +94,15 @@ final class ClientToolRuntime {
                                     MoyuWebService web, FocusedSubagentService subagents,
                                     ChatTransport transport, ChatDatabase.Provider provider, String apiKey,
                                     String model, String effort, TurnCancellation cancellation) {
+        return executeBatch(calls, round, allowedToolNames, executor, web, subagents, transport, provider, apiKey, model, effort, cancellation, null, 0);
+    }
+
+    /** {@code recallsLeft}: history_recall calls this turn may still make (see {@link #MAX_RECALLS_PER_TURN}). */
+    static BatchResult executeBatch(JSONArray calls, int round, String allowedToolNames, ExecutorService executor,
+                                    MoyuWebService web, FocusedSubagentService subagents,
+                                    ChatTransport transport, ChatDatabase.Provider provider, String apiKey,
+                                    String model, String effort, TurnCancellation cancellation,
+                                    HistoryRecall history, int recallsLeft) {
         JSONArray entries = new JSONArray();
         if (calls == null || calls.length() == 0) return new BatchResult(entries, 0, 0, 0);
         java.util.LinkedHashSet<String> allowed = new java.util.LinkedHashSet<>();
@@ -97,6 +118,7 @@ final class ClientToolRuntime {
             if (DELEGATE_SUBTASK.equals(name)) delegated++;
         }
         final boolean delegationOverflow = delegated > MAX_PARALLEL_SUBAGENTS;
+        final java.util.concurrent.atomic.AtomicInteger recallBudget = new java.util.concurrent.atomic.AtomicInteger(Math.max(0, recallsLeft));
         for (int i = 0; i < calls.length(); i++) {
             final JSONObject call = calls.optJSONObject(i);
             if (call == null) continue;
@@ -123,6 +145,10 @@ final class ClientToolRuntime {
                                 args == null ? "" : args.optString("task", ""), cancellation);
                         if (!result.ok) throw new IllegalStateException(result.error);
                         entry.put("result", result.text).put("childInputTokens", result.inputTokens).put("childOutputTokens", result.outputTokens);
+                    } else if (HISTORY_RECALL.equals(name)) {
+                        if (history == null) throw new IllegalStateException("history recall unavailable");
+                        if (recallBudget.getAndDecrement() <= 0) throw new IllegalStateException("history_recall limit is " + MAX_RECALLS_PER_TURN + " calls per turn");
+                        entry.put("result", history.recall(args == null ? "" : args.optString("query", "")));
                     } else throw new IllegalArgumentException("unsupported client tool: " + name);
                 } catch (Exception error) {
                     entry.put("error", error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());

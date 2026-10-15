@@ -166,6 +166,11 @@ final class WebOrchestrator {
         } catch (Exception ignored) { return null; }
     }
 
+    /** Auto Web with a "no Web" plan on a client-tool deployment: the tools are there, the model decides. */
+    static final String ON_DEMAND_GUIDANCE = "\n\nMoyu Web for this turn:\n"
+            + "- No Web search was run in advance. The web_search and web_fetch tools are available: use them only when answering needs current, changing or externally verifiable information you are not confident about, or when the user asks you to check something. Do not search for stable knowledge, casual conversation, rewriting supplied text or creative work.\n"
+            + "- If you do not search, do not present unverified current facts as checked.";
+
     String guidance(Plan plan, boolean providerHosted, boolean clientSearch, boolean clientFetch, boolean hostContextAttached) {
         if (plan == null || !plan.useWeb) return "";
         StringBuilder out = new StringBuilder("\n\nMoyu Web orchestration for this turn:\n")

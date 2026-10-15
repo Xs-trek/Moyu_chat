@@ -99,6 +99,7 @@ public class SmartContextV002Test {
     }
 
     @Test public void firstTurnRouterChoosesOnlyLocalPromptModulesAndRunsOnce() throws Exception {
+        post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true)); // the Router starts off
         AtomicInteger calls = new AtomicInteger();
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {

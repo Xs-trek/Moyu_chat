@@ -260,6 +260,7 @@ public class TurnPipelineTest {
     }
 
     @Test public void smartModeAttributesRouterVerifierAndMainCallsToTheirStages() throws Exception {
+        post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true)); // the Router starts off
         AtomicInteger calls = new AtomicInteger();
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
@@ -286,6 +287,7 @@ public class TurnPipelineTest {
     }
 
     @Test public void stopDuringPreparationNeverReachesTheMainCall() throws Exception {
+        post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true)); // the Router starts off
         CountDownLatch routerHeld = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         server.setDispatcher(new Dispatcher() {

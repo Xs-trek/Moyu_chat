@@ -31,7 +31,10 @@ final class ChatCoordinator implements AutoCloseable {
     // Blocking Router/Checkpoint/Web preparation must never occupy the UI/intent authority queue.
     private final ExecutorService preparationWorker = Executors.newFixedThreadPool(2);
     /** Network checks the user starts on the account page (key, model list, balance, connection test). */
-    private final ExecutorService guardWorker = Executors.newFixedThreadPool(2);
+    /** Account checks the user starts (key, model list, balance, probe); the front end allows one per target at a time. */
+    private final ExecutorService guardWorker = Executors.newFixedThreadPool(3);
+    /** Session naming, kept off guardWorker so a slow probe never delays a title and a title never queues a check. */
+    private final ExecutorService titleWorker = Executors.newSingleThreadExecutor();
     // Client tools may run independently; the hard subagent fan-out is four and no child may recurse.
     private final ExecutorService clientToolWorker = Executors.newFixedThreadPool(ClientToolRuntime.MAX_PARALLEL_SUBAGENTS);
     private final ChatTransportRegistry transports = new ChatTransportRegistry();
@@ -104,7 +107,14 @@ final class ChatCoordinator implements AutoCloseable {
         this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
         this.notifyInBackground = !"false".equals(db.setting("notifyInBackground", "true"));
         this.customInstruction = db.setting("customInstruction", "");
-        this.helpersOff = HelperSwitches.parse(db.setting(HelperSwitches.SETTING_KEY, "[]"));
+        java.util.Set<String> storedOff = HelperSwitches.parse(db.setting(HelperSwitches.SETTING_KEY, "[]"));
+        int defaultsApplied;
+        try { defaultsApplied = Integer.parseInt(db.setting(HelperSwitches.DEFAULTS_KEY, "1")); } catch (NumberFormatException unreadable) { defaultsApplied = 1; }
+        this.helpersOff = HelperSwitches.withDefaults(storedOff, defaultsApplied);
+        if (defaultsApplied < HelperSwitches.DEFAULTS_REVISION) {
+            db.putSetting(HelperSwitches.SETTING_KEY, HelperSwitches.toJson(helpersOff).toString());
+            db.putSetting(HelperSwitches.DEFAULTS_KEY, String.valueOf(HelperSwitches.DEFAULTS_REVISION));
+        }
         this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
@@ -707,7 +717,7 @@ final class ChatCoordinator implements AutoCloseable {
         if (transport == null) throw new IllegalStateException("不支持这个账号的协议");
         CanonicalPrompt prompt = SessionTitles.prompt(exchange.firstQuestion, exchange.question, exchange.answer);
         namedSessions.add(sessionId);
-        guardWorker.execute(() -> {
+        titleWorker.execute(() -> {
             TurnUsage usage = new TurnUsage();
             try { usage.setPricing(ModelPricing.normalize(new JSONObject(c.pricing))); } catch (Exception unpriced) { usage.setPricing(null); }
             long startedAt = System.currentTimeMillis(), started = System.nanoTime();
@@ -1237,5 +1247,5 @@ final class ChatCoordinator implements AutoCloseable {
 
     private static String validTheme(String value) { String v = value == null ? "" : value.trim(); if (!("system".equals(v) || "light".equals(v) || "dark".equals(v))) return "system"; return v; }
 
-    @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); pipeline.webService.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); guardWorker.shutdownNow(); worker.shutdownNow(); }
+    @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); pipeline.webService.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); guardWorker.shutdownNow(); titleWorker.shutdownNow(); worker.shutdownNow(); }
 }

@@ -348,10 +348,12 @@ function failureCodeLabel(code) {
 
 /** Helper modules the user can switch off globally (HelperSwitches on the native side), with settings copy. */
 export const HELPER_SWITCHES = [
-  ['router', '路由', '智能模式下，第一轮先判断任务类型，用来决定要不要校验。关闭后不分类，也不用这个会话之前的分类结果。'],
+  ['router', '路由', '智能模式下，第一轮先让模型给会话分类，之后按分类补充提示词、决定要不要校验。默认关闭：关闭时不分类，也不用这个会话之前的分类结果，要不要校验按这一轮的问题判断。'],
   ['compaction', '历史压缩', '标准 / 智能模式下，上下文用到一半时，让模型把较早的历史写成摘要。关闭后不再写新摘要（已有的继续用），超长时直接舍弃最早的历史。'],
+  ['recall', '原文回查', '标准 / 智能模式下，较早的历史被舍弃或只剩摘要时，让模型按需搜回这个会话的原话（带消息编号）。需要模型支持工具调用。'],
   ['webPlan', '联网规划', '联网为“自动”时，让模型判断要不要搜、搜什么。关闭后只按规则判断，不调用模型。'],
-  ['verify', '校验与修正', '智能模式下，回答后让模型再检查一遍，必要时改写。'],
+  ['webTools', '按需联网', '联网为“自动”、事先判断不用联网时，仍把搜索和抓取工具交给回答的模型，由它发现缺资料时自己去查。需要模型支持工具调用；极简模式不提供。'],
+  ['verify', '校验与修正', '智能模式下，回答后让模型再检查一遍，必要时改写；改写版要再次通过检查才会替换原回答。'],
   ['subagent', '子任务', '模型支持工具调用时，允许它把子问题交给同一模型的独立调用。'],
 ];
 const HELPER_NAMES = Object.fromEntries(HELPER_SWITCHES.map(([id, name]) => [id, name]));
@@ -379,17 +381,17 @@ function stageSummary(span) {
   switch (span.stage) {
     case 'accept': return [contextLabel(d.effectiveContextMode || d.contextMode), d.harnessPreset].filter(Boolean).join(' · ');
     case 'context': return `${d.messages ?? '—'} 条消息${d.truncated ? ' · 已截断' : ''}${d.compactionDue ? ' · 需要压缩' : ''}`;
-    case 'route': return d.routed === false ? '路由未返回结果，按通用问答处理' : `${d.domain || '—'} / ${d.taskType || '—'}${Number.isFinite(d.confidence) ? ` · 置信 ${Number(d.confidence).toFixed(2)}` : ''}`;
+    case 'route': return d.routed === false ? (d.stored === false ? '路由调用失败，下一轮再试' : '路由未返回结果，按通用问答处理') : `${d.domain || '—'} / ${d.taskType || '—'}${Number.isFinite(d.confidence) ? ` · 置信 ${Number(d.confidence).toFixed(2)}` : ''}`;
     case 'checkpoint': return d.updated ? `已更新 · 覆盖 ${d.coveredItems} 条` : '未更新';
     case 'web_plan': {
       const queries = Array.isArray(d.queries) ? d.queries : [];
       return `${d.useWeb ? '联网' : '不联网'}${d.useWeb && queries.length ? ` · ${queries.length} 个查询` : ''}${d.plannerCalled ? ' · 模型规划' : ' · 规则判断'}`;
     }
-    case 'tools': return [WEB_EXECUTION[d.webExecution] || '', d.clientTools ? `工具 ${d.clientTools}` : '', d.schemasDropped ? '工具说明放不下已省略' : ''].filter(Boolean).join(' · ');
+    case 'tools': return [d.webOnDemand ? '按需联网' : WEB_EXECUTION[d.webExecution] || '', d.recall ? '可回查原文' : '', d.clientTools ? `工具 ${d.clientTools}` : '', d.schemasDropped ? '工具说明放不下已省略' : ''].filter(Boolean).join(' · ');
     case 'web_retrieve': return `${d.sources ?? 0} 个来源 · ${full(d.evidenceChars ?? 0)} 字${d.backend ? ` · ${d.backend}` : ''}`;
-    case 'generate': return `${d.rounds ?? 1} 轮${d.clientToolBatches ? ` · 工具 ${d.clientToolBatches} 次` : ''}${d.subagents ? ` · 子任务 ${d.subagents}` : ''}`;
-    case 'verify': return [VERDICTS[d.verdict] || d.status || '', Number.isFinite(d.risk) ? `风险 ${Number(d.risk).toFixed(2)}` : '', d.repaired ? '已修正' : ACTIONS[d.action] || ''].filter(Boolean).join(' · ');
-    case 'repair': return d.repaired ? '已改写回答' : '没有产出修正';
+    case 'generate': return `${d.rounds ?? 1} 轮${d.clientToolBatches ? ` · 工具 ${d.clientToolBatches} 次` : ''}${d.usedClientWeb ? ' · 自行联网' : ''}${d.recalls ? ` · 回查 ${d.recalls} 次` : ''}${d.subagents ? ` · 子任务 ${d.subagents}` : ''}`;
+    case 'verify': return [VERDICTS[d.verdict] || d.status || '', Number.isFinite(d.risk) ? `风险 ${Number(d.risk).toFixed(2)}` : '', d.repaired ? '已修正' : d.repairRejected ? '修正未采用' : ACTIONS[d.action] || ''].filter(Boolean).join(' · ');
+    case 'repair': return d.repaired ? '已改写回答' : d.rejected ? '改写版没通过复查，保留原回答' : '没有产出修正';
     case 'title': return `${d.manual ? '手动 · ' : ''}${d.applied ? '已更新会话标题' : '标题已被修改，未覆盖'}`;
     default: return '';
   }
@@ -592,10 +594,12 @@ export function verificationState(verification) {
   else if (verification.coverageComplete === false) { seal = '存疑'; label = '智能校验 · 覆盖不足'; tone = 'warn'; }
   else if (verification.action === 'accept') { seal = '已校'; label = '智能校验 · 通过'; tone = 'good'; }
   else if (verification.action === 'repair') { seal = '已改'; label = '智能校验 · 已修正'; tone = 'warn'; }
+  else if (verification.repairRejected) { seal = '存疑'; label = '智能校验 · 修正未采用'; tone = 'warn'; }
   // Feedback trains calibration only from valid, fully covered pass/fail verdicts.
   const feedbackEligible = verification?.status === 'valid' && verification?.coverageComplete === true && (verdict === 'pass' || verdict === 'fail');
   return { seal, label, tone, verdict, feedbackEligible, recorded: verification.feedbackLabel || '', coverageReason: verification.coverageReason || '', risk: count(verification.risk),
-    preRepairText: verification.repaired && typeof verification.preRepairText === 'string' ? verification.preRepairText : '' };
+    preRepairText: verification.repaired && typeof verification.preRepairText === 'string' ? verification.preRepairText : '',
+    repairCandidateText: verification.repairRejected && typeof verification.repairCandidateText === 'string' ? verification.repairCandidateText : '' };
 }
 
 /** Cumulative reported tokens of the visible session, used for milestone notices. */

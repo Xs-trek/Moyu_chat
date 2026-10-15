@@ -90,8 +90,34 @@ test('a repaired answer keeps the first version for comparison', () => {
   assert.equal(vm.verificationState({ status: 'valid', repaired: false, preRepairText: 'x' }).preRepairText, '');
 });
 
-test('helper switches: all on by default, labels for what a turn had off', () => {
-  assert.deepEqual(vm.helperSwitches({ ui: {} }).map((h) => h.on), [true, true, true, true, true]);
+test('a repair the re-check did not accept is offered beside the kept answer', () => {
+  const state = vm.verificationState({ status: 'valid', verdict: 'fail', coverageComplete: true, action: 'abstain', repairRejected: true, repairCandidateText: '改写版' });
+  assert.equal(state.label, '智能校验 · 修正未采用');
+  assert.equal(state.repairCandidateText, '改写版');
+  assert.equal(state.preRepairText, '');
+  assert.equal(vm.verificationState({ status: 'valid', repairCandidateText: 'x' }).repairCandidateText, '');
+  const view = vm.traceView({ status: 'ok', spans: [
+    { stage: 'repair', status: 'ok', detail: { repaired: false, rejected: true } },
+    { stage: 'verify', status: 'ok', detail: { verdict: 'fail', action: 'abstain', repairRejected: true } },
+  ], config: {} });
+  assert.equal(view.rows[0].note, '改写版没通过复查，保留原回答');
+  assert.match(view.rows[1].note, /修正未采用/);
+});
+
+test('trace names on-demand Web, history recall and a Router call that failed', () => {
+  const view = vm.traceView({ status: 'ok', spans: [
+    { stage: 'tools', status: 'ok', detail: { webExecution: 'none', webOnDemand: true, recall: true, clientTools: 'web_search,web_fetch,history_recall' } },
+    { stage: 'generate', status: 'ok', detail: { rounds: 2, clientToolBatches: 1, usedClientWeb: true, recalls: 1 } },
+    { stage: 'route', status: 'ok', detail: { routed: false, stored: false } },
+  ], config: {} });
+  assert.match(view.rows[0].note, /按需联网 · 可回查原文/);
+  assert.match(view.rows[1].note, /自行联网 · 回查 1 次/);
+  assert.equal(view.rows[2].note, '路由调用失败，下一轮再试');
+});
+
+test('helper switches: on unless the native view lists them, labels for what a turn had off', () => {
+  assert.deepEqual(vm.helperSwitches({ ui: {} }).map((h) => h.id), ['router', 'compaction', 'recall', 'webPlan', 'webTools', 'verify', 'subagent']);
+  assert.deepEqual(vm.helperSwitches({ ui: { helpersOff: ['router'] } }).map((h) => h.on), [false, true, true, true, true, true, true]);
   const rows = vm.helperSwitches({ ui: { helpersOff: ['verify'] } });
   assert.equal(rows.find((h) => h.id === 'verify').on, false);
   assert.equal(vm.helpersOffLabel([]), '');

@@ -116,8 +116,11 @@ export type MoyuChatIntent =
   /** includeArchived (default true): also count turns since retried, rewound or deleted (turn_archive). */
   | UiIntent<'stats.get', { days: number; groupBy?: string; includeArchived?: boolean }>;
 
-/** Helper modules with a global on/off switch. */
-export type HelperId = 'router' | 'compaction' | 'webPlan' | 'verify' | 'subagent';
+/**
+ * Helper modules with a global on/off switch. recall = history_recall tool when older turns are out of the prompt;
+ * webTools = Web tools offered on demand in Auto when the plan said no Web. The Router starts off (default revision 2).
+ */
+export type HelperId = 'router' | 'compaction' | 'recall' | 'webPlan' | 'webTools' | 'verify' | 'subagent';
 
 export interface MediaView {
   mediaId: string;
@@ -326,6 +329,10 @@ export interface VerificationView {
   attempts?: VerificationAttemptView[];
   repairAttempted?: boolean;
   repaired?: boolean;
+  /** A repair ran but its re-check did not accept it: the first answer is shown and keeps its own verdict. */
+  repairRejected?: boolean;
+  /** The rejected repair, kept so the two versions can be compared. */
+  repairCandidateText?: string;
   repairLimitReached?: boolean;
   feedbackLabel?: 'accurate' | 'false_alarm' | 'missed_error';
   feedbackRecordedAt?: string;

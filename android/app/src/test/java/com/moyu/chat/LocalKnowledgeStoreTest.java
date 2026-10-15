@@ -126,6 +126,32 @@ public class LocalKnowledgeStoreTest {
         assertEquals("an old-format index is rebuilt once, not duplicated", before + 1, countScope(LocalKnowledgeStore.chatScope(source.id)));
     }
 
+    @Test public void historyRecallSearchesOnlyThisChatAndOnlyWhatThePromptNoLongerCarries() throws Exception {
+        ChatDatabase db = app.database();
+        ChatDatabase.ModelProfile profile = profile(db);
+        ChatDatabase.Session current = db.createSession(profile, "current", null, null, ReasoningPolicy.DEFAULT);
+        ChatDatabase.Session other = db.createSession(profile, "other", null, null, ReasoningPolicy.DEFAULT);
+        db.appendTimeline(current.id, "u1", message("user", "The staging database password rotates every Tuesday at 09:30."));
+        db.appendTimeline(current.id, "a1", message("assistant", "Noted: rotation on Tuesday 09:30."));
+        db.appendTimeline(current.id, "u2", message("user", "Now the rotation window moves, what changes for the cron job?"));
+        db.appendTimeline(other.id, "o1", message("user", "Rotation schedule of another project: Friday 18:00."));
+
+        LocalKnowledgeStore store = new LocalKnowledgeStore(db);
+        List<LocalKnowledgeStore.Hit> hits = store.searchSessionHistory(current.id, "rotation Tuesday", 6);
+        assertFalse(hits.isEmpty());
+        for (LocalKnowledgeStore.Hit hit : hits) assertEquals("never another Chat", current.id, hit.sourceId);
+
+        TurnPipeline pipeline = new TurnPipeline(null, db, null, null, null);
+        JSONArray carried = new JSONArray().put(new JSONObject().put("role", "user").put("text", "Now the rotation window moves, what changes for the cron job?"));
+        CanonicalPrompt sent = new CanonicalPrompt("", carried, true, 0, 0, carried.length());
+        String recalled = pipeline.recallHistory(current.id, sent, "rotation Tuesday 09:30");
+        assertTrue(recalled.contains("every Tuesday at 09:30"));
+        assertTrue(recalled.contains("[message #1, user]"));
+        assertFalse("what the prompt already carries is not repeated", recalled.contains("cron job"));
+        assertFalse(recalled.contains("Friday"));
+        assertTrue(pipeline.recallHistory(current.id, sent, "quaternion").startsWith("No earlier message"));
+    }
+
     @Test public void queryTermsKeepWordsAndBigramsAndChunksBreakNaturally() {
         List<String> terms = KnowledgeLexicon.queryTerms("DMA 中断所有权 猫");
         assertTrue(terms.contains("dma"));
