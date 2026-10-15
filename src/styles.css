@@ -1,5 +1,5 @@
 /*
- * Moyu Chat UI · v0.0.6-beta
+ * Moyu Chat UI · v0.0.6
  * Soft canvas, brighter reading surfaces, 1px hairlines for structure. No pure white, no pure black.
  * Sections: tokens · base · shell & drawer · pages · conversation · markdown · composer · sheets & dialogs · mascot & delights · responsive
  */
@@ -895,7 +895,9 @@ html[data-koi="on"][data-delight="on"] { --fish: #f4f1ea; --fish-light: #d8402f;
 @keyframes fish-rise { 0% { opacity: 0; transform: translateY(0); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-16px); } }
 /* The waiting game sheet. */
 .fish-game-wrap { display: grid; gap: 10px; padding: 0 0 8px; }
-.fish-game { display: block; width: 100%; max-width: 480px; margin: 0 auto; aspect-ratio: 4 / 3; border-radius: var(--radius-md); image-rendering: pixelated; touch-action: none; }
+.fish-game-stage { position: relative; width: 100%; max-width: 480px; margin: 0 auto; }
+.fish-game { display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-md); image-rendering: pixelated; touch-action: none; }
+.fish-game-score { position: absolute; top: 8px; left: 10px; font: 600 var(--text-sm) / 1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); pointer-events: none; }
 .fish-game-status { margin: 0; text-align: center; font-size: var(--text-sm); color: var(--muted); }
 
 .seal {

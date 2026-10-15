@@ -14,7 +14,7 @@
         tools:targetApi="31"
         android:usesCleartextTraffic="false"
         android:networkSecurityConfig="@xml/network_security_config"
-        android:label="Moyu Chat β"
+        android:label="Moyu Chat"
         android:theme="@style/Theme.Moyu">
         <service android:name=".ChatTurnService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">

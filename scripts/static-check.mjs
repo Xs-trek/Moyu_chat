@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
-const VERSION_NAME = '0.0.6-beta';
+const VERSION_NAME = '0.0.6';
 const VERSION_CODE = 6;
 const SCHEMA_VERSION = 2;
 const uiRoot = join(projectRoot, 'src');

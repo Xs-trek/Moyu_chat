@@ -29,9 +29,13 @@ const HOOK = ['.KK', 'K..', 'K..', 'K.K', '.K.'];
  */
 export function createGame({ best = 0, onBest, onDone }) {
   const canvas = h('canvas', { class: 'fish-game', width: String(VIEW_W), height: String(VIEW_H), 'aria-label': '摸鱼小游戏：左右拖动小鱼接泡泡，躲开鱼钩' });
+  // The score is page text over the canvas, so it is as sharp as any other text (the status line announces results).
+  const scoreText = h('span', { class: 'fish-game-score', 'aria-hidden': 'true', text: '0' });
   const status = h('p', { class: 'fish-game-status', 'aria-live': 'polite', text: `点一下开始。最好成绩 ${best}。` });
-  const node = h('div', { class: 'fish-game-wrap' }, canvas, status);
+  const node = h('div', { class: 'fish-game-wrap' }, h('div', { class: 'fish-game-stage' }, canvas, scoreText), status);
   const ctx = canvas.getContext?.('2d');
+  let scale = 1;
+  let shownScore = 0;
   const colors = palette();
   let state = 'ready';
   let raf = 0;
@@ -43,6 +47,31 @@ export function createGame({ best = 0, onBest, onDone }) {
   let x = VIEW_W / 2;
   let answered = false;
   let closeTimer = 0;
+
+  /**
+   * Backing store at a whole multiple of the 160×120 world, at least the displayed size in device pixels: every world
+   * pixel is an integer block of device pixels, so the sprites stay crisp instead of being stretched by the browser.
+   */
+  function fit() {
+    if (!ctx) return;
+    const width = canvas.clientWidth || 0;
+    const next = Math.max(1, Math.min(8, Math.ceil((width * (window.devicePixelRatio || 1)) / VIEW_W)));
+    if (next === scale && canvas.width === VIEW_W * next) return;
+    scale = next;
+    canvas.width = VIEW_W * scale;
+    canvas.height = VIEW_H * scale;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    if (state !== 'playing') paint(last || 0);
+  }
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => fit()) : null;
+  resize?.observe(canvas);
+
+  function showScore() {
+    if (shownScore === score) return;
+    shownScore = score;
+    scoreText.textContent = String(score);
+  }
 
   function drawGrid(grid, inks, left, top) {
     for (let j = 0; j < grid.length; j++) for (let i = 0; i < grid[j].length; i++) {
@@ -63,9 +92,7 @@ export function createGame({ best = 0, onBest, onDone }) {
       if (item.hook) { ctx.fillStyle = colors.hook; ctx.fillRect(Math.round(item.x) + 1, 0, 1, Math.round(item.y)); drawGrid(HOOK, { K: colors.hook }, item.x, item.y); }
       else drawGrid(BUBBLE, { Q: colors.bubble }, item.x - 2, item.y);
     }
-    ctx.fillStyle = colors.text;
-    ctx.font = '8px ui-monospace, monospace';
-    ctx.fillText(`泡泡 ${score}`, 4, 10);
+    showScore();
     return { fishTop, fishW: sprite[0].length, fishH: sprite.length };
   }
 
@@ -112,6 +139,7 @@ export function createGame({ best = 0, onBest, onDone }) {
     last = 0;
     spawnIn = 0;
     status.textContent = answered ? '回答已经好了，随便玩玩。' : '接泡泡，躲鱼钩。';
+    fit();
     raf = requestAnimationFrame(frame);
   }
 
@@ -137,6 +165,7 @@ export function createGame({ best = 0, onBest, onDone }) {
       clearTimeout(closeTimer);
       if (raf) cancelAnimationFrame(raf);
       raf = 0;
+      resize?.disconnect();
       if (state === 'playing') saveBest();
       state = 'over';
     },

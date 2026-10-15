@@ -68,7 +68,7 @@ export function renderDrawer(view) {
       selecting() ? h('header', { class: 'drawer-head selecting' }, selectionBar(view.sessions))
         : h('header', { class: 'drawer-head' },
           h('button', { type: 'button', class: 'drawer-fish', 'aria-label': '小鱼', dataset: { action: 'poke-drawer-fish' } }, fish('still', 'sm', { role: 'drawer' })),
-          h('strong', { class: 'grow', text: vm.mascotState(view).disguise ? '文档' : 'Moyu Chat β' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
+          h('strong', { class: 'grow', text: vm.mascotState(view).disguise ? '文档' : 'Moyu Chat' }), iconButton('close', '关闭', 'drawer-close', {}, 'icon-btn drawer-close')),
       h('button', { type: 'button', class: 'drawer-new', dataset: { action: 'new-chat' } }, icon('plus'), '新会话'),
       todayStrip(view),
       h('div', { class: 'drawer-list' }, (view.sessions || []).length ? sessionList(view) : h('p', { class: 'drawer-empty', text: '还没有会话' })),

@@ -72,7 +72,7 @@ function home(view) {
     body = h('div', { class: 'home-list' }, selecting() ? selectionBar(view.sessions) : null, sessionList(view));
   }
   return h('main', { class: 'page page-home' },
-    vm.mascotState(view).disguise ? appHeader('文档', '最近打开', iconButton('plus', '新建', 'new-chat')) : appHeader('Moyu Chat β', '会话与分支只保存在本机', iconButton('plus', '新会话', 'new-chat')),
+    vm.mascotState(view).disguise ? appHeader('文档', '最近打开', iconButton('plus', '新建', 'new-chat')) : appHeader('Moyu Chat', '会话与分支只保存在本机', iconButton('plus', '新会话', 'new-chat')),
     h('div', { class: 'page-body' }, body));
 }
 
