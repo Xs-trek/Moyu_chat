@@ -543,5 +543,8 @@ if (!knowledgeStore.includes('List<Hit> searchSessionHistory(') || !/searchSessi
   fail('history_recall must search only this Chat and skip what the prompt already carries');
 if (!clientTools.includes('MAX_RECALLS_PER_TURN = 3') || !clientTools.includes('history_recall limit is')) fail('history_recall must be bounded per turn');
 if (!helperSwitches.includes('if (appliedRevision < 2) out.add(ROUTER);') || !coordinatorOnly.includes('HelperSwitches.withDefaults(storedOff, defaultsApplied)')) fail('the Router must start off once per install, keeping a later choice to turn it on');
+// The app icon is a vector adaptive icon with a themed (monochrome) layer; minSdk 26 needs no bitmap fallback.
+const launcherIcon = read('android/app/src/main/res/mipmap-anydpi/ic_launcher.xml');
+if (!manifest.includes('android:icon="@mipmap/ic_launcher"') || !manifest.includes('android:roundIcon="@mipmap/ic_launcher_round"') || !launcherIcon.includes('<monochrome android:drawable="@drawable/ic_launcher_monochrome" />')) fail('the app must ship its adaptive launcher icon with a monochrome layer');
 if (failed) process.exit(1); // the checks above run after the first exit and must fail the build too
 console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);
