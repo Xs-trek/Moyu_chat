@@ -66,7 +66,10 @@ final class ProviderRoundLoop {
     private boolean usedClientWeb = false;
     /** history_recall calls answered this turn (bounded by ClientToolRuntime.MAX_RECALLS_PER_TURN). */
     private int recallCalls = 0;
-    private final StringBuilder clientEvidenceContext = new StringBuilder();
+    /** Client tool results as verifier evidence, one item per result, each labelled by its tool (spec M7, N5). */
+    private final JSONArray toolEvidence = new JSONArray();
+    private int toolEvidenceChars = 0;
+    static final int TOOL_EVIDENCE_CHARS = 24_000, TOOL_EVIDENCE_ITEM_CHARS = 6_000;
     private final AtomicReference<ChatTurnOptions> activeRoundOptions;
     private final AtomicReference<CanonicalPrompt> activeRoundPrompt;
     private int roundTextStart = 0, roundReasoningStart = 0, roundMediaStart = 0;
@@ -489,13 +492,7 @@ final class ProviderRoundLoop {
                         if (!sourceUrl.isEmpty() && !webSources.containsKey(sourceUrl)) webSources.put(sourceUrl, new JSONObject(source.toString()));
                     }
                 }
-                String toolResult = entry.optString("result", "").trim();
-                if (!toolResult.isEmpty() && clientEvidenceContext.length() < 24_000) {
-                    int remaining = 24_000 - clientEvidenceContext.length();
-                    String clipped = toolResult.length() > Math.min(6_000, remaining)
-                            ? toolResult.substring(0, Math.min(6_000, remaining)) : toolResult;
-                    clientEvidenceContext.append("\n\n[").append(toolName).append(" result]\n").append(clipped);
-                }
+                addToolEvidence(toolName, entry.optString("result", "").trim());
             }
             childInputTokens += batch.childInputTokens;
             childOutputTokens += batch.childOutputTokens;
@@ -514,19 +511,38 @@ final class ProviderRoundLoop {
         }
     }
 
+    /**
+     * Keeps a tool result for the verifier, within a per-result and a per-turn budget. A result that had to be cut,
+     * or that no longer fits at all, marks the evidence as clipped, so the verifier reports incomplete coverage
+     * instead of judging the cut part as unsupported.
+     */
+    private void addToolEvidence(String toolName, String result) throws Exception {
+        if (result.isEmpty()) return;
+        int room = Math.min(TOOL_EVIDENCE_ITEM_CHARS, TOOL_EVIDENCE_CHARS - toolEvidenceChars);
+        if (room <= 0) {
+            JSONObject last = toolEvidence.optJSONObject(toolEvidence.length() - 1);
+            if (last != null) last.put("clipped", true);
+            return;
+        }
+        boolean clipped = result.length() > room;
+        String text = clipped ? result.substring(0, room) : result;
+        toolEvidenceChars += text.length();
+        JSONObject item = new JSONObject().put("tool", toolName).put("text", text);
+        if (clipped) item.put("clipped", true);
+        toolEvidence.put(item);
+    }
+
     /** Last round completed: decide whether Smart verification runs, otherwise finish the turn. */
     private void completeGeneration() {
         try { commitRoundUsage(); persistUsageProjection(); } catch (Exception ignored) { }
         settle();
         try { r.trace().end(span, TurnTrace.OK, generateDetail()); } catch (Exception ignored) { }
         boolean usedExternalEvidence = webPrepared.hasContext() || usedClientWeb || !webSources.isEmpty();
-        boolean verifyOn = r.config.helperOn(HelperSwitches.VERIFY);
-        boolean shouldVerify = r.contextPolicy.verifierEnabled && r.adaptivePolicy.verifierAvailable && verifyOn
+        boolean shouldVerify = r.modules.verify.on
                 && HarnessPolicyResolver.shouldVerify(r.session, r.taskProfile, r.input, usedExternalEvidence,
                 mainPrompt.truncated, subagentCount > 0);
         if (!shouldVerify) {
-            r.trace().skip(TurnTrace.VERIFY, !r.contextPolicy.verifierEnabled ? "mode_off"
-                    : !r.adaptivePolicy.verifierAvailable ? "harness_off" : !verifyOn ? HelperSwitches.USER_OFF : "not_needed");
+            r.trace().skip(TurnTrace.VERIFY, !r.modules.verify.on ? r.modules.verify.reason : "not_needed");
             // Client-tool turns depend on hidden tool_call/tool_result history that is intentionally
             // not durable Chat history. Do not persist partial native continuation across user turns.
             if (clientToolBatchCount.get() == 0) try { p.attachProviderContinuation(r.live, r.config, providerContinuationItems); } catch (Exception ignored) { }
@@ -545,13 +561,13 @@ final class ProviderRoundLoop {
                 ? TurnPipeline.copyArray(providerContinuationItems) : new JSONArray();
         final LinkedHashMap<String, JSONObject> candidateSources = TurnPipeline.copySources(webSources);
         final String candidateWebBackend = webBackend[0];
-        final String verifierContext = (webPrepared.promptSuffix == null ? "" : webPrepared.promptSuffix)
-                + clientEvidenceContext.toString();
+        final String hostWebContext = webPrepared.promptSuffix == null ? "" : webPrepared.promptSuffix;
+        final JSONArray candidateToolEvidence = TurnPipeline.copyArray(toolEvidence);
         env.preparation().execute(() -> {
             turnControl.bindCurrentThread();
             try {
                 p.verify(r, mainPrompt, candidate, candidateReasoning, candidateMedia, candidateSources,
-                        candidateWebBackend, continuation, verifierContext);
+                        candidateWebBackend, continuation, hostWebContext, candidateToolEvidence);
             } finally {
                 turnControl.clearCurrentThread();
             }

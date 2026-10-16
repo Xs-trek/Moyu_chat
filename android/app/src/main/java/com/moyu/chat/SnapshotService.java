@@ -33,8 +33,7 @@ final class SnapshotService {
         ChatDatabase.Session session = db.getSession(sessionId);
         if (session == null) throw new IllegalArgumentException("原会话不存在");
         JSONArray source = new JSONArray();
-        if (session.originSnapshotId != null) append(source, db.snapshotItems(session.originSnapshotId));
-        append(source, db.timelineThrough(sessionId, throughSeq));
+        append(source, SessionHistory.through(db, session, throughSeq));
         Normalized normalized = normalize(source);
         return persist(sessionId, bounded(session.title, "source title"), normalized);
     }

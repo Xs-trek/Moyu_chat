@@ -158,7 +158,7 @@ if (!db.includes('rating INTEGER CHECK(rating IN (-1,1))') || !db.includes('reru
 if (!coordinatorOnly.includes('case "turn.rerun"') || !coordinatorOnly.includes('snapshots.createLocal(sourceSessionId, userSeq - 1)') || !turnPipeline.includes('env.takeRerunOf(id)')) fail('a re-answer must branch before the re-asked message and record which turn it re-answers');
 if (!db.includes('CREATE TABLE turn_payloads(') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
 if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
-if (!coordinator.includes('r.prompt = committedPrompt(r, r.session);') || !coordinator.includes('contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "")')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
+if (!coordinator.includes('r.prompt = committedPrompt(r, r.session);') || !coordinator.includes('contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "", r.modules)')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
 if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_id')) fail('deployment-scoped model profile/session binding missing');
 if (!db.includes('input_modalities') || !db.includes('output_modalities') || !db.includes('draft_media')) fail('model/session multimodal capability persistence missing');
@@ -541,9 +541,12 @@ if (!coordinatorOnly.includes('if (runningChecks.incrementAndGet() > MAX_RUNNING
 // Auto (never Off) and only on declared client tool calling; history_recall reads this Chat only; the Router starts off.
 if (!turnPipeline.includes('SmartVerifierCalibration.ACTION_ACCEPT.equals(recheckDecision.action)') || !turnPipeline.includes('meta.put("repairRejected", true).put("repairCandidateText", repairCandidate)'))
   fail('a repair must not replace the answer unless the re-check accepts it; a rejected repair is kept for comparison');
-if (!turnPipeline.includes('ChatTurnOptions.WEB_AUTO.equals(ChatTurnOptions.normalizeWebMode(c.webMode))') || !/r\.webOnDemand = !webPlan\.useWeb && r\.clientCalling/.test(turnPipeline))
+const turnModules = read('android/app/src/main/java/com/moyu/chat/TurnModules.java');
+if (!turnModules.includes('!ChatTurnOptions.WEB_AUTO.equals(ChatTurnOptions.normalizeWebMode(c.webMode)) ? Decision.deny(WEB_NOT_AUTO)')
+    || !/Decision webTools = minimal \? Decision\.deny\(MODE_OFF\) : !clientCalling \? Decision\.deny\(NO_CLIENT_TOOLS\)/.test(turnModules)
+    || !turnPipeline.includes('r.webOnDemand = !webPlan.useWeb && r.modules.webTools.on;'))
   fail('on-demand Web tools are only for Auto on a deployment that declares client tool calling');
-if (!knowledgeStore.includes('List<Hit> searchSessionHistory(') || !/searchSessionHistory[\s\S]*?search\("scope_id=\?", new String\[\]\{chatScope\(sessionId\)\}/.test(knowledgeStore) || !turnPipeline.includes('inPrompt.contains(hit.text)'))
+if (!knowledgeStore.includes('List<Hit> searchSessionHistory(') || !/searchSessionHistory[\s\S]*?search\("scope_id=\?", new String\[\]\{chatScope\(sessionId\)\}/.test(knowledgeStore) || !turnPipeline.includes('(sent != null && sent.carries(hit.text))'))
   fail('history_recall must search only this Chat and skip what the prompt already carries');
 // A branch also searches the one snapshot it started from (which holds its whole ancestor chain), never another scope.
 if (!knowledgeStore.includes('search("scope_id IN (?,?)", new String[]{chatScope(sessionId), snapshotScope(origin)}') || !turnPipeline.includes('LocalKnowledgeStore.inherited(hit)'))
@@ -556,5 +559,36 @@ if (!helperSwitches.includes('if (appliedRevision < 2) out.add(ROUTER);') || !co
 // The app icon is a vector adaptive icon with a themed (monochrome) layer; minSdk 26 needs no bitmap fallback.
 const launcherIcon = read('android/app/src/main/res/mipmap-anydpi/ic_launcher.xml');
 if (!manifest.includes('android:icon="@mipmap/ic_launcher"') || !manifest.includes('android:roundIcon="@mipmap/ic_launcher_round"') || !launcherIcon.includes('<monochrome android:drawable="@drawable/ic_launcher_monochrome" />')) fail('the app must ship its adaptive launcher icon with a monochrome layer');
+// Spec R2: one owner per concept, so a later change cannot fork it. History (H1) is read through SessionHistory (row
+// operations and the display projection in ChatCoordinator excepted); whether a module runs is decided once in
+// TurnModules (M4); "already seen" is CanonicalPrompt.carries (T4); whole-row session writes are whitelisted (R1);
+// prompt budgeting happens only in the context assembler, ContextBuilder.
+walk(javaRoot, '.java', (file, text) => {
+  const name = file.slice(javaRoot.length + 1).replace(/\\/g, '/');
+  if (!['ChatDatabase.java', 'SessionHistory.java', 'ChatCoordinator.java'].includes(name) && /\.(timeline|snapshotItems|timelineAfter|timelineThrough)\(/.test(text))
+    fail(`${name}: orchestration reads history through SessionHistory (spec H2)`);
+  if (!['TurnConfig.java', 'TurnModules.java'].includes(name) && /helperOn\(/.test(text)) fail(`${name}: helper switches are read only by TurnModules (spec M4)`);
+  if (!['ChatDatabase.java', 'ChatCoordinator.java'].includes(name) && /saveSession\(/.test(text)) fail(`${name}: whole-row session writes belong to intents and session creation (spec R1)`);
+  if (!['ContextBuilder.java', 'ContextBudgetManager.java'].includes(name) && /\b(selectWithReserve|selectPercent|exceedsPercent)\(|budgets\.select\(/.test(text))
+    fail(`${name}: prompt budgeting belongs to the context assembler (spec R2)`);
+  if (/\.contains\(hit\.text\)/.test(text)) fail(`${name}: "already in the prompt" is CanonicalPrompt.carries (spec T4)`);
+});
+if ((coordinatorOnly.match(/db\.saveSession\(/g) || []).length !== 4) fail('ChatCoordinator saves whole session rows only for the three setting intents and a new re-answer branch (spec R1)');
+if (!turnPipeline.includes('r.modules = TurnModules.resolve(turnConfig, r.contextPolicy, r.adaptivePolicy, r.clientCalling,') || !turnPipeline.includes('.put("modules", r.modules.toJson())'))
+  fail('module decisions are made once at accept and recorded on the accept stage (spec M4)');
+if (!read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('CanonicalPrompt.carries(alreadySelected, text)')) fail('retrieval de-duplication uses the one visibility check (spec T4)');
+// N3: history_recall is decided on the final prompt, after tool schemas and Web evidence took their room.
+if (!/retrieveWeb\(r\)\) return;\s*settleRecall\(r\);\s*startGeneration\(r\);/.test(turnPipeline) || !turnPipeline.includes('r.recallOffered = r.prompt.truncated || summarized;'))
+  fail('history_recall must be decided on the final prompt (spec C4, N3)');
+// N5: verifier evidence is labelled by tool, and a cut result is incomplete coverage.
+const verifier = read('android/app/src/main/java/com/moyu/chat/SmartVerifierService.java');
+if (!verifier.includes('return "conversation_recall";') || !verifier.includes('return "subtask_result";') || !verifier.includes('if (item.optBoolean("clipped", false)) complete = false;')
+    || !coordinator.includes('addToolEvidence(toolName, entry.optString("result", "").trim());') || coordinator.includes('clientEvidenceContext'))
+  fail('verifier evidence must label tool results by tool and report a cut one as incomplete coverage (spec M7, N5)');
+// N7, T2a: the finalize fallback writes only the state; helper calls take model and effort from the turn config.
+if (!turnPipeline.includes('db.setSessionState(id, "failed")')) fail('the finalize fallback writes only the session state (spec R1, N7)');
+if (/session\.(model|reasoningEffort|maxOutputTokens)/.test(verifier) || !turnPipeline.includes('taskRouter.route(r.routeTransport, r.provider, r.key, c.model,')
+    || !turnPipeline.includes('checkpointService.update(r.checkpointTransport, r.provider, r.key, c.model,'))
+  fail('helper calls take model and reasoning effort from the frozen turn config (spec T2)');
 if (failed) process.exit(1); // the checks above run after the first exit and must fail the build too
 console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);

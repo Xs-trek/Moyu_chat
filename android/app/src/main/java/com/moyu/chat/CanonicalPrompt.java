@@ -44,6 +44,22 @@ final class CanonicalPrompt {
         this.allowProviderContinuation = allowProviderContinuation;
     }
 
+    /**
+     * Whether the model already sees {@code text} in this prompt (spec T4): judged on the prompt actually sent, by
+     * containment, because a retrieved excerpt is a chunk of one message and counts as seen when that message was sent.
+     */
+    boolean carries(String text) { return carries(messages, text); }
+
+    /** The one "already seen" check (spec T4, R2); see {@link #carries(String)}. */
+    static boolean carries(JSONArray messages, String text) {
+        if (messages == null || text == null || text.isEmpty()) return false;
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject message = messages.optJSONObject(i);
+            if (message != null && message.optString("text", "").contains(text)) return true;
+        }
+        return false;
+    }
+
     JSONObject diagnostics() {
         try {
             return new JSONObject()

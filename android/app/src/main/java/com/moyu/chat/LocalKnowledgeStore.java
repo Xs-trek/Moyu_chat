@@ -174,7 +174,7 @@ final class LocalKnowledgeStore {
         try (Cursor c = writable.rawQuery("SELECT item_ref FROM knowledge_fts WHERE scope_id=? LIMIT 1", new String[]{scope})) {
             if (c.moveToFirst() && c.getString(0) != null && c.getString(0).contains(CHUNK_SUFFIX)) return;
         }
-        JSONArray items = db.snapshotItems(snapshotId);
+        JSONArray items = SessionHistory.inherited(db, snapshotId);
         writable.beginTransaction();
         try {
             writable.delete("knowledge_fts", "scope_id=?", new String[]{scope});
@@ -209,7 +209,7 @@ final class LocalKnowledgeStore {
      */
     private void indexSession(String sessionId, int after) {
         String scope = chatScope(sessionId);
-        JSONArray items = db.timelineAfter(sessionId, Math.max(0, after));
+        JSONArray items = SessionHistory.localAfter(db, sessionId, Math.max(0, after));
         SQLiteDatabase writable = db.getWritableDatabase();
         int through = Math.max(0, after);
         writable.beginTransaction();

@@ -52,6 +52,22 @@ final class TurnTrace {
         if (detail != null) span.detail = detail;
     }
 
+    /** Settles detail fields of an ended stage that a later stage decides (the last span of that stage). */
+    synchronized void annotate(String stage, JSONObject fields) {
+        if (fields == null) return;
+        for (int i = spans.size() - 1; i >= 0; i--) {
+            Span span = spans.get(i);
+            if (!span.stage.equals(stage)) continue;
+            try {
+                for (java.util.Iterator<String> keys = fields.keys(); keys.hasNext(); ) {
+                    String key = keys.next();
+                    span.detail.put(key, fields.get(key));
+                }
+            } catch (Exception ignored) { }
+            return;
+        }
+    }
+
     synchronized void fail(Span span, String code) {
         if (span == null || span.status != null) return;
         end(span, FAILED, null);

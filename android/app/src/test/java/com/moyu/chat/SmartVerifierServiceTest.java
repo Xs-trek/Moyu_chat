@@ -55,6 +55,25 @@ public class SmartVerifierServiceTest {
                 "\",\"evidenceIds\":[\"" + evidenceId + "\"],\"note\":\"ok\"}";
     }
 
+    /** Spec M7, N5: each tool result is labelled by what it is, and a result that had to be cut makes coverage incomplete. */
+    @Test public void toolResultsAreLabelledByTheirToolAndACutOneMakesTheLedgerIncomplete() throws Exception {
+        JSONArray tools = new JSONArray()
+                .put(new org.json.JSONObject().put("tool", ClientToolRuntime.WEB_SEARCH).put("text", "search hits"))
+                .put(new org.json.JSONObject().put("tool", ClientToolRuntime.HISTORY_RECALL).put("text", "[message #1, user] the code is 4471"))
+                .put(new org.json.JSONObject().put("tool", ClientToolRuntime.DELEGATE_SUBTASK).put("text", "subtask answer"));
+        JSONArray ledger = SmartVerifierService.evidence("q", null, null, "", null, null, tools);
+        java.util.Map<String, String> types = new java.util.HashMap<>();
+        for (int i = 0; i < ledger.length(); i++) types.put(ledger.getJSONObject(i).getString("id"), ledger.getJSONObject(i).getString("type"));
+        assertEquals("retrieved_web_context", types.get("tool:1"));
+        assertEquals("a recalled message is not Web content", "conversation_recall", types.get("tool:2"));
+        assertEquals("subtask_result", types.get("tool:3"));
+        assertTrue(SmartVerifierService.ledgerComplete(ledger));
+
+        tools.getJSONObject(2).put("clipped", true);
+        assertFalse("a cut result is incomplete coverage", SmartVerifierService.ledgerComplete(
+                SmartVerifierService.evidence("q", null, null, "", null, null, tools)));
+    }
+
     @Test public void theEvidenceLedgerCarriesTheCheckpointAndTheUserInstructionsTheMainCallSaw() throws Exception {
         ContextCheckpoint checkpoint = new ContextCheckpoint("Earlier the user fixed the budget at 300 USD.", new JSONArray().put("budget <= 300 USD"),
                 new JSONArray(), new JSONArray(), new JSONArray());

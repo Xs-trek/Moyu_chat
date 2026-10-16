@@ -77,6 +77,7 @@ final class TurnPipeline {
         TurnRun r = accept(id, text, turnConfig, turnControl);
         if (r == null) return;
         if (!buildContext(r) || !prepareContext(r) || !planWeb(r) || !selectTools(r) || !retrieveWeb(r)) return;
+        settleRecall(r);
         startGeneration(r);
     }
 
@@ -170,16 +171,17 @@ final class TurnPipeline {
         ChatDatabase.Snapshot originSnapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
         r.contextPolicy = ContextMode.resolve(session, originSnapshot);
         r.adaptivePolicy = HarnessPolicyResolver.resolve(session);
+        r.clientCalling = ClientToolRuntime.compatible(provider.protocol, turnConfig.clientToolCalling);
+        // Every module's "may it run" is settled here, once (spec M4); the stages below only read it.
+        r.modules = TurnModules.resolve(turnConfig, r.contextPolicy, r.adaptivePolicy, r.clientCalling,
+                ContextBuilder.globalMemoryEnabled(db), originSnapshot != null);
         // A Router that does not run for this turn (switched off, or the mode / preset does not use it) leaves no
         // trace either: its earlier profile is cleared from this turn's copy of the session, so the prompt
         // (PromptPolicy reads the session) and verification (r.taskProfile) agree. The stored profile stays.
-        boolean routerRuns = r.contextPolicy.routerEnabled && turnConfig.helperOn(HelperSwitches.ROUTER);
-        r.taskProfile = routerRuns ? TaskProfile.fromStored(session.taskProfile) : null;
+        r.taskProfile = r.modules.router.on ? TaskProfile.fromStored(session.taskProfile) : null;
         if (r.taskProfile == null) session.taskProfile = "";
-        r.needsRouter = routerRuns && r.taskProfile == null;
-        // Deterministic Standard/Smart compaction cannot be disabled by the model-authored TaskProfile, only by the user.
-        r.checkpointAllowed = r.contextPolicy.checkpointEnabled && turnConfig.helperOn(HelperSwitches.COMPACTION);
-        r.mayPrepare = r.needsRouter || r.checkpointAllowed;
+        r.needsRouter = r.modules.router.on && r.taskProfile == null;
+        r.mayPrepare = r.needsRouter || r.modules.compaction.on;
 
         // Request behavior comes from the immutable TurnConfig, not mutable UI/session/profile state.
         provider.thinkingMode = turnConfig.thinkingMode;
@@ -215,7 +217,7 @@ final class TurnPipeline {
         r.trace().end(span, TurnTrace.OK, new JSONObject().put("contextMode", turnConfig.contextMode)
                 .put("effectiveContextMode", r.contextPolicy.effectiveLabel).put("harnessPreset", turnConfig.harnessPreset)
                 .put("webMode", turnConfig.webMode).put("subagentMode", r.adaptivePolicy.subagentMode)
-                .put("attachments", pendingMedia.length()));
+                .put("attachments", pendingMedia.length()).put("modules", r.modules.toJson()));
         env.emitView();
         if (cancelled(r)) return null;
         return r;
@@ -240,7 +242,7 @@ final class TurnPipeline {
     /** The session's prompt for this turn, with the user's global custom instruction (frozen in the turn config) last. */
     private CanonicalPrompt committedPrompt(TurnRun r, ChatDatabase.Session session) throws Exception {
         TurnConfig c = r.config;
-        CanonicalPrompt prompt = contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "");
+        CanonicalPrompt prompt = contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "", r.modules);
         return contexts.appendInstructionSuffix(prompt, c.contextTokens, c.inputTokens, c.maxOutputTokens, customInstructionSuffix(c.customInstruction));
     }
 
@@ -256,7 +258,7 @@ final class TurnPipeline {
         TurnConfig c = r.config;
         try {
             r.prompt = committedPrompt(r, r.session);
-            r.compactionPlan = r.checkpointAllowed ? contexts.compactionPlan(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
+            r.compactionPlan = r.modules.compaction.on ? contexts.compactionPlan(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
             r.needsCheckpoint = r.compactionPlan != null;
             r.preparing = r.needsRouter || r.needsCheckpoint;
         } catch (Exception contextError) {
@@ -279,13 +281,12 @@ final class TurnPipeline {
     private boolean prepareContext(TurnRun r) throws Exception {
         TurnConfig c = r.config;
         ChatDatabase.Session session = r.session;
-        if (!r.needsRouter) r.trace().skip(TurnTrace.ROUTE, !r.contextPolicy.routerEnabled ? "mode_off"
-                : !c.helperOn(HelperSwitches.ROUTER) ? HelperSwitches.USER_OFF : "task_profile_cached");
+        if (!r.needsRouter) r.trace().skip(TurnTrace.ROUTE, !r.modules.router.on ? r.modules.router.reason : "task_profile_cached");
         TurnTrace.Span stage = null;
         try {
             if (r.needsRouter) {
                 stage = r.trace().begin(TurnTrace.ROUTE);
-                TaskProfile routed = taskRouter.route(r.routeTransport, r.provider, r.key, session.model, r.prompt);
+                TaskProfile routed = taskRouter.route(r.routeTransport, r.provider, r.key, c.model, r.prompt);
                 // A failed call (error, timeout) is not an answer: nothing is stored and the next turn asks again.
                 // An unclear answer is one, and "general" is kept so the session is not classified every turn.
                 boolean callFailed = routed == null && r.control.usage.stageFailure(TurnTrace.ROUTE) != null;
@@ -296,7 +297,7 @@ final class TurnPipeline {
                     db.setTaskProfile(session.id, session.taskProfile);
                 }
                 r.prompt = committedPrompt(r, session);
-                r.compactionPlan = r.checkpointAllowed ? contexts.compactionPlan(session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
+                r.compactionPlan = r.modules.compaction.on ? contexts.compactionPlan(session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
                 r.needsCheckpoint = r.compactionPlan != null;
                 JSONObject routeDetail = new JSONObject().put("routed", routed != null).put("stored", r.taskProfile != null);
                 if (r.taskProfile != null) routeDetail.put("domain", r.taskProfile.domain).put("taskType", r.taskProfile.taskType)
@@ -304,11 +305,10 @@ final class TurnPipeline {
                 r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.ROUTE, routeDetail));
             }
             // Switched off, no new checkpoint is written; one written earlier stays in the context (already paid for).
-            if (!r.needsCheckpoint) r.trace().skip(TurnTrace.CHECKPOINT, r.checkpointAllowed ? "within_budget"
-                    : r.contextPolicy.checkpointEnabled ? HelperSwitches.USER_OFF : "mode_off");
+            if (!r.needsCheckpoint) r.trace().skip(TurnTrace.CHECKPOINT, r.modules.compaction.on ? "within_budget" : r.modules.compaction.reason);
             if (r.needsCheckpoint) {
                 stage = r.trace().begin(TurnTrace.CHECKPOINT);
-                ContextCheckpointService.Update update = checkpointService.update(r.checkpointTransport, r.provider, r.key, session.model, r.compactionPlan.baseline,
+                ContextCheckpointService.Update update = checkpointService.update(r.checkpointTransport, r.provider, r.key, c.model, r.compactionPlan.baseline,
                         ContextCheckpoint.fromStored(session.contextCheckpoint), session.checkpointCoveredItems);
                 if (update != null) {
                     session.contextCheckpoint = update.checkpoint.toJson().toString();
@@ -335,8 +335,8 @@ final class TurnPipeline {
         // Web is a product-level policy plane. First decide whether this user request needs external
         // information; only then choose the execution wire. Provider capability controls HOW Web runs,
         // never WHETHER a semantically fresh/current request deserves Web.
-        r.webFollowUp = webFollowUpContext(db.timeline(r.id));
-        boolean plannerOn = r.config.helperOn(HelperSwitches.WEB_PLAN);
+        r.webFollowUp = webFollowUpContext(SessionHistory.combined(db, r.session));
+        boolean plannerOn = r.modules.webPlanner.on;
         r.webPlanning = plannerOn && webOrchestrator.shouldRunPlanner(r.config.webMode, r.input, r.webFollowUp);
         if (r.webPlanning) {
             env.setWebStage(r.id, "web_planning");
@@ -370,7 +370,6 @@ final class TurnPipeline {
         ChatTurnOptions declaredHosted = new ChatTurnOptions(r.hostedCapabilities, ChatTurnOptions.WEB_ON);
         r.nativeSearch = declaredHosted.supports(ChatTurnOptions.WEB_SEARCH);
         r.nativeFetch = declaredHosted.supports(ChatTurnOptions.WEB_FETCH);
-        r.clientCalling = ClientToolRuntime.compatible(provider.protocol, c.clientToolCalling);
         // Auto prefers a reviewed provider-native search loop when explicitly declared. All other
         // deployments get host-managed retrieval as a guaranteed grounding baseline. Web=on also uses
         // the host path so "force Web" cannot silently become provider-side tool_choice=auto with no call.
@@ -384,21 +383,17 @@ final class TurnPipeline {
         }
         // Auto with a "no Web" plan: a deployment that declares client tool calling still gets the Web tools, so a
         // gap the planner missed can be filled by the answering model. Off never offers them; Minimal stays lean.
-        r.webOnDemand = !webPlan.useWeb && r.clientCalling && c.helperOn(HelperSwitches.WEB_TOOLS)
-                && ChatTurnOptions.WEB_AUTO.equals(ChatTurnOptions.normalizeWebMode(c.webMode))
-                && !ContextMode.MINIMAL.equals(r.contextPolicy.effectiveLabel);
+        r.webOnDemand = !webPlan.useWeb && r.modules.webTools.on;
         if (r.webOnDemand) {
             r.clientToolNames.add(ClientToolRuntime.WEB_SEARCH);
             r.clientToolNames.add(ClientToolRuntime.WEB_FETCH);
         }
-        if (r.clientCalling && HarnessPolicyResolver.SUBAGENT_AUTO.equals(r.adaptivePolicy.subagentMode) && c.helperOn(HelperSwitches.SUBAGENT)) {
-            r.clientToolNames.add(ClientToolRuntime.DELEGATE_SUBTASK);
-        }
+        if (r.modules.subagent.on) r.clientToolNames.add(ClientToolRuntime.DELEGATE_SUBTASK);
         // Earlier turns of this Chat that the prompt no longer carries word for word (dropped by the budget or
-        // summarized into the checkpoint) can be looked up again, verbatim.
-        r.recallOffered = r.clientCalling && c.helperOn(HelperSwitches.RECALL)
-                && !ContextMode.MINIMAL.equals(r.contextPolicy.effectiveLabel)
-                && (r.prompt.truncated || r.session.checkpointCoveredItems > 0);
+        // summarized into the checkpoint) can be looked up again, verbatim. Whether any are left out is known only
+        // once the prompt is final (tool schemas and Web evidence take room too), so its room is reserved here and
+        // settleRecall decides (spec C4, N3).
+        r.recallOffered = r.modules.recall.on && r.prompt.projectedMessages != null && r.prompt.projectedMessages.length() > 1;
         if (r.recallOffered) r.clientToolNames.add(ClientToolRuntime.HISTORY_RECALL);
 
         // Make the product decision explicit to the answering model. Tool schemas below advertise any
@@ -423,8 +418,7 @@ final class TurnPipeline {
 
         // Tool definitions are real model input. They are optional because host-managed Web guarantees
         // grounding for non-native deployments; dropping a client schema must never drop required Web.
-        int clientToolSchemaReserve = r.clientToolNames.isEmpty() ? 0
-                : new ContextBudgetManager().estimate(ClientToolRuntime.canonicalDefinitions(String.join(",", r.clientToolNames)).toString()) + 128;
+        int clientToolSchemaReserve = toolSchemaTokens(r.clientToolNames);
         boolean schemasDropped = false;
         if (clientToolSchemaReserve > 0) {
             try {
@@ -438,15 +432,43 @@ final class TurnPipeline {
                 if (r.webOnDemand) { dropOnDemandWeb(r); r.prompt = withoutGuidance; webGuidance = ""; }
             }
         }
-        r.clientToolCsv = String.join(",", r.clientToolNames);
         r.clientToolSchemaTokens = clientToolSchemaReserve;
         r.preWebPrompt = r.prompt;
-        r.webOptions = new ChatTurnOptions(r.hostedCapabilities, c.webMode,
-                c.clientToolCalling, r.clientToolCsv, new JSONArray(), new JSONArray(), r.providerHostedThisTurn);
+        applyToolList(r);
         r.trace().end(span, TurnTrace.OK, new JSONObject().put("webExecution", r.hostManagedWeb ? "host" : r.providerHostedThisTurn ? "provider" : webPlan.useWeb ? "client_tools" : "none")
                 .put("clientTools", r.clientToolCsv).put("schemaTokens", r.clientToolSchemaTokens).put("schemasDropped", schemasDropped)
                 .put("guidance", !webGuidance.isEmpty()).put("webOnDemand", r.webOnDemand).put("recall", r.recallOffered));
         return true;
+    }
+
+    private static int toolSchemaTokens(java.util.Collection<String> toolNames) {
+        return toolNames.isEmpty() ? 0
+                : new ContextBudgetManager().estimate(ClientToolRuntime.canonicalDefinitions(String.join(",", toolNames)).toString()) + 128;
+    }
+
+    private static void applyToolList(TurnRun r) {
+        TurnConfig c = r.config;
+        r.clientToolCsv = String.join(",", r.clientToolNames);
+        r.webOptions = new ChatTurnOptions(r.hostedCapabilities, c.webMode,
+                c.clientToolCalling, r.clientToolCsv, new JSONArray(), new JSONArray(), r.providerHostedThisTurn);
+    }
+
+    /**
+     * Spec C4, N3: history_recall stays offered only if the prompt as finally assembled leaves some of this Chat's
+     * history out, word for word: dropped by the budget (after tool schemas and Web evidence took their room) or
+     * stood in for by the summary. Otherwise it is withdrawn; the room reserved for its schema simply stays unused.
+     */
+    private void settleRecall(TurnRun r) throws Exception {
+        if (!r.recallOffered) return;
+        boolean summarized = ContextCheckpoint.fromStored(r.session.contextCheckpoint) != null && r.session.checkpointCoveredItems > 0;
+        r.recallOffered = r.prompt.truncated || summarized;
+        if (!r.recallOffered) {
+            r.clientToolNames.remove(ClientToolRuntime.HISTORY_RECALL);
+            r.clientToolSchemaTokens = toolSchemaTokens(r.clientToolNames);
+            applyToolList(r);
+        }
+        r.trace().annotate(TurnTrace.TOOLS, new JSONObject().put("recall", r.recallOffered)
+                .put("clientTools", r.clientToolCsv).put("schemaTokens", r.clientToolSchemaTokens));
     }
 
     static final int RECALL_HITS = 6, RECALL_HIT_CHARS = 1_500, RECALL_RESULT_CHARS = 6_000;
@@ -460,17 +482,11 @@ final class TurnPipeline {
         String q = query == null ? "" : query.trim();
         if (q.isEmpty()) throw new IllegalArgumentException("history_recall.query is required");
         if (q.length() > 400) q = q.substring(0, 400);
-        StringBuilder carried = new StringBuilder();
-        if (sent != null) for (int i = 0; i < sent.messages.length(); i++) {
-            JSONObject message = sent.messages.optJSONObject(i);
-            if (message != null) carried.append(message.optString("text", "")).append('\n');
-        }
-        String inPrompt = carried.toString();
         StringBuilder out = new StringBuilder();
         int found = 0;
         for (LocalKnowledgeStore.Hit hit : knowledge.searchSessionHistory(sessionId, q, RECALL_HITS * 3)) {
             if (found >= RECALL_HITS || out.length() >= RECALL_RESULT_CHARS) break;
-            if (hit.text == null || hit.text.trim().isEmpty() || inPrompt.contains(hit.text)) continue;
+            if (hit.text == null || hit.text.trim().isEmpty() || (sent != null && sent.carries(hit.text))) continue;
             String text = hit.text.length() > RECALL_HIT_CHARS ? hit.text.substring(0, RECALL_HIT_CHARS) + " […]" : hit.text;
             if (LocalKnowledgeStore.inherited(hit)) out.append("\n[before this branch, message ").append(hit.ordinal + 1);
             else out.append("\n[message #").append(hit.ordinal);
@@ -578,10 +594,10 @@ final class TurnPipeline {
      * and use it only when that re-check accepts it (otherwise it is kept as a rejected candidate).
      */
     void verify(TurnRun r, CanonicalPrompt mainPrompt, String candidate, String candidateReasoning, JSONArray candidateMedia,
-                LinkedHashMap<String, JSONObject> webSources, String webBackend, JSONArray providerContinuationItems, String webContext) {
+                LinkedHashMap<String, JSONObject> webSources, String webBackend, JSONArray providerContinuationItems, String webContext,
+                JSONArray toolEvidence) {
         String id = r.id;
         JSONObject seed = r.live;
-        ChatDatabase.Session session = r.session;
         String currentUserText = r.input;
         String finalText = candidate == null ? "" : candidate;
         String finalReasoning = candidateReasoning == null ? "" : candidateReasoning;
@@ -598,9 +614,9 @@ final class TurnPipeline {
         String repairCandidate = null;
         String calibrationKey = SmartVerifierCalibration.calibrationKey(r.config.deploymentFingerprint);
         JSONArray evidence = SmartVerifierService.evidence(currentUserText, mainPrompt, sourceArray(webSources), webContext,
-                currentCheckpoint(id), r.config.customInstruction);
+                currentCheckpoint(id), r.config.customInstruction, toolEvidence);
         JSONArray attempts = new JSONArray();
-        SmartVerifierService.Result verification = smartVerifier.verify(r.verifyTransport, r.provider, r.key, session,
+        SmartVerifierService.Result verification = smartVerifier.verify(r.verifyTransport, r.provider, r.key, r.config,
                 mainPrompt, currentUserText, finalText, evidence);
         if (r.control.isCancelled()) {
             finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "已停止生成"});
@@ -615,7 +631,7 @@ final class TurnPipeline {
             repairAttempted = true;
             setPostProcessingStage(r, "repairing");
             repairSpan = r.trace().begin(TurnTrace.REPAIR);
-            String repairedText = smartVerifier.repair(r.repairTransport, r.provider, r.key, session,
+            String repairedText = smartVerifier.repair(r.repairTransport, r.provider, r.key, r.config,
                     currentUserText, finalText, verification, evidence);
             if (r.control.isCancelled()) {
                 finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "已停止生成"});
@@ -623,7 +639,7 @@ final class TurnPipeline {
             }
             if (repairedText != null && !repairedText.trim().isEmpty()) {
                 setPostProcessingStage(r, "verifying");
-                SmartVerifierService.Result recheck = smartVerifier.verify(r.verifyTransport, r.provider, r.key, session,
+                SmartVerifierService.Result recheck = smartVerifier.verify(r.verifyTransport, r.provider, r.key, r.config,
                         mainPrompt, currentUserText, repairedText, evidence);
                 if (r.control.isCancelled()) {
                     finish(r, finalText, finalReasoning, candidateMedia, webSources, webBackend, new String[]{"cancelled", "已停止生成"});
@@ -786,10 +802,8 @@ final class TurnPipeline {
         } catch (Exception finalizeError) {
             // Runtime authority must never remain locked because a projection write failed.
             try { db.deleteTimelineItem(r.streamKey); } catch (Exception ignored) { }
-            try {
-                ChatDatabase.Session s = db.getSession(id);
-                if (s != null) { s.state = "failed"; s.updatedAt = Instant.now().toString(); db.saveSession(s); }
-            } catch (Exception ignored) { }
+            // Only the state: a whole-row save would put back what changed since (draft, title; spec R1, N7).
+            try { db.setSessionState(id, "failed"); } catch (Exception ignored) { }
             env.showMessage("回合收尾失败：" + safe(finalizeError));
         } finally {
             // The turn record is settled last: once it reads as finished, its reply text is already final.

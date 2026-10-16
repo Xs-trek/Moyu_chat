@@ -28,10 +28,12 @@ final class TurnRun {
     ContextMode.Policy contextPolicy;
     HarnessPolicyResolver.Policy adaptivePolicy;
     TaskProfile taskProfile;
-    boolean needsRouter, checkpointAllowed, mayPrepare, allowProviderContinuation;
+    /** Which modules may run this turn, decided once at accept (spec M4). */
+    TurnModules modules;
+    boolean needsRouter, mayPrepare, allowProviderContinuation;
     /** Client web tools offered although the Web plan said no (Auto, on demand); the model decides whether to search. */
     boolean webOnDemand;
-    /** history_recall is offered: older turns of this Chat are out of the prompt (dropped or summarized). */
+    /** history_recall is offered: older turns of this Chat are out of the final prompt (dropped or summarized); see TurnPipeline.settleRecall. */
     boolean recallOffered;
 
     JSONObject live;

@@ -696,6 +696,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
     }
 
+    /** See {@link #setTaskProfile}: the state and the update time, nothing else (the finalize fallback). */
+    public synchronized void setSessionState(String id, String state) {
+        ContentValues v = new ContentValues(); v.put("state", state == null ? "idle" : state);
+        v.put("updated_at", Instant.now().toString());
+        getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
+    }
+
     public synchronized JSONArray draftMedia(String id) {
         Session s = getSession(id); if (s == null || s.draftMedia == null || s.draftMedia.trim().isEmpty()) return new JSONArray();
         try { return new JSONArray(s.draftMedia); } catch (Exception ignored) { return new JSONArray(); }

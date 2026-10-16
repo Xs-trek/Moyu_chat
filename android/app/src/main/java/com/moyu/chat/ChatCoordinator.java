@@ -105,7 +105,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.delight = !"false".equals(db.setting("delight", "true"));
         this.mascot = new MascotSettings(db);
         this.showReasoning = "true".equals(db.setting("showReasoning", "false"));
-        this.crossChatMemoryEnabled = "true".equals(db.setting("crossChatMemoryEnabled", "false"));
+        this.crossChatMemoryEnabled = ContextBuilder.globalMemoryEnabled(db);
         this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
         this.notifyInBackground = !"false".equals(db.setting("notifyInBackground", "true"));
         this.customInstruction = db.setting("customInstruction", "");
@@ -175,7 +175,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "ui.delight.set": delight = p.optBoolean("enabled", true); db.putSetting("delight", delight ? "true" : "false"); break;
                 case "chat.reasoning.visibility.set": showReasoning = p.optBoolean("show", false); db.putSetting("showReasoning", showReasoning ? "true" : "false"); break;
                 case "inspector.capture.set": wireCapture = p.optBoolean("enabled", true); db.putSetting("wireCapture", wireCapture ? "true" : "false"); break;
-                case "memory.global.set": crossChatMemoryEnabled = p.optBoolean("enabled", false); db.putSetting("crossChatMemoryEnabled", crossChatMemoryEnabled ? "true" : "false"); break;
+                case "memory.global.set": crossChatMemoryEnabled = p.optBoolean("enabled", false); db.putSetting(ContextBuilder.MEMORY_SETTING, crossChatMemoryEnabled ? "true" : "false"); break;
                 case "notify.background.set": notifyInBackground = p.optBoolean("enabled", true); db.putSetting("notifyInBackground", notifyInBackground ? "true" : "false"); if (notifyInBackground) host.requestNotificationPermission(false); break;
                 case "instruction.global.set": {
                     String text = p.optString("text", "").trim();
