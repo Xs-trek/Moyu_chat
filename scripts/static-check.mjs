@@ -533,6 +533,10 @@ if (!/synchronized \(db\) \{\s*ChatDatabase\.Route current = db\.getRoute\(route
   fail('account checks must re-check the endpoint and write under the database lock');
 if (!bridge.includes("'model.probe': 80000") || !bridge.includes('timeoutMs = INTENT_TIMEOUTS[type] || 15000') || !coordinatorOnly.includes('titleWorker.execute(() -> {'))
   fail('the page must wait longer than Native for network checks, and naming must not queue behind them');
+// A check is refused, never queued, when every check thread is busy: the page timeout then covers the whole wait.
+if (!coordinatorOnly.includes('if (runningChecks.incrementAndGet() > MAX_RUNNING_CHECKS) {') || !coordinatorOnly.includes('Executors.newFixedThreadPool(MAX_RUNNING_CHECKS)')
+    || !coordinatorOnly.includes('finally { runningChecks.decrementAndGet(); }'))
+  fail('account checks beyond the running limit must be refused at once, not queued past the page timeout');
 // Orchestration semantics: a repair replaces the answer only after its re-check accepts it; Web tools on demand only in
 // Auto (never Off) and only on declared client tool calling; history_recall reads this Chat only; the Router starts off.
 if (!turnPipeline.includes('SmartVerifierCalibration.ACTION_ACCEPT.equals(recheckDecision.action)') || !turnPipeline.includes('meta.put("repairRejected", true).put("repairCandidateText", repairCandidate)'))
@@ -541,6 +545,12 @@ if (!turnPipeline.includes('ChatTurnOptions.WEB_AUTO.equals(ChatTurnOptions.norm
   fail('on-demand Web tools are only for Auto on a deployment that declares client tool calling');
 if (!knowledgeStore.includes('List<Hit> searchSessionHistory(') || !/searchSessionHistory[\s\S]*?search\("scope_id=\?", new String\[\]\{chatScope\(sessionId\)\}/.test(knowledgeStore) || !turnPipeline.includes('inPrompt.contains(hit.text)'))
   fail('history_recall must search only this Chat and skip what the prompt already carries');
+// A branch also searches the one snapshot it started from (which holds its whole ancestor chain), never another scope.
+if (!knowledgeStore.includes('search("scope_id IN (?,?)", new String[]{chatScope(sessionId), snapshotScope(origin)}') || !turnPipeline.includes('LocalKnowledgeStore.inherited(hit)'))
+  fail('history_recall in a branch must reach the history it was branched from, and only that');
+// "Already in the prompt" means the prompt of the round that issued the call; later rounds carry less history.
+if (!coordinator.includes('final CanonicalPrompt roundPrompt = activeRoundPrompt.get();') || !coordinator.includes('p.recallHistory(id, roundPrompt, query)'))
+  fail('history_recall must judge visibility by the round that asked, not by the first round');
 if (!clientTools.includes('MAX_RECALLS_PER_TURN = 3') || !clientTools.includes('history_recall limit is')) fail('history_recall must be bounded per turn');
 if (!helperSwitches.includes('if (appliedRevision < 2) out.add(ROUTER);') || !coordinatorOnly.includes('HelperSwitches.withDefaults(storedOff, defaultsApplied)')) fail('the Router must start off once per install, keeping a later choice to turn it on');
 // The app icon is a vector adaptive icon with a themed (monochrome) layer; minSdk 26 needs no bitmap fallback.

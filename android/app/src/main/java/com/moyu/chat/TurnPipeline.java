@@ -452,8 +452,9 @@ final class TurnPipeline {
     static final int RECALL_HITS = 6, RECALL_HIT_CHARS = 1_500, RECALL_RESULT_CHARS = 6_000;
 
     /**
-     * history_recall: verbatim excerpts of this Chat that {@code sent} (the prompt the model is answering from)
-     * does not already carry. An excerpt is a chunk of one message, so a message still in the prompt contains it.
+     * history_recall: verbatim excerpts of this Chat (a branch includes the history it was branched from) that
+     * {@code sent} does not already carry. {@code sent} is the prompt of the round that issued the call, which
+     * shrinks as tool results take budget. An excerpt is a chunk of one message, so a message still in the prompt contains it.
      */
     String recallHistory(String sessionId, CanonicalPrompt sent, String query) {
         String q = query == null ? "" : query.trim();
@@ -471,7 +472,9 @@ final class TurnPipeline {
             if (found >= RECALL_HITS || out.length() >= RECALL_RESULT_CHARS) break;
             if (hit.text == null || hit.text.trim().isEmpty() || inPrompt.contains(hit.text)) continue;
             String text = hit.text.length() > RECALL_HIT_CHARS ? hit.text.substring(0, RECALL_HIT_CHARS) + " […]" : hit.text;
-            out.append("\n[message #").append(hit.ordinal).append(", ").append(hit.role).append("]\n").append(text).append('\n');
+            if (LocalKnowledgeStore.inherited(hit)) out.append("\n[before this branch, message ").append(hit.ordinal + 1);
+            else out.append("\n[message #").append(hit.ordinal);
+            out.append(", ").append(hit.role).append("]\n").append(text).append('\n');
             found++;
         }
         if (found == 0) return "No earlier message of this conversation outside your current context matches \"" + q + "\".";

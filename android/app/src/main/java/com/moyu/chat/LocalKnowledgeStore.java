@@ -88,6 +88,8 @@ final class LocalKnowledgeStore {
     /**
      * This Chat's own history (history_recall): its index is brought up to date first, so the result can include
      * anything up to the current turn. The caller drops what its prompt already carries. Separate from user memory.
+     * A branch also searches the snapshot it started from: that snapshot already holds the whole ancestor chain
+     * (SnapshotService copies the parent's snapshot in), so one extra scope covers it without reaching other Chats.
      */
     List<Hit> searchSessionHistory(String sessionId, String query, int limit) {
         if (sessionId == null || sessionId.trim().isEmpty() || limit <= 0) return new ArrayList<>();
@@ -99,7 +101,13 @@ final class LocalKnowledgeStore {
             }
             ChatDatabase.Session session = db.getSession(sessionId);
             String title = session == null ? "" : session.title;
-            return search("scope_id=?", new String[]{chatScope(sessionId)}, query, limit, scope -> new String[]{sessionId, title});
+            String origin = session == null ? null : session.originSnapshotId;
+            if (origin == null || origin.trim().isEmpty()) {
+                return search("scope_id=?", new String[]{chatScope(sessionId)}, query, limit, scope -> new String[]{sessionId, title});
+            }
+            ensureSnapshotIndexed(origin);
+            return search("scope_id IN (?,?)", new String[]{chatScope(sessionId), snapshotScope(origin)}, query, limit,
+                    scope -> new String[]{scope.startsWith("snapshot:") ? origin : sessionId, title});
         } catch (Exception ignored) {
             return new ArrayList<>(); // a broken index is a failed lookup, not a failed turn
         }
@@ -237,5 +245,7 @@ final class LocalKnowledgeStore {
     }
 
     static String snapshotScope(String snapshotId) { return "snapshot:" + snapshotId; }
+    /** A hit from the branch-origin snapshot: its ordinal is the 0-based snapshot position, not a localSeq. */
+    static boolean inherited(Hit hit) { return hit != null && hit.scopeId != null && hit.scopeId.startsWith("snapshot:"); }
     static String chatScope(String sessionId) { return "chat:" + (sessionId == null ? "" : sessionId); }
 }

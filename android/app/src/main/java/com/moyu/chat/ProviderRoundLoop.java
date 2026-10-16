@@ -418,13 +418,15 @@ final class ProviderRoundLoop {
                 return;
             }
             final int recallsLeft = ClientToolRuntime.MAX_RECALLS_PER_TURN - recallCalls; // read on the authority thread
+            // What the model saw when it asked: later rounds carry less history once tool results take budget.
+            final CanonicalPrompt roundPrompt = activeRoundPrompt.get();
             try {
                 env.preparation().execute(() -> {
                     turnControl.bindCurrentThread();
                     try {
                         ClientToolRuntime.BatchResult batch = ClientToolRuntime.executeBatch(batchCalls, batchNumber, r.clientToolCsv,
                                 env.clientTools(), p.webService, p.focusedSubagent, r.subagentTransport, r.provider, r.key, r.config.model,
-                                r.config.reasoningEffort, turnControl, query -> p.recallHistory(id, mainPrompt, query),
+                                r.config.reasoningEffort, turnControl, query -> p.recallHistory(id, roundPrompt, query),
                                 recallsLeft);
                         env.authority().execute(() -> applyToolBatch(batch, batchNumber));
                     } finally { turnControl.clearCurrentThread(); }

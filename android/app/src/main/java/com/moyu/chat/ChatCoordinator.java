@@ -30,9 +30,11 @@ final class ChatCoordinator implements AutoCloseable {
     private final ScheduledExecutorService streamProjectionScheduler = Executors.newSingleThreadScheduledExecutor();
     // Blocking Router/Checkpoint/Web preparation must never occupy the UI/intent authority queue.
     private final ExecutorService preparationWorker = Executors.newFixedThreadPool(2);
-    /** Network checks the user starts on the account page (key, model list, balance, connection test). */
     /** Account checks the user starts (key, model list, balance, probe); the front end allows one per target at a time. */
-    private final ExecutorService guardWorker = Executors.newFixedThreadPool(3);
+    static final int MAX_RUNNING_CHECKS = 3;
+    private final ExecutorService guardWorker = Executors.newFixedThreadPool(MAX_RUNNING_CHECKS);
+    /** Checks started and not yet finished; never more than the pool has threads, so no check waits in a queue. */
+    private final java.util.concurrent.atomic.AtomicInteger runningChecks = new java.util.concurrent.atomic.AtomicInteger();
     /** Session naming, kept off guardWorker so a slow probe never delays a title and a title never queues a check. */
     private final ExecutorService titleWorker = Executors.newSingleThreadExecutor();
     // Client tools may run independently; the hard subagent fan-out is four and no child may recurse.
@@ -898,15 +900,32 @@ final class ChatCoordinator implements AutoCloseable {
 
     private interface Check { JSONObject run() throws Exception; }
 
-    /** Runs a network check off the intent worker; the result (and a fresh view) come back on the worker. */
+    /**
+     * Runs a network check off the intent worker; the result (and a fresh view) come back on the worker.
+     * When every check thread is busy the request is refused at once instead of queued: a queued check could
+     * start after the page has stopped waiting, so each check's deadline is only its own network timeout.
+     */
     private void checkAsync(String requestId, Check check) {
-        guardWorker.execute(() -> {
-            JSONObject data = null; String error = null;
-            try { data = check.run(); } catch (Exception failure) { error = safe(failure); }
-            JSONObject done = data; String failed = error;
-            worker.execute(() -> { emitView(); result(requestId, failed == null, failed, done); });
-        });
+        if (runningChecks.incrementAndGet() > MAX_RUNNING_CHECKS) {
+            runningChecks.decrementAndGet();
+            result(requestId, false, CHECKS_BUSY, null);
+            return;
+        }
+        try {
+            guardWorker.execute(() -> {
+                JSONObject data = null; String error = null;
+                try { data = check.run(); } catch (Exception failure) { error = safe(failure); }
+                finally { runningChecks.decrementAndGet(); }
+                JSONObject done = data; String failed = error;
+                worker.execute(() -> { emitView(); result(requestId, failed == null, failed, done); });
+            });
+        } catch (RuntimeException rejected) {
+            runningChecks.decrementAndGet();
+            throw rejected;
+        }
     }
+
+    static final String CHECKS_BUSY = "已有 " + MAX_RUNNING_CHECKS + " 项检查在进行，请稍后再试";
 
     /** Rollback rewinds the current local session; branching is a separate explicit user action. */
     private void rollbackMessageInPlace(String sessionId, int localSeq) throws Exception {

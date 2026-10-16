@@ -1894,6 +1894,58 @@ public class ChatCoordinatorE2eTest {
         }
     }
 
+    @Test public void historyRecallJudgesWhatIsVisibleByTheRoundThatAsked() throws Exception {
+        List<String> rounds = Collections.synchronizedList(new ArrayList<>());
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                if (!body.contains("\"history_recall\"")) return completion("Codewords", 5, 1); // the title call
+                rounds.add(body);
+                int toolResults = body.split("\"role\":\"tool\"", -1).length - 1;
+                String query = toolResults == 0 ? "old codeword" : toolResults == 1 ? "backup codeword ORCHID" : null;
+                if (query == null) return completion("4471 and ORCHID-8812.", 11, 3);
+                return sse("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_" + toolResults + "\",\"type\":\"function\",\"function\":{\"name\":\"history_recall\",\"arguments\":\"{\\\"query\\\":\\\"" + query + "\\\"}\"}}]}}]}\n\n"
+                        + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":1}}\n\n");
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
+        app.database().saveModelProfile(profile);
+        post("helper.switch.set", new JSONObject().put("helper", "compaction").put("enabled", false));
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.STANDARD).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+
+        StringBuilder old = new StringBuilder("The old codeword is 4471.\n");
+        for (int i = 0; i < 120; i++) old.append("Old codeword note ").append(i).append(": keep it in the blue folder.\n");
+        StringBuilder backup = new StringBuilder("The backup codeword is ORCHID-8812.\n");
+        for (int i = 0; i < 60; i++) backup.append("Filler sentence number ").append(i).append(" about the garden fence.\n");
+        String now = java.time.Instant.now().toString();
+        String[][] seeded = {{"user", old.toString()}, {"assistant", "Noted."}, {"user", backup.toString()}, {"assistant", "Noted too."}};
+        for (int i = 0; i < seeded.length; i++) {
+            app.database().appendTimeline(sessionId, "seed:" + i, new JSONObject().put("kind", "message")
+                    .put("role", seeded[i][0]).put("text", seeded[i][1]).put("createdAt", now));
+        }
+        // The first exchange was summarized earlier; the second is still in the prompt word for word.
+        app.database().setContextCheckpoint(sessionId, new JSONObject().put("summary", "The user shared an old codeword.").toString(), 2);
+        ChatDatabase.Session constrained = app.database().getSession(sessionId);
+        constrained.contextTokens = RECALL_ROUND_CONTEXT_TOKENS; constrained.inputTokens = 0; constrained.maxOutputTokens = 1_024;
+        app.database().saveSession(constrained);
+
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Which codewords did I give you?"));
+        await("turn settles", () -> !"running".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() >= 6);
+        assertEquals("completed", app.database().getSession(sessionId).state);
+        assertEquals(3, rounds.size());
+        assertTrue("round 1 still carries the backup message", rounds.get(0).contains("ORCHID-8812"));
+        assertFalse("the first recall result pushed it out of round 2", rounds.get(1).contains("ORCHID-8812"));
+        assertTrue("so the second recall returns it", rounds.get(2).contains("The backup codeword is ORCHID-8812."));
+    }
+
+    /** Fits instructions, tool schemas and the backup exchange, but not those plus a full first recall result. */
+    private static final int RECALL_ROUND_CONTEXT_TOKENS = 5_000;
+
     @Test public void standardSubagentToolLoopReturnsOneFinalParentAnswerAndAggregatesChildUsage() throws Exception {
         AtomicInteger parentRounds = new AtomicInteger();
         List<String> requestBodies = Collections.synchronizedList(new ArrayList<>());
@@ -2134,6 +2186,24 @@ public class ChatCoordinatorE2eTest {
                     && provider.optJSONArray("models").optJSONObject(0).optBoolean("listed");
         });
         assertFalse("no key in any view", latestView().toString().contains(SECRET));
+    }
+
+    @Test public void aCheckBeyondTheRunningLimitIsRefusedAtOnceInsteadOfQueued() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                return new MockResponse().setBody("{\"data\":[{\"id\":\"mock-model\"}]}").setBodyDelay(2, TimeUnit.SECONDS);
+            }
+        });
+        List<String> running = new ArrayList<>();
+        for (int i = 0; i < ChatCoordinator.MAX_RUNNING_CHECKS; i++) running.add(post("provider.key.verify", new JSONObject().put("providerId", "mock-provider")));
+        long asked = System.nanoTime();
+        JSONObject refused = awaitResult(post("provider.key.verify", new JSONObject().put("providerId", "mock-provider")));
+        assertFalse(refused.optBoolean("ok"));
+        assertEquals(ChatCoordinator.CHECKS_BUSY, refused.getJSONObject("error").getString("summary"));
+        assertTrue("refused without waiting for a running check", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - asked) < 1_500);
+        for (String id : running) assertTrue(awaitResult(id).optBoolean("ok"));
+        assertTrue("a slot frees once a check ends", awaitResult(post("provider.key.verify", new JSONObject().put("providerId", "mock-provider"))).optBoolean("ok"));
     }
 
     @Test public void aRefusedKeyIsInvalidAndARedirectIsNeverFollowed() throws Exception {

@@ -152,6 +152,43 @@ public class LocalKnowledgeStoreTest {
         assertTrue(pipeline.recallHistory(current.id, sent, "quaternion").startsWith("No earlier message"));
     }
 
+    @Test public void historyRecallInABranchReachesItsInheritedHistoryButNoOtherChat() throws Exception {
+        ChatDatabase db = app.database();
+        ChatDatabase.ModelProfile profile = profile(db);
+        SnapshotService snapshots = new SnapshotService(db);
+        ChatDatabase.Session root = db.createSession(profile, "root", null, null, ReasoningPolicy.DEFAULT);
+        db.appendTimeline(root.id, "u1", message("user", "Our deploy key fingerprint ends with 7f:3a:c1."));
+        db.appendTimeline(root.id, "a1", message("assistant", "Got it, fingerprint 7f:3a:c1."));
+        ChatDatabase.Session child = db.createSession(profile, "child", snapshots.createLocal(root.id, null).id, root.id, ReasoningPolicy.DEFAULT);
+        db.appendTimeline(child.id, "u2", message("user", "The release branch is called hotfix-maple."));
+        db.appendTimeline(child.id, "a2", message("assistant", "Release branch hotfix-maple noted."));
+        // A branch of the branch: its snapshot copies the child's snapshot in, so the root's message is still inherited.
+        ChatDatabase.Session grandchild = db.createSession(profile, "grandchild", snapshots.createLocal(child.id, null).id, child.id, ReasoningPolicy.DEFAULT);
+        db.appendTimeline(grandchild.id, "u3", message("user", "Which checks still apply?"));
+
+        ChatDatabase.Session stranger = db.createSession(profile, "stranger", null, null, ReasoningPolicy.DEFAULT);
+        db.appendTimeline(stranger.id, "s1", message("user", "Unrelated deploy key fingerprint 99:00:aa for another project."));
+        ChatDatabase.Session strangerBranch = db.createSession(profile, "stranger-branch", snapshots.createLocal(stranger.id, null).id, stranger.id, ReasoningPolicy.DEFAULT);
+        assertNotNull(strangerBranch);
+
+        LocalKnowledgeStore store = new LocalKnowledgeStore(db);
+        List<LocalKnowledgeStore.Hit> hits = store.searchSessionHistory(grandchild.id, "deploy key fingerprint", 6);
+        assertFalse("inherited history is searchable", hits.isEmpty());
+        for (LocalKnowledgeStore.Hit hit : hits) {
+            assertFalse("never another Chat or its snapshot", hit.text.contains("99:00:aa"));
+        }
+
+        TurnPipeline pipeline = new TurnPipeline(null, db, null, null, null);
+        JSONArray carried = new JSONArray().put(new JSONObject().put("role", "user").put("text", "Which checks still apply?"));
+        CanonicalPrompt sent = new CanonicalPrompt("", carried, true, 0, 0, carried.length());
+        String recalled = pipeline.recallHistory(grandchild.id, sent, "deploy key fingerprint");
+        assertTrue(recalled.contains("7f:3a:c1"));
+        assertTrue("an inherited excerpt is labelled by its place before the branch", recalled.contains("[before this branch, message 1, user]"));
+        assertFalse(recalled.contains("99:00:aa"));
+        assertTrue(pipeline.recallHistory(grandchild.id, sent, "hotfix maple").contains("hotfix-maple"));
+        assertTrue("an unbranched Chat still sees only itself", pipeline.recallHistory(root.id, sent, "hotfix maple").startsWith("No earlier message"));
+    }
+
     @Test public void queryTermsKeepWordsAndBigramsAndChunksBreakNaturally() {
         List<String> terms = KnowledgeLexicon.queryTerms("DMA 中断所有权 猫");
         assertTrue(terms.contains("dma"));
