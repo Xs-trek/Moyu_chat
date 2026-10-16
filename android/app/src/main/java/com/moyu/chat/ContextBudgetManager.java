@@ -11,8 +11,10 @@ import java.util.Collections;
 final class ContextBudgetManager {
     static final int DEFAULT_CONTEXT_TOKENS = 128_000;
     static final int DEFAULT_OUTPUT_TOKENS = 16_384;
-    static final int PROACTIVE_COMPACT_TRIGGER_PERCENT = 50;
-    static final int POST_COMPACT_TARGET_PERCENT = 30;
+    /** Spec C2: earlier tool results are cleared once the prompt with all of them passes this share of the input window. */
+    static final int TOOL_CLEAR_PERCENT = 50;
+    /** Spec C3: after a turn, compaction starts in the background once the next request would pass this share. */
+    static final int COMPACT_AFTER_TURN_PERCENT = 75;
     private static final int MAX_SAFETY_TOKENS = 1_024;
     private static final int MIN_INPUT_BUDGET = 512;
     private static final int MESSAGE_OVERHEAD_TOKENS = 12;
@@ -50,33 +52,6 @@ final class ContextBudgetManager {
         int budget = full - Math.max(0, reserveTokens);
         if (budget < MIN_INPUT_BUDGET) throw new IllegalArgumentException("tool/provider history leaves no usable input window");
         return selectWithinBudget(instructions, chronological, budget);
-    }
-
-    /**
-     * Select against an approximate percentage of the effective input window. The target is soft:
-     * the newest complete user-led turn is mandatory and may exceed the percentage as long as it
-     * still fits the real input window. Compaction must never reject an otherwise valid current turn.
-     */
-    Result selectPercent(String instructions, JSONArray chronological, int contextTokens, int inputTokens,
-                         int outputTokens, int percent) {
-        int full = effectiveInputBudget(contextTokens, inputTokens, outputTokens);
-        int bounded = Math.max(1, Math.min(100, percent));
-        int target = Math.max(MIN_INPUT_BUDGET, (int) Math.floor(full * (bounded / 100.0d)));
-        int mandatory = minimumLatestTurnBudget(instructions, chronological);
-        int softTarget = Math.min(full, Math.max(target, mandatory));
-        return selectWithinBudget(instructions, chronological, softTarget);
-    }
-
-    private int minimumLatestTurnBudget(String instructions, JSONArray chronological) {
-        int required = estimate(instructions) + MESSAGE_OVERHEAD_TOKENS;
-        ArrayList<ArrayList<JSONObject>> groups = groupTurns(chronological);
-        for (int i = groups.size() - 1; i >= 0; i--) {
-            ArrayList<JSONObject> group = groups.get(i);
-            if (group.isEmpty() || !"user".equals(group.get(0).optString("role"))) continue;
-            for (JSONObject item : group) required += messageCost(item);
-            break;
-        }
-        return required;
     }
 
     /** True when the supplied raw active context has crossed a percentage of the usable input window. */
@@ -162,10 +137,11 @@ final class ContextBudgetManager {
 
     private int messageCost(JSONObject item) {
         return estimate(item.optString("text", "")) + estimateMedia(item.optJSONArray("attachments"))
-                + estimateProviderContinuation(item.optJSONObject("_providerContinuation")) + MESSAGE_OVERHEAD_TOKENS;
+                + estimateProviderContinuation(item.optJSONObject("_providerContinuation"))
+                + ToolHistory.estimateTokens(ToolHistory.of(item), this) + MESSAGE_OVERHEAD_TOKENS;
     }
 
-    /** Opaque replay state is real provider input and must participate in 50%/30% context decisions. */
+    /** Opaque replay state is real provider input and counts toward every budget decision. */
     private int estimateProviderContinuation(JSONObject state) {
         if (state == null) return 0;
         JSONArray items = state.optJSONArray("items");

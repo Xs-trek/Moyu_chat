@@ -41,8 +41,12 @@ final class TurnRun {
     long requestStartedNanos;
 
     CanonicalPrompt prompt;
-    ContextBuilder.CompactionPlan compactionPlan;
+    /** Compaction this turn waits for or runs before sending (spec C3): the prompt drops history the summary would cover. */
     boolean needsCheckpoint, preparing;
+    /** This turn's client tool calls and results, stored on its answer (spec T3). */
+    JSONArray toolCalls = new JSONArray();
+    /** The last main call's reported input (with cache) and output tokens; 0 when the provider reported none (spec C3). */
+    int lastCallInputTokens, lastCallOutputTokens;
 
     MoyuWebService.FollowUpContext webFollowUp;
     boolean webPlanning;

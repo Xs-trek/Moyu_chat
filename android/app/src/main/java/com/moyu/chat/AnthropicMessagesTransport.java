@@ -116,7 +116,7 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
             String url = ProviderEndpoint.requestUrl(provider.baseUrl, provider.protocol);
             RouteDialect dialect = provider.dialect == null ? RouteDialect.defaults(PROTOCOL) : provider.dialect;
             ChatTurnOptions turnOptions = options == null ? ChatTurnOptions.NONE : options;
-            JSONObject body = body(model, prompt, provider.maxOutputTokens);
+            JSONObject body = body(model, prompt, provider.maxOutputTokens, turnOptions.replayToolsNatively);
             applyHostedTools(body, turnOptions);
             applyClientTools(body, turnOptions);
             ReasoningPolicy.apply(body, provider, reasoningEffort);
@@ -137,13 +137,19 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
      * truncation or an imported snapshot edge; it is dropped, never promoted into the system prefix,
      * because conversation history is context, not application authority.
      */
-    private static JSONObject body(String model, CanonicalPrompt prompt, int maxOutputTokens) throws Exception {
+    /** {@code nativeTools}: earlier turns' tool calls as tool_use / tool_result blocks, else as text (spec T3). */
+    private static JSONObject body(String model, CanonicalPrompt prompt, int maxOutputTokens, boolean nativeTools) throws Exception {
         JSONArray messages = new JSONArray();
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
             if (messages.length() == 0 && !"user".equals(role)) continue; // drop the leading assistant run
             JSONArray attachments = item.optJSONArray("attachments");
+            JSONArray calls = "assistant".equals(role) ? ToolHistory.of(item) : new JSONArray();
+            if (calls.length() > 0) {
+                if (nativeTools) appendToolRounds(messages, calls, null);
+                else item = new JSONObject(item.toString()).put("text", ToolHistory.asText(calls) + item.optString("text", ""));
+            }
             if ("user".equals(role) && attachments != null && attachments.length() > 0) {
                 JSONArray content = new JSONArray(); String text = item.optString("text", "");
                 if (!text.isEmpty()) content.put(new JSONObject().put("type", "text").put("text", text));
@@ -223,13 +229,12 @@ final class AnthropicMessagesTransport implements ChatTransport, AutoCloseable {
         if ((history == null || history.length() == 0)
                 && (providerRoundHistory == null || providerRoundHistory.length() == 0)) return;
         JSONArray messages = body.optJSONArray("messages"); if (messages == null) return;
-        java.util.TreeMap<Integer, JSONArray> toolRounds = new java.util.TreeMap<>();
-        if (history != null) for (int i = 0; i < history.length(); i++) {
-            JSONObject entry = history.optJSONObject(i); if (entry == null) continue;
-            int round = Math.max(0, entry.optInt("round", 0));
-            JSONArray group = toolRounds.get(round); if (group == null) { group = new JSONArray(); toolRounds.put(round, group); }
-            group.put(entry);
-        }
+        appendToolRounds(messages, history, providerRoundHistory);
+    }
+
+    /** Each round as an assistant message of tool_use blocks followed by a user message of their tool_result blocks. */
+    private static void appendToolRounds(JSONArray messages, JSONArray history, JSONArray providerRoundHistory) throws Exception {
+        java.util.TreeMap<Integer, JSONArray> toolRounds = ToolHistory.rounds(history);
         java.util.TreeMap<Integer, JSONArray> providerRounds = new java.util.TreeMap<>();
         if (providerRoundHistory != null) for (int i = 0; i < providerRoundHistory.length(); i++) {
             JSONObject entry = providerRoundHistory.optJSONObject(i); if (entry == null) continue;

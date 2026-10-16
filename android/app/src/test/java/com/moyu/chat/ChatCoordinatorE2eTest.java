@@ -1870,7 +1870,6 @@ public class ChatCoordinatorE2eTest {
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
         profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
         app.database().saveModelProfile(profile);
-        post("helper.switch.set", new JSONObject().put("helper", "compaction").put("enabled", false));
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
                 .put("contextMode", ContextMode.STANDARD).put("webMode", ChatTurnOptions.WEB_OFF));
         await("session created", () -> activeSession(latestView()) != null);
@@ -1928,8 +1927,7 @@ public class ChatCoordinatorE2eTest {
             app.database().appendTimeline(sessionId, "seed:" + i, new JSONObject().put("kind", "message")
                     .put("role", seeded[i][0]).put("text", seeded[i][1]).put("createdAt", now));
         }
-        // The first exchange was summarized earlier; the second is still in the prompt word for word.
-        app.database().setContextCheckpoint(sessionId, new JSONObject().put("summary", "The user shared an old codeword.").toString(), 2);
+        // Compaction is off, so only the small window keeps the first exchange out of the prompt.
         ChatDatabase.Session constrained = app.database().getSession(sessionId);
         constrained.contextTokens = RECALL_ROUND_CONTEXT_TOKENS; constrained.inputTokens = 0; constrained.maxOutputTokens = 1_024;
         app.database().saveSession(constrained);

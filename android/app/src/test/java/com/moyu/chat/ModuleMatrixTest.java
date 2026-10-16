@@ -29,14 +29,13 @@ import java.util.function.BooleanSupplier;
  * one), and leaves nothing of its own in the prompt. Each test first shows the module does run when allowed, so
  * "no call" is not vacuous.
  *
- * Not covered yet, by decision: compaction switched off still uses a summary written earlier (D10, phase 3); the
- * Web planner also runs in Minimal (D5, phase 4); branch retrieval is removed (D6, phase 3).
+ * Not covered yet, by decision: the Web planner also runs in Minimal (D5, phase 4). Branch retrieval is removed (D6).
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
 public class ModuleMatrixTest {
     private static final String SECRET = "sk-matrix-secret-1";
-    private static final String ROUTER = "Classify the conversation", CHECKPOINT = "Merge older conversation state",
+    private static final String ROUTER = "Classify the conversation", CHECKPOINT = "You write the running summary of a long chat",
             VERIFIER = "You are a verification component", PLANNER = "Web retrieval planner";
 
     private MockWebServer server;
@@ -56,7 +55,7 @@ public class ModuleMatrixTest {
                 String body = request.getBody().clone().readUtf8();
                 bodies.add(body);
                 if (body.contains(ROUTER)) return completion("{\"domain\":\"general\",\"taskType\":\"answer\",\"depth\":\"standard\",\"responseMode\":\"direct\",\"contextPolicy\":\"recent\",\"modules\":[],\"confidence\":0.9}");
-                if (body.contains(CHECKPOINT)) return completion("{\"summary\":\"Earlier talk about tea.\",\"constraints\":[],\"decisions\":[],\"openQuestions\":[],\"criticalRefs\":[]}");
+                if (body.contains(CHECKPOINT)) return completion("Earlier talk about tea.");
                 if (body.contains(PLANNER)) return completion("{\"useWeb\":false,\"intent\":\"none\",\"queries\":[],\"freshness\":\"auto\",\"category\":\"\",\"startPublishedDate\":\"\",\"endPublishedDate\":\"\",\"fetchTopResults\":false}");
                 if (body.contains(VERIFIER)) return completion("not json");
                 return completion("an answer");
@@ -101,21 +100,24 @@ public class ModuleMatrixTest {
     @Test public void compaction() throws Exception {
         configure(false, HarnessProfile.BALANCED);
         String standard = pressured(ContextMode.STANDARD);
-        int mark = send(standard, longText("Second", 600));
+        int mark = send(standard, longText("Third", 600));
         assertEquals("allowed: it runs", 1, calls(CHECKPOINT, mark));
+        assertTrue("and its summary opens the prompt", mainBody(mark, "Third").contains("Earlier talk about tea."));
 
         String minimal = pressured(ContextMode.MINIMAL);
-        mark = send(minimal, longText("Second", 600));
+        mark = send(minimal, longText("Third", 600));
         assertNotRun(minimal, mark, CHECKPOINT, "compaction", TurnModules.MODE_OFF, TurnTrace.CHECKPOINT);
-        assertFalse(mainBody(mark, "Second").contains("historical context checkpoint"));
+        assertFalse(mainBody(mark, "Third").contains(SUMMARY_PREFIX));
 
         setSwitch(HelperSwitches.COMPACTION, false);
         String off = pressured(ContextMode.STANDARD);
-        mark = send(off, longText("Second", 600));
+        // Spec D10: a summary written while compaction was on is not used while it is off, and is kept for later.
+        app.database().setContextCheckpoint(off, new ContextCheckpoint("An older summary about tea.", "").toJson().toString(), 2);
+        mark = send(off, longText("Third", 600));
         assertNotRun(off, mark, CHECKPOINT, "compaction", HelperSwitches.USER_OFF, TurnTrace.CHECKPOINT);
-        // Its product: no summary was written, so none is in the prompt. (A summary written before the switch
-        // was turned off is still used: D10, phase 3.)
-        assertFalse(mainBody(mark, "Second").contains("historical context checkpoint"));
+        assertFalse("off: no summary in the prompt, not even an older one", mainBody(mark, "Third").contains(SUMMARY_PREFIX));
+        assertFalse(mainBody(mark, "Third").contains("An older summary about tea."));
+        assertNotNull("the stored summary stays", ContextCheckpoint.fromStored(app.database().getSession(off).contextCheckpoint));
     }
 
     @Test public void recall() throws Exception {
@@ -315,10 +317,13 @@ public class ModuleMatrixTest {
         return latestView().optString("activeLocalSessionId");
     }
 
-    /** A Chat whose second turn is over the compaction trigger: a long first exchange in a small window. */
+    private static final String SUMMARY_PREFIX = "Summary of the earlier part of this conversation";
+
+    /** A Chat whose third turn does not fit its window: two long exchanges, then the window is made small. */
     private String pressured(String mode) throws Exception {
         String id = session(mode, ChatTurnOptions.WEB_OFF);
-        send(id, longText("First", 2_000));
+        send(id, longText("First", 3_000));
+        send(id, longText("Second", 3_000));
         ChatDatabase.Session s = app.database().getSession(id);
         s.contextTokens = 4_000; s.inputTokens = 0; s.maxOutputTokens = 512;
         app.database().saveSession(s);

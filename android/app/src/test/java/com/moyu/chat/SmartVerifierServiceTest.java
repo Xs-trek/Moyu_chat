@@ -75,8 +75,7 @@ public class SmartVerifierServiceTest {
     }
 
     @Test public void theEvidenceLedgerCarriesTheCheckpointAndTheUserInstructionsTheMainCallSaw() throws Exception {
-        ContextCheckpoint checkpoint = new ContextCheckpoint("Earlier the user fixed the budget at 300 USD.", new JSONArray().put("budget <= 300 USD"),
-                new JSONArray(), new JSONArray(), new JSONArray());
+        ContextCheckpoint checkpoint = new ContextCheckpoint("Earlier the user fixed the budget at 300 USD.", "");
         JSONArray ledger = SmartVerifierService.evidence("What can I buy?", null, null, null, checkpoint, "Answer in English.");
         java.util.Map<String, String> byId = new java.util.HashMap<>();
         for (int i = 0; i < ledger.length(); i++) byId.put(ledger.getJSONObject(i).getString("id"), ledger.getJSONObject(i).optString("text"));

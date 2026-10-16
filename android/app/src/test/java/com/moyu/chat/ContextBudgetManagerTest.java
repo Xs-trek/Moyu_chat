@@ -132,16 +132,18 @@ public class ContextBudgetManagerTest {
         assertTrue(reserved.estimatedTokens + 2_500 <= manager.effectiveInputBudget(4_000, 0, 512));
     }
 
+    /** Spec C2, C6: an answer's tool calls and results are input like its text. */
     @Test
-    public void softCompactionTargetNeverRejectsCurrentTurnThatFitsRealWindow() throws Exception {
+    public void toolCallsCountTowardTheBudget() throws Exception {
         ContextBudgetManager manager = new ContextBudgetManager();
-        StringBuilder current = new StringBuilder();
-        for (int i = 0; i < 5_000; i++) current.append('x');
-        JSONArray all = new JSONArray().put(message("user", current.toString()));
-        assertTrue(manager.estimateInput(INSTRUCTIONS, all) > manager.effectiveInputBudget(4_000, 0, 512) * 30 / 100);
-        ContextBudgetManager.Result compacted = manager.selectPercent(INSTRUCTIONS, all, 4_000, 0, 512, 30);
-        assertEquals(1, compacted.messages.length());
-        assertEquals(current.toString(), compacted.messages.getJSONObject(0).optString("text"));
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < 4_000; i++) result.append("r");
+        JSONObject answer = message("assistant", "short");
+        JSONArray plain = new JSONArray().put(message("user", "q")).put(answer);
+        int without = manager.estimateInput(INSTRUCTIONS, plain);
+        answer.put(ToolHistory.FIELD, new JSONArray().put(new JSONObject().put("round", 1).put("id", "c1").put("name", "web_fetch")
+                .put("arguments", new JSONObject().put("url", "https://example.com")).put("result", result.toString())));
+        assertTrue(manager.estimateInput(INSTRUCTIONS, plain) >= without + 2_000);
     }
 
     @Test

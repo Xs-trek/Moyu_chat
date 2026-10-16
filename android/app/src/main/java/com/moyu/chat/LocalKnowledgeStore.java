@@ -50,18 +50,6 @@ final class LocalKnowledgeStore {
 
     LocalKnowledgeStore(ChatDatabase db) { this.db = db; }
 
-    List<Hit> searchSnapshot(String snapshotId, String query, int limit) {
-        if (snapshotId == null || snapshotId.trim().isEmpty() || limit <= 0) return new ArrayList<>();
-        try {
-            ensureSnapshotIndexed(snapshotId);
-            ChatDatabase.Snapshot snapshot = db.getSnapshot(snapshotId);
-            String title = snapshot == null ? "Snapshot" : snapshot.sourceTitle;
-            return search("scope_id=?", new String[]{snapshotScope(snapshotId)}, query, limit, scope -> new String[]{snapshotId, title});
-        } catch (Exception ignored) {
-            return new ArrayList<>();
-        }
-    }
-
     /** User-memory search spans other local Chat timelines; the current session is excluded to avoid echoing visible history. */
     List<Hit> searchUserMemory(String excludeSessionId, String query, int limit) {
         if (limit <= 0) return new ArrayList<>();
@@ -232,7 +220,18 @@ final class LocalKnowledgeStore {
         if (item == null || !"message".equals(item.optString("kind", "message")) || item.optBoolean("streaming", false)) return;
         String role = item.optString("role", "");
         if (!("user".equals(role) || "assistant".equals(role))) return;
-        List<String> chunks = KnowledgeLexicon.chunks(item.optString("text", ""));
+        indexChunks(writable, scope, itemRef, ordinal, role, item.optString("text", ""));
+        // Tool results are history too (spec T3, C4): recall can find what a search or fetch returned.
+        JSONArray calls = ToolHistory.of(item);
+        for (int j = 0; j < calls.length(); j++) {
+            JSONObject call = calls.optJSONObject(j);
+            if (call == null || !call.optString("error", "").isEmpty()) continue;
+            indexChunks(writable, scope, itemRef + "#t" + j, ordinal, "tool", call.optString("result", ""));
+        }
+    }
+
+    private static void indexChunks(SQLiteDatabase writable, String scope, String itemRef, int ordinal, String role, String text) {
+        List<String> chunks = KnowledgeLexicon.chunks(text);
         for (int k = 0; k < chunks.size(); k++) {
             String chunk = chunks.get(k);
             String terms = KnowledgeLexicon.indexTerms(chunk);

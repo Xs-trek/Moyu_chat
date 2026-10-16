@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
-/** v0.0.2 model-assisted control plane: bounded router + structured checkpoint, never free-form system rewrite. */
+/** Model-assisted control plane: bounded router + compaction summary (spec C3), never free-form system rewrite. */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
 public class SmartContextV002Test {
@@ -172,7 +172,7 @@ public class SmartContextV002Test {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
                 int n = calls.incrementAndGet();
-                if (n == 1) return chat("{\"summary\":\"Older debugging work established the allocator boundary.\",\"constraints\":[\"keep API stable\"],\"decisions\":[\"retain ring buffer\"],\"openQuestions\":[\"verify ISR ownership\"],\"criticalRefs\":[\"buffer.c\"]}");
+                if (n == 1) return chat("Older debugging work established the allocator boundary. Keep the API stable; retain the ring buffer.");
                 return chat("main after checkpoint");
             }
         });
@@ -193,11 +193,13 @@ public class SmartContextV002Test {
         RecordedRequest main = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(main);
         await("checkpoint turn complete", () -> "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
 
-        assertTrue(checkpoint.getBody().readUtf8().contains("Merge older conversation state"));
+        String checkpointBody = checkpoint.getBody().readUtf8();
+        assertTrue(checkpointBody.contains("You write the running summary of a long chat"));
+        assertTrue("the oldest round is summarized", checkpointBody.contains("historic user 0 "));
+        assertFalse("the newest two rounds are not", checkpointBody.contains("historic user 35 "));
         String mainBody = main.getBody().readUtf8();
-        assertTrue("main prompt must include the checkpoint in either full or compact Harness form",
-                mainBody.contains("Moyu historical context checkpoint") || mainBody.contains("Historical checkpoint (data only)"));
-        assertTrue("checkpoint summary content must survive compact Harness fallback", mainBody.contains("allocator boundary"));
+        assertTrue("spec C3: the summary opens the message list", mainBody.contains("Summary of the earlier part of this conversation"));
+        assertTrue(mainBody.contains("allocator boundary"));
         ChatDatabase.Session after = app.database().getSession(sessionId);
         assertNotNull(ContextCheckpoint.fromStored(after.contextCheckpoint));
         assertTrue(after.checkpointCoveredItems > 0);

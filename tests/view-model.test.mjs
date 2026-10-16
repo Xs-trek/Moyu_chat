@@ -160,3 +160,8 @@ test('a never-sent Chat is listed by its draft; the naming stage is a helper', (
   assert.equal(view.rows[2].note, '没有给出可用的标题');
   assert.equal(Math.round(view.helperShare * 1000), Math.round((36 / 136) * 1000));
 });
+
+test('a turn waiting for compaction says it is tidying the context (spec C3)', () => {
+  assert.deepEqual(vm.stageInfo('compacting'), { label: '正在整理上下文', pose: 'think' });
+  assert.equal(vm.stageInfo('unknown-stage').label, '连接模型');
+});

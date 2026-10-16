@@ -135,6 +135,7 @@ final class TurnStats {
                 if (cost.optBoolean("partial", false)) row.partialCostTurns++;
             }
         }
+        boolean compacted = false;
         for (JSONObject span : spans) {
             String stage = span.optString("stage", "");
             String spanStatus = span.optString("status", "");
@@ -143,7 +144,9 @@ final class TurnStats {
             if (!TurnTrace.OK.equals(spanStatus)) continue;
             JSONObject detail = span.optJSONObject("detail");
             if (TurnTrace.ROUTE.equals(stage)) row.routed++;
-            else if (TurnTrace.CHECKPOINT.equals(stage) && detail != null && detail.optBoolean("updated", false)) row.checkpointed++;
+            // A summary stored in the turn or by the background compaction it started (spec C3); "updated" is the older key.
+            else if (TurnTrace.CHECKPOINT.equals(stage) && detail != null && !compacted
+                    && (detail.optBoolean("applied", false) || detail.optBoolean("updated", false))) { row.checkpointed++; compacted = true; }
             else if (TurnTrace.WEB_PLAN.equals(stage) && detail != null && detail.optBoolean("useWeb", false)) row.webUsed++;
             else if (TurnTrace.VERIFY.equals(stage)) { row.verified++; if (detail != null && detail.optBoolean("repaired", false)) row.repaired++; }
         }

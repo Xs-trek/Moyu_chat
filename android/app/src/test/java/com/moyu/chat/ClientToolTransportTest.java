@@ -192,4 +192,96 @@ public class ClientToolTransportTest {
         assertEquals("toolu_1", userContent.getJSONObject(0).optString("tool_use_id"));
         assertEquals("page text", userContent.getJSONObject(0).optString("content"));
     }
+
+    // ---------- spec T3: earlier turns' tool calls ----------
+
+    /** Two earlier turns: the first answered after a search, the second plainly; then the current question. */
+    private static CanonicalPrompt promptWithEarlierToolCalls() throws Exception {
+        JSONArray calls = new JSONArray().put(new JSONObject().put("round", 1).put("id", "call_old").put("name", "web_search")
+                .put("arguments", new JSONObject().put("query", "tide tables")).put("result", "High tide 06:12."));
+        JSONArray messages = new JSONArray()
+                .put(new JSONObject().put("role", "user").put("text", "When is high tide?"))
+                .put(new JSONObject().put("role", "assistant").put("text", "At 06:12.").put(ToolHistory.FIELD, calls))
+                .put(new JSONObject().put("role", "user").put("text", "And low tide?"));
+        return new CanonicalPrompt("SYSTEM", messages, false, 10, 0, 3);
+    }
+
+    private static MockResponse chatDone() {
+        return new MockResponse().setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+                + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+    }
+
+    @Test public void chatCompletionsReplaysAnEarlierAnswersToolCallsBeforeIt() throws Exception {
+        server.enqueue(chatDone());
+        ToolSink sink = new ToolSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "key", "model", ReasoningPolicy.DEFAULT,
+                promptWithEarlierToolCalls(), options(ClientToolRuntime.OPENAI_CHAT, ClientToolRuntime.WEB_SEARCH), sink);
+        sink.await();
+        JSONArray messages = requestBody().getJSONArray("messages");
+        // system, user, assistant(tool_calls), tool, assistant(answer), user
+        assertEquals(6, messages.length());
+        assertEquals("call_old", messages.getJSONObject(2).getJSONArray("tool_calls").getJSONObject(0).optString("id"));
+        assertEquals("tool", messages.getJSONObject(3).optString("role"));
+        assertEquals("High tide 06:12.", messages.getJSONObject(3).optString("content"));
+        assertEquals("At 06:12.", messages.getJSONObject(4).optString("content"));
+    }
+
+    @Test public void withoutClientToolsAnEarlierAnswersToolCallsGoAsText() throws Exception {
+        server.enqueue(chatDone());
+        ToolSink sink = new ToolSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "key", "model", ReasoningPolicy.DEFAULT,
+                promptWithEarlierToolCalls(), ChatTurnOptions.NONE, sink);
+        sink.await();
+        JSONObject body = requestBody();
+        assertFalse("no tool messages for tools this request does not define", body.toString().contains("\"role\":\"tool\""));
+        JSONArray messages = body.getJSONArray("messages");
+        assertEquals(4, messages.length());
+        String answer = messages.getJSONObject(2).optString("content");
+        assertTrue(answer.contains("web_search") && answer.contains("tide tables") && answer.contains("High tide 06:12."));
+        assertTrue(answer.endsWith("At 06:12."));
+    }
+
+    @Test public void theLastRoundKeepsReplayingEarlierToolCallsAsToolMessages() throws Exception {
+        server.enqueue(chatDone());
+        ToolSink sink = new ToolSink();
+        ChatTurnOptions lastRound = options(ClientToolRuntime.OPENAI_CHAT, ClientToolRuntime.WEB_SEARCH).withoutClientTools();
+        openAi.stream(provider(OpenAiCompatibleTransport.CHAT_COMPLETIONS), "key", "model", ReasoningPolicy.DEFAULT,
+                promptWithEarlierToolCalls(), lastRound, sink);
+        sink.await();
+        assertTrue("one form for the whole turn", requestBody().toString().contains("\"role\":\"tool\""));
+    }
+
+    @Test public void responsesReplaysAnEarlierAnswersToolCallsBeforeIt() throws Exception {
+        server.enqueue(new MockResponse().setBody("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"
+                + "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"));
+        ToolSink sink = new ToolSink();
+        openAi.stream(provider(OpenAiCompatibleTransport.RESPONSES), "key", "model", ReasoningPolicy.DEFAULT,
+                promptWithEarlierToolCalls(), options(ClientToolRuntime.OPENAI_RESPONSES, ClientToolRuntime.WEB_SEARCH), sink);
+        sink.await();
+        JSONArray input = requestBody().getJSONArray("input");
+        assertEquals("function_call", input.getJSONObject(1).optString("type"));
+        assertEquals("call_old", input.getJSONObject(1).optString("call_id"));
+        assertEquals("function_call_output", input.getJSONObject(2).optString("type"));
+        assertEquals("High tide 06:12.", input.getJSONObject(2).optString("output"));
+        assertEquals("assistant", input.getJSONObject(3).optString("role"));
+    }
+
+    @Test public void anthropicReplaysAnEarlierAnswersToolCallsBeforeIt() throws Exception {
+        server.enqueue(new MockResponse().setBody("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"
+                + "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"
+                + "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n"
+                + "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"));
+        ToolSink sink = new ToolSink();
+        anthropic.stream(provider(AnthropicMessagesTransport.PROTOCOL), "key", "model", ReasoningPolicy.DEFAULT,
+                promptWithEarlierToolCalls(), options(ClientToolRuntime.ANTHROPIC_TOOLS, ClientToolRuntime.WEB_SEARCH), sink);
+        sink.await();
+        JSONArray messages = requestBody().getJSONArray("messages");
+        // user, assistant(tool_use), user(tool_result), assistant(answer), user
+        assertEquals(5, messages.length());
+        assertEquals("tool_use", messages.getJSONObject(1).getJSONArray("content").getJSONObject(0).optString("type"));
+        JSONObject result = messages.getJSONObject(2).getJSONArray("content").getJSONObject(0);
+        assertEquals("call_old", result.optString("tool_use_id"));
+        assertEquals("High tide 06:12.", result.optString("content"));
+        assertEquals("At 06:12.", messages.getJSONObject(3).optString("content"));
+    }
 }

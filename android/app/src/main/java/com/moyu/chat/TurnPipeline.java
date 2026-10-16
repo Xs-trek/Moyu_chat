@@ -60,7 +60,8 @@ final class TurnPipeline {
     final ChatMediaStore mediaStore;
     private final ChatTransportRegistry transports;
     private final TaskRouter taskRouter = new TaskRouter();
-    private final ContextCheckpointService checkpointService = new ContextCheckpointService();
+    /** Compaction belongs to the session, not the turn: one per session, finishing after the turn that started it (spec C3, T5). */
+    final CompactionService compactions = new CompactionService();
     private final SmartVerifierService smartVerifier = new SmartVerifierService();
     final FocusedSubagentService focusedSubagent = new FocusedSubagentService();
     private final WebOrchestrator webOrchestrator = new WebOrchestrator();
@@ -174,7 +175,7 @@ final class TurnPipeline {
         r.clientCalling = ClientToolRuntime.compatible(provider.protocol, turnConfig.clientToolCalling);
         // Every module's "may it run" is settled here, once (spec M4); the stages below only read it.
         r.modules = TurnModules.resolve(turnConfig, r.contextPolicy, r.adaptivePolicy, r.clientCalling,
-                ContextBuilder.globalMemoryEnabled(db), originSnapshot != null);
+                ContextBuilder.globalMemoryEnabled(db));
         // A Router that does not run for this turn (switched off, or the mode / preset does not use it) leaves no
         // trace either: its earlier profile is cleared from this turn's copy of the session, so the prompt
         // (PromptPolicy reads the session) and verification (r.taskProfile) agree. The stored profile stays.
@@ -258,8 +259,9 @@ final class TurnPipeline {
         TurnConfig c = r.config;
         try {
             r.prompt = committedPrompt(r, r.session);
-            r.compactionPlan = r.modules.compaction.on ? contexts.compactionPlan(r.session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
-            r.needsCheckpoint = r.compactionPlan != null;
+            // Spec C3, D1: the history is kept word for word until it no longer fits; only then does this turn wait for
+            // the background compaction or compact now. Dropping old rounds is the last resort after that.
+            r.needsCheckpoint = r.modules.compaction.on && r.prompt.truncated;
             r.preparing = r.needsRouter || r.needsCheckpoint;
         } catch (Exception contextError) {
             r.trace().fail(span, "context_prepare_failed");
@@ -267,7 +269,9 @@ final class TurnPipeline {
             return false;
         }
         r.trace().end(span, TurnTrace.OK, new JSONObject().put("messages", r.prompt.messages.length())
-                .put("truncated", r.prompt.truncated).put("compactionDue", r.needsCheckpoint));
+                .put("truncated", r.prompt.truncated).put("compactionDue", r.needsCheckpoint)
+                .put("summarizedItems", r.prompt.summarizedItems).put("clearedToolResults", r.prompt.clearedToolResults)
+                .put("clearedToolTokens", r.prompt.clearedToolTokens));
         if (!r.preparing && r.mayPrepare) {
             r.live.put("streamStage", "connecting");
             db.replaceTimelineBody(r.streamKey, r.live);
@@ -297,27 +301,17 @@ final class TurnPipeline {
                     db.setTaskProfile(session.id, session.taskProfile);
                 }
                 r.prompt = committedPrompt(r, session);
-                r.compactionPlan = r.modules.compaction.on ? contexts.compactionPlan(session, c.contextTokens, c.inputTokens, c.maxOutputTokens) : null;
-                r.needsCheckpoint = r.compactionPlan != null;
                 JSONObject routeDetail = new JSONObject().put("routed", routed != null).put("stored", r.taskProfile != null);
                 if (r.taskProfile != null) routeDetail.put("domain", r.taskProfile.domain).put("taskType", r.taskProfile.taskType)
                         .put("depth", r.taskProfile.depth).put("confidence", r.taskProfile.confidence);
                 r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.ROUTE, routeDetail));
             }
-            // Switched off, no new checkpoint is written; one written earlier stays in the context (already paid for).
+            // Switched off: no compaction, and no summary written earlier is used (spec D10); it is kept for later.
             if (!r.needsCheckpoint) r.trace().skip(TurnTrace.CHECKPOINT, r.modules.compaction.on ? "within_budget" : r.modules.compaction.reason);
             if (r.needsCheckpoint) {
                 stage = r.trace().begin(TurnTrace.CHECKPOINT);
-                ContextCheckpointService.Update update = checkpointService.update(r.checkpointTransport, r.provider, r.key, c.model, r.compactionPlan.baseline,
-                        ContextCheckpoint.fromStored(session.contextCheckpoint), session.checkpointCoveredItems);
-                if (update != null) {
-                    session.contextCheckpoint = update.checkpoint.toJson().toString();
-                    session.checkpointCoveredItems = update.coveredItems;
-                    db.setContextCheckpoint(session.id, session.contextCheckpoint, session.checkpointCoveredItems);
-                    r.prompt = committedPrompt(r, session);
-                }
-                r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.CHECKPOINT, new JSONObject().put("updated", update != null)
-                        .put("coveredItems", update == null ? session.checkpointCoveredItems : update.coveredItems)));
+                JSONObject detail = compactBeforeSending(r, session);
+                r.trace().end(stage, TurnTrace.OK, withCallFailure(r, TurnTrace.CHECKPOINT, detail));
             }
         } catch (Exception preparationError) {
             r.trace().fail(stage, "context_prepare_failed");
@@ -327,6 +321,121 @@ final class TurnPipeline {
             if (r.preparing) { env.setPreparing(r.id, false); env.emitStreamingView(r.id); }
         }
         return !cancelled(r);
+    }
+
+    // ---------- compaction ----------
+
+    /**
+     * Spec C3, the turn does not fit: wait for the session's background compaction when one is running (it was
+     * started for exactly this), else compact now. Either way the prompt is then rebuilt with whatever summary is
+     * stored; if there is none, the oldest rounds are dropped (spec C1 step 3).
+     */
+    private JSONObject compactBeforeSending(TurnRun r, ChatDatabase.Session session) throws Exception {
+        TurnConfig c = r.config;
+        JSONObject detail = new JSONObject();
+        int coveredBefore = session.checkpointCoveredItems;
+        setPreparationStage(r, "compacting");
+        CompactionService.Job job = compactions.running(session.id);
+        if (job != null) {
+            long started = System.nanoTime();
+            while (!job.settled() && !r.control.isCancelled() && job.remainingMs() > 0) job.await(Math.min(250L, job.remainingMs()));
+            detail.put("mode", "waited").put("waitedMs", (System.nanoTime() - started) / 1_000_000L)
+                    .put("applied", job.applied).put("settled", job.settled());
+            if (!job.applied && !job.reason.isEmpty()) detail.put("reason", job.reason);
+        } else {
+            ChatDatabase.Session latest = db.getSession(session.id);
+            ContextBuilder.CompactionSource source = latest == null ? null : contexts.compactionSource(latest);
+            if (source == null) {
+                detail.put("mode", "none").put("reason", "nothing_to_compact");
+            } else {
+                int budget = new ContextBudgetManager().effectiveInputBudget(c.contextTokens, c.inputTokens, c.maxOutputTokens);
+                CompactionService.Result result = compactions.summarize(r.checkpointTransport, r.provider, r.key, c.model, source, budget);
+                // The turn holds the session, so its history cannot change meanwhile; the check costs nothing.
+                boolean applied = result.ok() && result.checkpoint.covers(contexts.neutralHistory(latest), result.coveredItems);
+                if (applied) db.setContextCheckpoint(session.id, result.checkpoint.toJson().toString(), result.coveredItems);
+                detail.put("mode", "sync").put("applied", applied);
+                if (!applied) detail.put("reason", result.failure == null ? "history_changed" : result.failure);
+            }
+        }
+        ChatDatabase.Session stored = db.getSession(session.id);
+        if (stored != null) { session.contextCheckpoint = stored.contextCheckpoint; session.checkpointCoveredItems = stored.checkpointCoveredItems; }
+        r.prompt = committedPrompt(r, session);
+        return detail.put("coveredBefore", coveredBefore).put("coveredItems", r.prompt.summarizedItems).put("truncated", r.prompt.truncated);
+    }
+
+    private void setPreparationStage(TurnRun r, String stage) {
+        try { r.live.put("streamStage", stage); db.replaceTimelineBody(r.streamKey, r.live); } catch (Exception ignored) { }
+        env.emitStreamingView(r.id);
+    }
+
+    /**
+     * Spec C3, after a finished turn: when this turn's real usage (its last main call's input with cache, plus output)
+     * says the next request would pass 75% of the input window, the session is compacted in the background, with
+     * this turn's configuration (spec T2). Its cost is added to this turn as a helper stage.
+     */
+    private void compactAfterTurn(TurnRun r, String answer) {
+        if (r.modules == null || !r.modules.compaction.on || compactions.running(r.id) != null || transports == null) return;
+        TurnConfig c = r.config;
+        ContextBudgetManager budgets = new ContextBudgetManager();
+        int budget;
+        try { budget = budgets.effectiveInputBudget(c.contextTokens, c.inputTokens, c.maxOutputTokens); }
+        catch (IllegalArgumentException noWindow) { return; }
+        boolean reported = r.lastCallInputTokens > 0;
+        int next = reported ? r.lastCallInputTokens + r.lastCallOutputTokens
+                : (r.prompt == null ? 0 : r.prompt.estimatedInputTokens) + budgets.estimate(answer);
+        if (!CompactionService.dueAfterTurn(next, budget)) return;
+        ChatTransport raw = transports.forProtocol(r.provider.protocol);
+        String turnId = r.control.turnId;
+        if (raw == null || turnId == null) return;
+        compactions.startBackground(r.id, job -> runBackgroundCompaction(job, r, raw, turnId, budget, next, reported));
+    }
+
+    /** Compaction thread: one summary call; the result is applied on the authority thread if its history is unchanged (spec T8). */
+    private void runBackgroundCompaction(CompactionService.Job job, TurnRun r, ChatTransport raw, String turnId,
+                                         int budget, int nextRequestTokens, boolean reported) {
+        TurnConfig c = r.config;
+        TurnUsage usage = new TurnUsage();
+        try { usage.setPricing(ModelPricing.normalize(new JSONObject(c.pricing))); } catch (Exception unpriced) { usage.setPricing(null); }
+        long startedAt = System.currentTimeMillis(), started = System.nanoTime();
+        ContextBuilder.CompactionSource source;
+        try {
+            ChatDatabase.Session session = db.getSession(r.id);
+            source = session == null ? null : contexts.compactionSource(session);
+        } catch (Exception error) { source = null; }
+        if (source == null) { compactions.settle(job, false, "nothing_to_compact"); return; }
+        CompactionService.Result result = compactions.summarize(usage.track(raw, TurnUsage.Kind.AUXILIARY, TurnTrace.CHECKPOINT),
+                r.provider, r.key, c.model, source, budget);
+        long durationMs = (System.nanoTime() - started) / 1_000_000L;
+        JSONObject delta = new JSONObject();
+        try { usage.project(delta); } catch (Exception ignored) { }
+        String failure = usage.stageFailure(TurnTrace.CHECKPOINT);
+        int coveredBefore = source.alreadyCovered;
+        try {
+            env.authority().execute(() -> {
+                boolean applied = false;
+                String reason = result.failure;
+                try {
+                    ChatDatabase.Session now = db.getSession(r.id);
+                    if (result.ok() && now != null && result.checkpoint.covers(contexts.neutralHistory(now), result.coveredItems)) {
+                        db.setContextCheckpoint(r.id, result.checkpoint.toJson().toString(), result.coveredItems);
+                        applied = true;
+                    } else if (result.ok()) reason = "history_changed";
+                    JSONObject spanUsage = new JSONObject().put("calls", Math.max(1, delta.optInt("auxiliaryCallCount", 1)));
+                    if (delta.has("auxiliaryInputTokens")) spanUsage.put("inputTokens", delta.optLong("auxiliaryInputTokens"));
+                    if (delta.has("auxiliaryOutputTokens")) spanUsage.put("outputTokens", delta.optLong("auxiliaryOutputTokens"));
+                    JSONObject span = new JSONObject().put("stage", TurnTrace.CHECKPOINT).put("status", applied ? TurnTrace.OK : TurnTrace.FAILED)
+                            .put("startedAtMs", startedAt).put("durationMs", durationMs).put("usage", spanUsage)
+                            .put("detail", new JSONObject().put("mode", "background").put("applied", applied)
+                                    .put("coveredBefore", coveredBefore).put("coveredItems", applied ? result.coveredItems : coveredBefore)
+                                    .put("nextRequestTokens", nextRequestTokens).put("usageReported", reported).put("inputBudget", budget));
+                    if (!applied) span.put("reason", failure != null ? failure : reason == null ? "no_summary" : reason);
+                    db.addHelperToTurn(turnId, span, delta);
+                } catch (Exception ignored) { }
+                compactions.settle(job, applied, applied ? "" : reason);
+            });
+        } catch (java.util.concurrent.RejectedExecutionException closed) {
+            compactions.settle(job, false, "closed");
+        }
     }
 
     // ---------- Web plan ----------
@@ -460,7 +569,7 @@ final class TurnPipeline {
      */
     private void settleRecall(TurnRun r) throws Exception {
         if (!r.recallOffered) return;
-        boolean summarized = ContextCheckpoint.fromStored(r.session.contextCheckpoint) != null && r.session.checkpointCoveredItems > 0;
+        boolean summarized = r.prompt.summarizedItems > 0;
         r.recallOffered = r.prompt.truncated || summarized;
         if (!r.recallOffered) {
             r.clientToolNames.remove(ClientToolRuntime.HISTORY_RECALL);
@@ -614,7 +723,7 @@ final class TurnPipeline {
         String repairCandidate = null;
         String calibrationKey = SmartVerifierCalibration.calibrationKey(r.config.deploymentFingerprint);
         JSONArray evidence = SmartVerifierService.evidence(currentUserText, mainPrompt, sourceArray(webSources), webContext,
-                currentCheckpoint(id), r.config.customInstruction, toolEvidence);
+                mainPrompt.summarizedItems > 0 ? currentCheckpoint(id) : null, r.config.customInstruction, toolEvidence);
         JSONArray attempts = new JSONArray();
         SmartVerifierService.Result verification = smartVerifier.verify(r.verifyTransport, r.provider, r.key, r.config,
                 mainPrompt, currentUserText, finalText, evidence);
@@ -783,6 +892,7 @@ final class TurnPipeline {
             terminalError = new String[]{"empty_assistant_output", "模型结束了回答，但没有输出文字或图片"};
         }
         String finalState = terminalError == null || "cancelled".equals(terminalError[0]) ? "completed" : "failed";
+        boolean finalized = false;
         try {
             JSONObject finished = null;
             if (hasProjection) {
@@ -793,9 +903,12 @@ final class TurnPipeline {
                 if (outputMedia != null && outputMedia.length() > 0) finished.put("attachments", outputMedia);
                 if (webSources != null && !webSources.isEmpty()) finished.put("sources", sourceArray(webSources));
                 if (webBackend != null && !webBackend.trim().isEmpty()) finished.put("webBackend", webBackend.trim());
+                // Spec T3: the turn's tool calls and results belong to the conversation, stored with the answer.
+                if (r.toolCalls.length() > 0) finished.put(ToolHistory.FIELD, new JSONArray(r.toolCalls.toString()));
             }
             db.finalizeTurn(id, r.streamKey, finished,
                     terminalError == null ? null : terminalError[0], terminalError == null ? null : terminalError[1], finalState);
+            finalized = true;
             // Every real turn is also a key check: an answer proves the key, a 401 disproves it.
             if (terminalError == null) db.setKeyStatus(r.provider.id, ProviderGuard.KEY_VALID, null);
             else if ("http_401".equals(terminalError[0])) db.setKeyStatus(r.provider.id, ProviderGuard.KEY_INVALID, Instant.now().toString());
@@ -809,6 +922,8 @@ final class TurnPipeline {
             // The turn record is settled last: once it reads as finished, its reply text is already final.
             recordTrace(r.control, terminalError);
             releaseRouteSlot(r);
+            // After the record, so the compaction's helper span lands on a settled turn (spec T1 step 6).
+            if (finalized && "completed".equals(finalState) && hasVisibleOutput) compactAfterTurn(r, text);
             env.releaseTurn(id);
         }
     }

@@ -75,7 +75,9 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
             RouteDialect dialect = provider.dialect == null ? RouteDialect.defaults(protocol) : provider.dialect;
             ChatTurnOptions turnOptions = options == null ? ChatTurnOptions.NONE : options;
             boolean replayReasoning = CHAT_COMPLETIONS.equals(protocol) && dialect.replaysReasoning(turnOptions.clientToolsEnabled(protocol));
-            JSONObject body = CHAT_COMPLETIONS.equals(protocol) ? chatBody(model, prompt, provider, dialect, replayReasoning) : responsesBody(model, prompt, provider, dialect);
+            boolean nativeTools = turnOptions.replayToolsNatively;
+            JSONObject body = CHAT_COMPLETIONS.equals(protocol) ? chatBody(model, prompt, provider, dialect, replayReasoning, nativeTools)
+                    : responsesBody(model, prompt, provider, dialect, nativeTools);
             applyHostedTools(body, protocol, turnOptions);
             applyClientTools(body, protocol, turnOptions, replayReasoning);
             applyContinuationRequest(body, protocol, prompt, turnOptions);
@@ -202,11 +204,12 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
      * its reasoning_content when the route requires reasoning to ride along (see RouteDialect).
      */
     private static JSONObject chatBody(String model, CanonicalPrompt prompt, ChatDatabase.Provider provider, RouteDialect dialect,
-                                       boolean replayReasoning) throws Exception {
+                                       boolean replayReasoning, boolean nativeTools) throws Exception {
         JSONArray messages = new JSONArray().put(new JSONObject().put("role", "system").put("content", prompt.instructions));
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
+            item = withEarlierToolCalls(item, nativeTools, calls -> appendChatToolRounds(messages, calls, null, false));
             JSONArray attachments = item.optJSONArray("attachments");
             if ("user".equals(role) && attachments != null && attachments.length() > 0) {
                 JSONArray content = new JSONArray(); String text = item.optString("text", "");
@@ -243,11 +246,13 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
     }
 
     /** Responses multimodal input uses input_text/input_image content parts. */
-    private static JSONObject responsesBody(String model, CanonicalPrompt prompt, ChatDatabase.Provider provider, RouteDialect dialect) throws Exception {
+    private static JSONObject responsesBody(String model, CanonicalPrompt prompt, ChatDatabase.Provider provider, RouteDialect dialect,
+                                            boolean nativeTools) throws Exception {
         JSONArray input = new JSONArray();
         for (int i = 0; i < prompt.messages.length(); i++) {
             JSONObject item = prompt.messages.optJSONObject(i); if (item == null) continue;
             String role = item.optString("role"); if (!("user".equals(role) || "assistant".equals(role))) continue;
+            item = withEarlierToolCalls(item, nativeTools, calls -> appendResponsesToolRounds(input, calls, null));
             JSONArray attachments = item.optJSONArray("attachments");
             if ("user".equals(role) && attachments != null && attachments.length() > 0) {
                 JSONArray content = new JSONArray(); String text = item.optString("text", "");
@@ -327,62 +332,84 @@ final class OpenAiCompatibleTransport implements ChatTransport, AutoCloseable {
         if (CHAT_COMPLETIONS.equals(protocol)) {
             if (history == null || history.length() == 0) return;
             JSONArray messages = body.optJSONArray("messages"); if (messages == null) return;
-            java.util.TreeMap<Integer, JSONArray> rounds = groupToolHistory(history);
-            java.util.TreeMap<Integer, JSONArray> reasoningRounds = groupProviderRoundHistory(providerRoundHistory);
-            for (java.util.Map.Entry<Integer, JSONArray> round : rounds.entrySet()) {
-                JSONArray entries = round.getValue();
-                JSONArray calls = new JSONArray();
-                for (int i = 0; i < entries.length(); i++) {
-                    JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
-                    calls.put(new JSONObject().put("id", entry.optString("id")).put("type", "function")
-                            .put("function", new JSONObject().put("name", entry.optString("name"))
-                                    .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString())));
-                }
-                if (calls.length() > 0) {
-                    JSONObject assistant = new JSONObject().put("role", "assistant").put("content", JSONObject.NULL).put("tool_calls", calls);
-                    if (replayReasoning) {
-                        String reasoning = chatReasoning(new JSONObject().put("protocol", CHAT_COMPLETIONS)
-                                .put("items", reasoningRounds.getOrDefault(round.getKey(), new JSONArray())));
-                        if (!reasoning.isEmpty()) assistant.put("reasoning_content", reasoning);
-                    }
-                    messages.put(assistant);
-                }
-                for (int i = 0; i < entries.length(); i++) {
-                    JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
-                    messages.put(new JSONObject().put("role", "tool").put("tool_call_id", entry.optString("id"))
-                            .put("content", toolResultText(entry)));
-                }
-            }
+            appendChatToolRounds(messages, history, providerRoundHistory, replayReasoning);
         } else if (RESPONSES.equals(protocol)) {
             JSONArray input = body.optJSONArray("input"); if (input == null) return;
-            java.util.TreeMap<Integer, JSONArray> toolRounds = groupToolHistory(history == null ? new JSONArray() : history);
-            java.util.TreeMap<Integer, JSONArray> providerRounds = groupProviderRoundHistory(providerRoundHistory);
-            java.util.TreeSet<Integer> roundIds = new java.util.TreeSet<>();
-            roundIds.addAll(toolRounds.keySet()); roundIds.addAll(providerRounds.keySet());
-            for (Integer round : roundIds) {
-                java.util.HashSet<String> replayedCalls = new java.util.HashSet<>();
-                JSONArray providerItems = providerRounds.get(round);
-                if (providerItems != null) for (int i = 0; i < providerItems.length(); i++) {
-                    JSONObject item = providerItems.optJSONObject(i); if (item == null) continue;
-                    JSONObject copy = new JSONObject(item.toString());
-                    input.put(copy);
-                    if ("function_call".equals(copy.optString("type", ""))) {
-                        String callId = copy.optString("call_id", "").trim(); if (!callId.isEmpty()) replayedCalls.add(callId);
-                    }
+            appendResponsesToolRounds(input, history, providerRoundHistory);
+        }
+    }
+
+    private interface ToolRoundWriter { void write(JSONArray calls) throws Exception; }
+
+    /**
+     * An earlier answer's tool calls (spec T3) go before it: as tool messages through {@code writer} when this request
+     * offers client tools, otherwise as a text block at the start of the answer. Returns the item to send for the answer.
+     */
+    private static JSONObject withEarlierToolCalls(JSONObject item, boolean nativeTools, ToolRoundWriter writer) throws Exception {
+        JSONArray calls = "assistant".equals(item.optString("role")) ? ToolHistory.of(item) : new JSONArray();
+        if (calls.length() == 0) return item;
+        if (nativeTools) { writer.write(calls); return item; }
+        return new JSONObject(item.toString()).put("text", ToolHistory.asText(calls) + item.optString("text", ""));
+    }
+
+    private static void appendChatToolRounds(JSONArray messages, JSONArray history, JSONArray providerRoundHistory,
+                                             boolean replayReasoning) throws Exception {
+        java.util.TreeMap<Integer, JSONArray> rounds = groupToolHistory(history);
+        java.util.TreeMap<Integer, JSONArray> reasoningRounds = groupProviderRoundHistory(providerRoundHistory);
+        for (java.util.Map.Entry<Integer, JSONArray> round : rounds.entrySet()) {
+            JSONArray entries = round.getValue();
+            JSONArray calls = new JSONArray();
+            for (int i = 0; i < entries.length(); i++) {
+                JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
+                calls.put(new JSONObject().put("id", entry.optString("id")).put("type", "function")
+                        .put("function", new JSONObject().put("name", entry.optString("name"))
+                                .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString())));
+            }
+            if (calls.length() > 0) {
+                JSONObject assistant = new JSONObject().put("role", "assistant").put("content", JSONObject.NULL).put("tool_calls", calls);
+                if (replayReasoning) {
+                    String reasoning = chatReasoning(new JSONObject().put("protocol", CHAT_COMPLETIONS)
+                            .put("items", reasoningRounds.getOrDefault(round.getKey(), new JSONArray())));
+                    if (!reasoning.isEmpty()) assistant.put("reasoning_content", reasoning);
                 }
-                JSONArray entries = toolRounds.get(round);
-                if (entries == null) continue;
-                for (int i = 0; i < entries.length(); i++) {
-                    JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
-                    String callId = entry.optString("id", "");
-                    // Compatible gateways should expose the original function_call output item. Fallback
-                    // synthesis keeps simpler gateways usable without duplicating a call that was replayed.
-                    if (!replayedCalls.contains(callId)) input.put(new JSONObject().put("type", "function_call").put("call_id", callId)
-                            .put("name", entry.optString("name"))
-                            .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString()));
-                    input.put(new JSONObject().put("type", "function_call_output").put("call_id", callId)
-                            .put("output", toolResultText(entry)));
+                messages.put(assistant);
+            }
+            for (int i = 0; i < entries.length(); i++) {
+                JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
+                messages.put(new JSONObject().put("role", "tool").put("tool_call_id", entry.optString("id"))
+                        .put("content", toolResultText(entry)));
+            }
+        }
+    }
+
+    private static void appendResponsesToolRounds(JSONArray input, JSONArray history, JSONArray providerRoundHistory) throws Exception {
+        java.util.TreeMap<Integer, JSONArray> toolRounds = groupToolHistory(history == null ? new JSONArray() : history);
+        java.util.TreeMap<Integer, JSONArray> providerRounds = groupProviderRoundHistory(providerRoundHistory);
+        java.util.TreeSet<Integer> roundIds = new java.util.TreeSet<>();
+        roundIds.addAll(toolRounds.keySet()); roundIds.addAll(providerRounds.keySet());
+        for (Integer round : roundIds) {
+            java.util.HashSet<String> replayedCalls = new java.util.HashSet<>();
+            JSONArray providerItems = providerRounds.get(round);
+            if (providerItems != null) for (int i = 0; i < providerItems.length(); i++) {
+                JSONObject item = providerItems.optJSONObject(i); if (item == null) continue;
+                JSONObject copy = new JSONObject(item.toString());
+                input.put(copy);
+                if ("function_call".equals(copy.optString("type", ""))) {
+                    String callId = copy.optString("call_id", "").trim(); if (!callId.isEmpty()) replayedCalls.add(callId);
                 }
+            }
+            JSONArray entries = toolRounds.get(round);
+            if (entries == null) continue;
+            for (int i = 0; i < entries.length(); i++) {
+                JSONObject entry = entries.optJSONObject(i); if (entry == null) continue;
+                String callId = entry.optString("id", "");
+                // Compatible gateways should expose the original function_call output item. Fallback
+                // synthesis keeps simpler gateways usable without duplicating a call that was replayed.
+                if (!replayedCalls.contains(callId)) input.put(new JSONObject().put("type", "function_call").put("call_id", callId)
+                        .put("name", entry.optString("name"))
+                        .put("arguments", entry.optJSONObject("arguments") == null ? "{}" : entry.optJSONObject("arguments").toString()));
+                input.put(new JSONObject().put("type", "function_call_output").put("call_id", callId)
+                        .put("output", toolResultText(entry)));
             }
         }
     }

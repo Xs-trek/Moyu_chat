@@ -76,7 +76,7 @@ final class SnapshotService {
         for (int i = turns.size() - 1; i >= 0; i--) {
             ArrayList<JSONObject> turn = turns.get(i);
             int turnChars = 0;
-            for (JSONObject item : turn) turnChars += item.optString("text", "").length();
+            for (JSONObject item : turn) turnChars += item.optString("text", "").length() + ToolHistory.of(item).toString().length();
             if (keptReverse.isEmpty() && (turn.size() > MAX_ITEMS || turnChars > MAX_TEXT_CHARS)) {
                 throw new IllegalArgumentException("最新一轮超出分支快照的大小上限");
             }
@@ -98,6 +98,16 @@ final class SnapshotService {
         }
         JSONArray attachments = normalizeAttachments(item.optJSONArray("attachments"));
         if (attachments.length() > 0) normalizedItem.put("attachments", attachments);
+        // Spec H3, D13: the answer's tool calls with their results and its Web sources come along; reasoning,
+        // native continuation, verification and usage stay behind (they belong to the source's deployment and turn).
+        if ("assistant".equals(item.optString("role"))) {
+            JSONArray calls = ToolHistory.stored(ToolHistory.of(item));
+            if (calls.length() > 0) normalizedItem.put(ToolHistory.FIELD, calls);
+            JSONArray sources = item.optJSONArray("sources");
+            if (sources != null && sources.length() > 0) normalizedItem.put("sources", new JSONArray(sources.toString()));
+            String backend = item.optString("webBackend", "").trim();
+            if (!backend.isEmpty() && backend.length() <= MAX_METADATA_CHARS) normalizedItem.put("webBackend", backend);
+        }
         return normalizedItem;
     }
 

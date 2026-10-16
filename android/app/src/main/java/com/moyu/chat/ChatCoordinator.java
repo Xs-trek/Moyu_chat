@@ -798,6 +798,7 @@ final class ChatCoordinator implements AutoCloseable {
                     : ContextMode.SMART.equals(branch.contextMode) ? HarnessPolicyResolver.SUBAGENT_AUTO : standardSubagentMode;
         }
         db.saveSession(branch);
+        inheritCheckpoint(source, branch.id);
         JSONArray attachments = question.optJSONArray("attachments");
         db.replaceDraftMedia(branch.id, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
         try {
@@ -817,7 +818,21 @@ final class ChatCoordinator implements AutoCloseable {
         if (sessionBusy(sourceSessionId)) throw new IllegalStateException("请等当前回合结束再创建分支");
         ChatDatabase.Snapshot snapshot = snapshots.createLocal(sourceSessionId, throughSeq);
         ChatDatabase.Session branch = db.branchSession(source, "分支 · " + source.title, snapshot.id, sourceSessionId);
+        inheritCheckpoint(source, branch.id);
         activate(branch.id);
+    }
+
+    /**
+     * Spec H3, D13: the source's compaction summary comes along when everything it covers lies before the branch
+     * point, i.e. the branch's history starts with exactly the items it covers; otherwise the branch compacts on its own.
+     */
+    private void inheritCheckpoint(ChatDatabase.Session source, String branchId) throws Exception {
+        ContextCheckpoint checkpoint = ContextCheckpoint.fromStored(source.contextCheckpoint);
+        if (checkpoint == null || checkpoint.coverage.isEmpty() || source.checkpointCoveredItems <= 0) return;
+        ChatDatabase.Session branch = db.getSession(branchId); if (branch == null) return;
+        JSONArray history = contexts.neutralHistory(branch);
+        if (source.checkpointCoveredItems > history.length() || !checkpoint.covers(history, source.checkpointCoveredItems)) return;
+        db.setContextCheckpoint(branchId, source.contextCheckpoint, source.checkpointCoveredItems);
     }
 
     /** Edit rewinds the current local session and restores the selected user input into the composer. */
@@ -1063,6 +1078,7 @@ final class ChatCoordinator implements AutoCloseable {
             if (!("user".equals(role) || "assistant".equals(role))) continue;
             visible++;
             JSONObject copy = new JSONObject(item.toString()).put("inherited", true);
+            copy.remove(ToolHistory.FIELD); // model input (spec T3), not display: results can be large
             if ("user".equals(role)) {
                 current = new java.util.ArrayList<>(); current.add(copy); turns.add(current);
             } else if (current != null) current.add(copy);
@@ -1094,6 +1110,7 @@ final class ChatCoordinator implements AutoCloseable {
             JSONObject visible = new JSONObject(item.toString());
             // Opaque provider continuation can contain encrypted reasoning/signatures and is native-only.
             visible.remove("providerContinuation");
+            visible.remove(ToolHistory.FIELD); // model input (spec T3), not display: results can be large
             out.put(visible);
         }
         return new DisplayTimeline(out, inheritedDisplay.omittedInheritedItems);
@@ -1266,5 +1283,5 @@ final class ChatCoordinator implements AutoCloseable {
 
     private static String validTheme(String value) { String v = value == null ? "" : value.trim(); if (!("system".equals(v) || "light".equals(v) || "dark".equals(v))) return "system"; return v; }
 
-    @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); pipeline.webService.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); guardWorker.shutdownNow(); titleWorker.shutdownNow(); worker.shutdownNow(); }
+    @Override public void close() { closed = true; for (TurnControl control : turnControls.values()) try { control.cancel(); } catch (Exception ignored) { } turnControls.clear(); for (ChatTransport.Turn t : activeTurns.values()) try { t.cancel(); } catch (Exception ignored) { } activeTurns.clear(); startingSessions.clear(); preparingSessions.clear(); webPreparingStages.clear(); postProcessingStages.clear(); lastStreamViewNanos.clear(); pipeline.webService.close(); pipeline.compactions.close(); transports.close(); streamProjectionScheduler.shutdownNow(); preparationWorker.shutdownNow(); clientToolWorker.shutdownNow(); guardWorker.shutdownNow(); titleWorker.shutdownNow(); worker.shutdownNow(); }
 }

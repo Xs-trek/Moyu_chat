@@ -31,6 +31,11 @@ final class ChatTurnOptions {
     final JSONArray providerRoundHistory;
     /** Product-level orchestrator decision for provider-hosted Web on this concrete turn. */
     final boolean hostedWebAllowed;
+    /**
+     * Earlier turns' tool calls go out as this protocol's tool messages (spec T3) only when the turn offers client
+     * tools; otherwise as text ({@link ToolHistory#asText}). Kept for the turn's last round, which offers none.
+     */
+    final boolean replayToolsNatively;
 
     ChatTurnOptions(String toolCapabilities, String webMode) {
         this(toolCapabilities, webMode, ClientToolRuntime.NONE, "", new JSONArray(), new JSONArray(),
@@ -52,11 +57,18 @@ final class ChatTurnOptions {
     ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
                     String clientToolNames, JSONArray toolHistory, JSONArray providerRoundHistory,
                     boolean hostedWebAllowed) {
+        this(toolCapabilities, webMode, clientToolCalling, clientToolNames, toolHistory, providerRoundHistory, hostedWebAllowed, null);
+    }
+
+    private ChatTurnOptions(String toolCapabilities, String webMode, String clientToolCalling,
+                            String clientToolNames, JSONArray toolHistory, JSONArray providerRoundHistory,
+                            boolean hostedWebAllowed, Boolean replayToolsNatively) {
         this.toolCapabilities = normalizeCapabilities(toolCapabilities);
         this.webMode = normalizeWebMode(webMode);
         this.clientToolCalling = ClientToolRuntime.normalizeCalling(clientToolCalling);
         this.clientToolNames = normalizeClientToolNames(clientToolNames);
         this.hostedWebAllowed = hostedWebAllowed && !WEB_OFF.equals(this.webMode);
+        this.replayToolsNatively = replayToolsNatively != null ? replayToolsNatively : !this.clientToolNames.isEmpty();
         try {
             this.toolHistory = toolHistory == null ? new JSONArray() : new JSONArray(toolHistory.toString());
             this.providerRoundHistory = providerRoundHistory == null ? new JSONArray() : new JSONArray(providerRoundHistory.toString());
@@ -64,11 +76,11 @@ final class ChatTurnOptions {
     }
 
     ChatTurnOptions withRoundHistory(JSONArray history, JSONArray roundHistory) {
-        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, roundHistory, hostedWebAllowed);
+        return new ChatTurnOptions(toolCapabilities, webMode, clientToolCalling, clientToolNames, history, roundHistory, hostedWebAllowed, replayToolsNatively);
     }
 
     ChatTurnOptions withoutClientTools() {
-        return new ChatTurnOptions(toolCapabilities, webMode, ClientToolRuntime.NONE, "", toolHistory, providerRoundHistory, hostedWebAllowed);
+        return new ChatTurnOptions(toolCapabilities, webMode, ClientToolRuntime.NONE, "", toolHistory, providerRoundHistory, hostedWebAllowed, replayToolsNatively);
     }
 
     boolean webEnabled() { return hostedWebAllowed; }

@@ -16,6 +16,10 @@ final class CanonicalPrompt {
     final JSONArray projectedMessages;
     /** Standard/Smart may replay matching provider-private state attached to selected assistant messages. */
     final boolean allowProviderContinuation;
+    /** History items the compaction summary at the start stands in for (spec C3); 0 when no summary is used. */
+    int summarizedItems;
+    /** Earlier tool results cleared to save room (spec C2) and the estimated tokens that freed. */
+    int clearedToolResults, clearedToolTokens;
 
     CanonicalPrompt(String instructions, JSONArray messages, boolean truncated,
                     int estimatedInputTokens, int inheritedItemCount, int localItemCount) {
@@ -55,9 +59,21 @@ final class CanonicalPrompt {
         if (messages == null || text == null || text.isEmpty()) return false;
         for (int i = 0; i < messages.length(); i++) {
             JSONObject message = messages.optJSONObject(i);
-            if (message != null && message.optString("text", "").contains(text)) return true;
+            if (message == null) continue;
+            if (message.optString("text", "").contains(text)) return true;
+            JSONArray calls = ToolHistory.of(message); // tool results are history too (spec T3); a cleared one is not seen
+            for (int j = 0; j < calls.length(); j++) {
+                JSONObject call = calls.optJSONObject(j);
+                if (call != null && !call.optBoolean("cleared", false) && ToolHistory.resultText(call).contains(text)) return true;
+            }
         }
         return false;
+    }
+
+    /** Copies what the context assembly established onto a re-budgeted copy of this prompt. */
+    CanonicalPrompt withFactsOf(CanonicalPrompt source) {
+        if (source != null) { summarizedItems = source.summarizedItems; clearedToolResults = source.clearedToolResults; clearedToolTokens = source.clearedToolTokens; }
+        return this;
     }
 
     JSONObject diagnostics() {
@@ -68,6 +84,8 @@ final class CanonicalPrompt {
                     .put("inheritedItemCount", inheritedItemCount)
                     .put("localItemCount", localItemCount)
                     .put("omittedItemCount", omittedItemCount)
+                    .put("summarizedItems", summarizedItems)
+                    .put("clearedToolResults", clearedToolResults)
                     .put("providerContinuation", allowProviderContinuation);
         } catch (Exception ignored) { return new JSONObject(); }
     }

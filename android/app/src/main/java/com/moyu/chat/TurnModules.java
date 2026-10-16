@@ -11,8 +11,7 @@ import org.json.JSONObject;
 final class TurnModules {
     /** Reason codes of a module that does not run. */
     static final String MODE_OFF = "mode_off", HARNESS_OFF = "harness_off", SESSION_OFF = "session_off",
-            SETTING_OFF = "setting_off", NO_CLIENT_TOOLS = "no_client_tools", WEB_NOT_AUTO = "web_not_auto",
-            NO_SNAPSHOT = "no_snapshot";
+            SETTING_OFF = "setting_off", NO_CLIENT_TOOLS = "no_client_tools", WEB_NOT_AUTO = "web_not_auto";
 
     static final class Decision {
         final boolean on;
@@ -23,27 +22,26 @@ final class TurnModules {
         static Decision deny(String reason) { return new Decision(false, reason); }
     }
 
-    final Decision router, compaction, recall, webPlanner, webTools, subagent, verify, memory, snapshotRetrieval;
+    final Decision router, compaction, recall, webPlanner, webTools, subagent, verify, memory;
 
     private TurnModules(Decision router, Decision compaction, Decision recall, Decision webPlanner, Decision webTools,
-                        Decision subagent, Decision verify, Decision memory, Decision snapshotRetrieval) {
+                        Decision subagent, Decision verify, Decision memory) {
         this.router = router; this.compaction = compaction; this.recall = recall; this.webPlanner = webPlanner;
         this.webTools = webTools; this.subagent = subagent; this.verify = verify; this.memory = memory;
-        this.snapshotRetrieval = snapshotRetrieval;
     }
 
     /**
      * @param clientCalling the deployment declares client tool calling on this protocol
      * @param globalMemory  the cross-chat memory setting is on
-     * @param hasSnapshot   the session was branched from a snapshot
      */
     static TurnModules resolve(TurnConfig c, ContextMode.Policy mode, HarnessPolicyResolver.Policy harness,
-                               boolean clientCalling, boolean globalMemory, boolean hasSnapshot) {
+                               boolean clientCalling, boolean globalMemory) {
         boolean minimal = ContextMode.MINIMAL.equals(mode.effectiveLabel);
         boolean smart = ContextMode.SMART.equals(mode.effectiveLabel);
 
         Decision router = !smart ? Decision.deny(MODE_OFF) : !mode.routerEnabled ? Decision.deny(HARNESS_OFF)
                 : switched(c, HelperSwitches.ROUTER);
+        // Compaction includes clearing earlier tool results (spec C2); off, neither runs and no summary is used (D10).
         Decision compaction = !mode.checkpointEnabled ? Decision.deny(MODE_OFF) : switched(c, HelperSwitches.COMPACTION);
         Decision recall = minimal ? Decision.deny(MODE_OFF) : !clientCalling ? Decision.deny(NO_CLIENT_TOOLS)
                 : switched(c, HelperSwitches.RECALL);
@@ -58,17 +56,12 @@ final class TurnModules {
         Decision verify = !mode.verifierEnabled ? Decision.deny(smart ? HARNESS_OFF : MODE_OFF)
                 : !harness.verifierAvailable ? Decision.deny(HARNESS_OFF) : switched(c, HelperSwitches.VERIFY);
         return new TurnModules(router, compaction, recall, webPlanner, webTools, subagent, verify,
-                memory(mode, globalMemory), snapshotRetrieval(mode, hasSnapshot));
+                memory(mode, globalMemory));
     }
 
     /** Cross-chat memory injection: the mode carries it and the global setting is on. */
     static Decision memory(ContextMode.Policy mode, boolean globalMemory) {
         return !mode.memoryCallerEnabled ? Decision.deny(MODE_OFF) : !globalMemory ? Decision.deny(SETTING_OFF) : Decision.allow();
-    }
-
-    /** Branch retrieval from the origin snapshot: the mode carries it and there is a snapshot. */
-    static Decision snapshotRetrieval(ContextMode.Policy mode, boolean hasSnapshot) {
-        return !mode.retrievalEnabled ? Decision.deny(MODE_OFF) : !hasSnapshot ? Decision.deny(NO_SNAPSHOT) : Decision.allow();
     }
 
     private static Decision switched(TurnConfig c, String helper) {
@@ -81,7 +74,7 @@ final class TurnModules {
         try {
             put(out, "router", router); put(out, "compaction", compaction); put(out, "recall", recall);
             put(out, "webPlanner", webPlanner); put(out, "webTools", webTools); put(out, "subagent", subagent);
-            put(out, "verify", verify); put(out, "memory", memory); put(out, "snapshotRetrieval", snapshotRetrieval);
+            put(out, "verify", verify); put(out, "memory", memory);
         } catch (Exception ignored) { }
         return out;
     }

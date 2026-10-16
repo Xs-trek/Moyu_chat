@@ -144,6 +144,8 @@ final class ProviderRoundLoop {
     }
 
     private void commitRoundUsage() throws Exception {
+        // The last main call that reported usage: what the next turn's compaction decision starts from (spec C3).
+        if (roundInput > 0) { r.lastCallInputTokens = roundInput; r.lastCallOutputTokens = roundOutput; }
         mainInput += roundInput; mainOutput += roundOutput; mainCached += roundCached;
         mainCacheWrite += roundCacheWrite; mainCacheBase += roundCacheBase; mainReasoning += roundReasoning;
         roundInput = 0; roundOutput = 0; roundCached = 0; roundCacheWrite = 0; roundCacheBase = 0; roundReasoning = 0;
@@ -494,6 +496,7 @@ final class ProviderRoundLoop {
                 }
                 addToolEvidence(toolName, entry.optString("result", "").trim());
             }
+            r.toolCalls = ToolHistory.stored(clientToolHistory); // as sent: the bounded results (spec T3)
             childInputTokens += batch.childInputTokens;
             childOutputTokens += batch.childOutputTokens;
             subagentCount += batch.subagentCount;
@@ -543,8 +546,8 @@ final class ProviderRoundLoop {
                 mainPrompt.truncated, subagentCount > 0);
         if (!shouldVerify) {
             r.trace().skip(TurnTrace.VERIFY, !r.modules.verify.on ? r.modules.verify.reason : "not_needed");
-            // Client-tool turns depend on hidden tool_call/tool_result history that is intentionally
-            // not durable Chat history. Do not persist partial native continuation across user turns.
+            // A client-tool turn keeps its calls and results in provider-neutral form (spec T3), not the exact provider
+            // round items (reasoning, call ids of earlier rounds), so its final round alone is no valid native continuation.
             if (clientToolBatchCount.get() == 0) try { p.attachProviderContinuation(r.live, r.config, providerContinuationItems); } catch (Exception ignored) { }
             finish(null);
             return;

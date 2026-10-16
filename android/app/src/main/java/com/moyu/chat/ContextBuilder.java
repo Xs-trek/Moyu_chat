@@ -5,23 +5,38 @@ import org.json.JSONObject;
 
 import java.util.List;
 
-/** Projects durable Moyu transcript/snapshot data into disposable model-visible context. */
+/**
+ * Projects durable Moyu transcript/snapshot data into disposable model-visible context (spec C1). Room is made in
+ * this order: earlier tool results are cleared (C2), the compaction summary stands in for the history it covers (C3),
+ * then the oldest complete turns are dropped as the last resort. Tool definitions and the compact instructions are
+ * the steps after that (see {@link TurnPipeline} and {@link #selectWithPolicy}).
+ */
 final class ContextBuilder {
     private static final int STANDARD_RETRIEVED_ITEMS = 4;
     private static final int STANDARD_RETRIEVED_CHARS = 6_000;
     private static final int SMART_RETRIEVED_ITEMS = 8;
     private static final int SMART_RETRIEVED_CHARS = 12_000;
+    /** Spec C3: the newest complete rounds a summary never covers. */
+    static final int KEEP_RECENT_ROUNDS = 2;
     private final ChatDatabase db;
     private final ChatMediaStore mediaStore;
     private final PromptPolicy promptPolicy = new PromptPolicy();
     private final ContextBudgetManager budgets = new ContextBudgetManager();
     private final LocalKnowledgeStore knowledge;
 
-    static final class CompactionPlan {
-        final CanonicalPrompt baseline;
-        final int targetCoveredItems;
-        CompactionPlan(CanonicalPrompt baseline, int targetCoveredItems) {
-            this.baseline = baseline; this.targetCoveredItems = targetCoveredItems;
+    /** What the next compaction summarizes (spec C3): the history, how much of it a summary covers now, and up to where. */
+    static final class CompactionSource {
+        /** The whole history, provider-neutral, without replay state or image bytes. */
+        final JSONArray history;
+        final ContextCheckpoint previous;
+        final int alreadyCovered;
+        /** Start of the newest {@link #KEEP_RECENT_ROUNDS} rounds: the summary may cover up to here. */
+        final int coverableItems;
+        /** Indexes where a complete round starts, up to {@link #coverableItems}: where a summary may end. */
+        final List<Integer> roundStarts;
+        CompactionSource(JSONArray history, ContextCheckpoint previous, int alreadyCovered, int coverableItems, List<Integer> roundStarts) {
+            this.history = history; this.previous = previous; this.alreadyCovered = alreadyCovered;
+            this.coverableItems = coverableItems; this.roundStarts = roundStarts;
         }
     }
 
@@ -49,7 +64,7 @@ final class ContextBuilder {
         return buildInternal(session, contextTokens, inputTokens, outputTokens, ephemeralUserSuffix, new JSONArray(), true, null);
     }
 
-    /** A turn's build: whether memory and branch retrieval run comes from its module decision (spec M4), not from here. */
+    /** A turn's build: whether compaction and memory apply comes from its module decision (spec M4), not from here. */
     CanonicalPrompt buildCommitted(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens,
                                    String ephemeralUserSuffix, TurnModules modules) throws Exception {
         return buildInternal(session, contextTokens, inputTokens, outputTokens, ephemeralUserSuffix, new JSONArray(), true, modules);
@@ -67,7 +82,8 @@ final class ContextBuilder {
                 contextTokens, inputTokens, outputTokens, reserveTokens);
         return new CanonicalPrompt(prompt.instructions, selected.messages, prompt.truncated || selected.truncated,
                 selected.estimatedTokens + Math.max(0, reserveTokens), prompt.inheritedItemCount, prompt.localItemCount,
-                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation);
+                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation)
+                .withFactsOf(prompt);
     }
 
     /**
@@ -83,7 +99,8 @@ final class ContextBuilder {
                 contextTokens, inputTokens, outputTokens);
         return new CanonicalPrompt(instructions, selected.messages, prompt.truncated || selected.truncated,
                 selected.estimatedTokens, prompt.inheritedItemCount, prompt.localItemCount,
-                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation);
+                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation)
+                .withFactsOf(prompt);
     }
 
     /**
@@ -101,35 +118,42 @@ final class ContextBuilder {
                 contextTokens, inputTokens, outputTokens);
         return new CanonicalPrompt(prompt.instructions, selected.messages, prompt.truncated || selected.truncated,
                 selected.estimatedTokens, prompt.inheritedItemCount, prompt.localItemCount,
-                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation);
+                prompt.omittedItemCount + selected.omittedMessageCount, prompt.projectedMessages, prompt.allowProviderContinuation)
+                .withFactsOf(prompt);
     }
 
     /**
-     * Proactive compaction is based on the active raw tail, including provider-private replay state,
-     * not only visible text. Trigger=50%; target=30% of the effective input window.
+     * Spec C3: what a compaction of this session would summarize, or null when there is nothing beyond the newest
+     * {@link #KEEP_RECENT_ROUNDS} rounds that a summary does not already cover.
      */
-    CompactionPlan compactionPlan(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens) throws Exception {
-        ChatDatabase.Snapshot snapshot = session.originSnapshotId == null ? null : db.getSnapshot(session.originSnapshotId);
-        ContextMode.Policy mode = ContextMode.resolve(session, snapshot);
-        if (!mode.checkpointEnabled) return null;
-        ChatDatabase.Provider provider = db.sessionDeployment(session);
-        boolean allowContinuation = ProviderContinuationPolicy.replayAllowed(mode, session, provider);
+    CompactionSource compactionSource(ChatDatabase.Session session) throws Exception {
+        if (session == null) return null;
+        JSONArray history = new JSONArray();
+        SessionHistory.Parts parts = SessionHistory.of(db, session);
+        appendVisible(history, parts.inherited, session, null, false, false);
+        appendVisible(history, parts.local, session, null, false, false);
+        ContextCheckpoint previous = storedCheckpoint(session, history);
+        int covered = previous == null ? 0 : Math.min(session.checkpointCoveredItems, history.length());
+        java.util.ArrayList<Integer> starts = new java.util.ArrayList<>();
+        for (int i = 0; i < history.length(); i++) {
+            JSONObject item = history.optJSONObject(i);
+            if (item != null && "user".equals(item.optString("role"))) starts.add(i);
+        }
+        if (starts.size() <= KEEP_RECENT_ROUNDS) return null;
+        int coverable = starts.get(starts.size() - KEEP_RECENT_ROUNDS);
+        if (coverable <= covered) return null;
+        java.util.ArrayList<Integer> boundaries = new java.util.ArrayList<>();
+        for (int start : starts) if (start > covered && start <= coverable) boundaries.add(start);
+        return new CompactionSource(history, previous, covered, coverable, boundaries);
+    }
 
-        JSONArray durable = durableProjection(session, provider, allowContinuation);
-        int covered = validCoveredItems(session, durable.length());
-        JSONArray activeTail = slice(durable, covered);
-        String instructions = promptPolicy.instructions(session, snapshot, false);
-        if (!budgets.exceedsPercent(instructions, activeTail, contextTokens, inputTokens, outputTokens,
-                ContextBudgetManager.PROACTIVE_COMPACT_TRIGGER_PERCENT)) return null;
-
-        PolicySelection target = selectWithPolicyPercent(session, snapshot, true, durable,
-                contextTokens, inputTokens, outputTokens, ContextBudgetManager.POST_COMPACT_TARGET_PERCENT);
-        int targetCovered = target.result.omittedMessageCount;
-        if (targetCovered <= covered) return null;
-        CanonicalPrompt baseline = new CanonicalPrompt(target.instructions, target.result.messages, true,
-                target.result.estimatedTokens, 0, durable.length(), targetCovered,
-                new JSONArray(durable.toString()), allowContinuation);
-        return new CompactionPlan(baseline, targetCovered);
+    /** The provider-neutral history the coverage hash is checked against (spec T8). */
+    JSONArray neutralHistory(ChatDatabase.Session session) throws Exception {
+        JSONArray history = new JSONArray();
+        SessionHistory.Parts parts = SessionHistory.of(db, session);
+        appendVisible(history, parts.inherited, session, null, false, false);
+        appendVisible(history, parts.local, session, null, false, false);
+        return history;
     }
 
     private CanonicalPrompt buildInternal(ChatDatabase.Session session, int contextTokens, int inputTokens, int outputTokens,
@@ -139,14 +163,15 @@ final class ContextBuilder {
         ContextMode.Policy mode = ContextMode.resolve(session, snapshot);
         // Outside a turn (previews, tests) the same rules decide, without the turn's frozen switches.
         boolean memoryOn = modules != null ? modules.memory.on : TurnModules.memory(mode, globalMemoryEnabled()).on;
-        boolean retrievalOn = modules != null ? modules.snapshotRetrieval.on : TurnModules.snapshotRetrieval(mode, snapshot != null).on;
+        // Spec D10, M3: compaction switched off means its summary is not used either (it is kept for when it is back on).
+        boolean compactionOn = modules != null ? modules.compaction.on : mode.checkpointEnabled;
         ChatDatabase.Provider provider = db.sessionDeployment(session);
         boolean allowContinuation = ProviderContinuationPolicy.replayAllowed(mode, session, provider);
         SessionHistory.Parts history = SessionHistory.of(db, session);
         JSONArray durableProjected = new JSONArray();
-        appendVisible(durableProjected, history.inherited, session, provider, false);
+        appendVisible(durableProjected, history.inherited, session, provider, false, true);
         int inheritedCount = durableProjected.length();
-        appendVisible(durableProjected, history.local, session, provider, allowContinuation);
+        appendVisible(durableProjected, history.local, session, provider, allowContinuation, true);
 
         String pending = pendingUserText == null ? "" : pendingUserText;
         JSONArray pendingImages = projectAttachments(pendingMedia);
@@ -163,63 +188,80 @@ final class ContextBuilder {
         }
         int localCount = durableProjected.length() - inheritedCount;
 
-        int covered = validCoveredItems(session, durableProjected.length());
+        ContextCheckpoint checkpoint = compactionOn ? storedCheckpoint(session, durableProjected) : null;
+        int covered = checkpoint == null ? 0 : Math.min(session.checkpointCoveredItems, durableProjected.length());
+        String summary = checkpoint == null ? "" : checkpoint.asPrefix();
         JSONArray budgetProjection = slice(durableProjected, covered);
-        JSONArray requiredProjection = new JSONArray(budgetProjection.toString());
 
-        // Web/Memory/RAG are optional enhancements. They may consume spare context, but must never
+        // Spec C2: with every earlier tool result the prompt passes half the input window, so the oldest are cleared
+        // (all but the newest three). Part of the compaction module; the stored results are untouched.
+        int[] cleared = {0, 0};
+        if (compactionOn) {
+            String fullInstructions = promptPolicy.instructions(session, snapshot, false) + summary;
+            java.util.function.BooleanSupplier fits = () -> !budgets.exceedsPercent(fullInstructions, budgetProjection,
+                    contextTokens, inputTokens, outputTokens, ContextBudgetManager.TOOL_CLEAR_PERCENT);
+            if (!fits.getAsBoolean()) cleared = ToolHistory.clearOldest(budgetProjection, budgets, fits);
+        }
+        JSONArray requiredProjection = new JSONArray(budgetProjection.toString());
+        JSONArray optionalProjection = budgetProjection;
+
+        // Web/Memory are optional enhancements. They may consume spare context, but must never
         // make a current user turn fail when that turn fits without the optional material.
         if (committed && !pending.isEmpty()) {
-            budgetProjection = mergeOptionalSuffixIfFits(session, snapshot, budgetProjection, pending,
+            optionalProjection = mergeOptionalSuffixIfFits(session, snapshot, optionalProjection, pending, summary,
                     contextTokens, inputTokens, outputTokens);
         }
 
         boolean smart = ContextMode.SMART.equals(mode.effectiveLabel);
         if (memoryOn && !retrievalQuery.trim().isEmpty()) {
             String memory = memorySuffix(session, retrievalQuery, smart);
-            if (!memory.isEmpty()) budgetProjection = mergeOptionalSuffixIfFits(session, snapshot, budgetProjection, memory,
+            if (!memory.isEmpty()) optionalProjection = mergeOptionalSuffixIfFits(session, snapshot, optionalProjection, memory, summary,
                     contextTokens, inputTokens, outputTokens);
         }
 
-        PolicySelection firstSelection = selectWithPolicy(session, snapshot, false, budgetProjection,
+        PolicySelection firstSelection = selectWithPolicy(session, snapshot, false, optionalProjection, summary,
                 contextTokens, inputTokens, outputTokens);
-        ContextBudgetManager.Result first = firstSelection.result;
-
-        if (first.truncated && retrievalOn && snapshot != null && !retrievalQuery.trim().isEmpty()) {
-            String retrievalSuffix = snapshotRetrievalSuffix(snapshot, retrievalQuery, first.messages, smart);
-            if (!retrievalSuffix.isEmpty()) budgetProjection = mergeOptionalSuffixIfFits(session, snapshot, budgetProjection,
-                    retrievalSuffix, contextTokens, inputTokens, outputTokens);
-        }
-
         PolicySelection finalSelection;
         try {
-            finalSelection = selectWithPolicy(session, snapshot, first.truncated, budgetProjection,
+            finalSelection = selectWithPolicy(session, snapshot, firstSelection.result.truncated, optionalProjection, summary,
                     contextTokens, inputTokens, outputTokens);
         } catch (IllegalArgumentException optionalOverflow) {
-            // Optional Web/Memory/RAG must never turn an otherwise valid current request into a hard failure.
-            PolicySelection requiredFirst = selectWithPolicy(session, snapshot, false, requiredProjection,
+            // Optional Web/Memory must never turn an otherwise valid current request into a hard failure.
+            PolicySelection requiredFirst = selectWithPolicy(session, snapshot, false, requiredProjection, summary,
                     contextTokens, inputTokens, outputTokens);
-            finalSelection = selectWithPolicy(session, snapshot, requiredFirst.result.truncated, requiredProjection,
+            finalSelection = selectWithPolicy(session, snapshot, requiredFirst.result.truncated, requiredProjection, summary,
                     contextTokens, inputTokens, outputTokens);
         }
         ContextBudgetManager.Result finalResult = finalSelection.result;
-        return new CanonicalPrompt(finalSelection.instructions, finalResult.messages, finalResult.truncated,
+        JSONArray messages = finalResult.messages;
+        if (!summary.isEmpty()) messages = withSummaryFirst(messages, summary);
+        CanonicalPrompt prompt = new CanonicalPrompt(finalSelection.instructions, messages, finalResult.truncated,
                 finalResult.estimatedTokens, inheritedCount, localCount, finalResult.omittedMessageCount,
                 new JSONArray(durableProjected.toString()), allowContinuation);
+        prompt.summarizedItems = summary.isEmpty() ? 0 : covered;
+        prompt.clearedToolResults = cleared[0];
+        prompt.clearedToolTokens = cleared[1];
+        return prompt;
     }
 
-    private JSONArray durableProjection(ChatDatabase.Session session, ChatDatabase.Provider provider,
-                                        boolean nativeContinuation) throws Exception {
-        SessionHistory.Parts history = SessionHistory.of(db, session);
-        JSONArray out = new JSONArray();
-        appendVisible(out, history.inherited, session, provider, false);
-        appendVisible(out, history.local, session, provider, nativeContinuation);
+    /** The stored summary while it still describes the start of {@code history} (spec T8), else null. */
+    private static ContextCheckpoint storedCheckpoint(ChatDatabase.Session session, JSONArray history) {
+        ContextCheckpoint checkpoint = session == null ? null : ContextCheckpoint.fromStored(session.contextCheckpoint);
+        if (checkpoint == null || session.checkpointCoveredItems <= 0 || session.checkpointCoveredItems > history.length()) return null;
+        return checkpoint.covers(history, session.checkpointCoveredItems) ? checkpoint : null;
+    }
+
+    /** Spec C3: the summary goes first, in front of the first kept message (always a user message: rounds start with one). */
+    private static JSONArray withSummaryFirst(JSONArray messages, String summary) throws Exception {
+        JSONArray out = new JSONArray(messages.toString());
+        JSONObject first = out.optJSONObject(0);
+        if (first != null && "user".equals(first.optString("role"))) first.put("text", summary + first.optString("text", ""));
+        else {
+            JSONArray shifted = new JSONArray().put(new JSONObject().put("role", "user").put("text", summary));
+            for (int i = 0; i < out.length(); i++) shifted.put(out.opt(i));
+            out = shifted;
+        }
         return out;
-    }
-
-    private int validCoveredItems(ChatDatabase.Session session, int durableLength) {
-        if (session == null || ContextCheckpoint.fromStored(session.contextCheckpoint) == null) return 0;
-        return Math.max(0, Math.min(session.checkpointCoveredItems, durableLength));
     }
 
     static final String MEMORY_SETTING = "crossChatMemoryEnabled";
@@ -232,49 +274,34 @@ final class ContextBuilder {
         PolicySelection(String instructions, ContextBudgetManager.Result result) { this.instructions = instructions; this.result = result; }
     }
 
+    /**
+     * Full instructions, else the compact ones (spec C1 step 5). {@code summary} is budgeted with the instructions
+     * because it is always sent, before whatever messages are kept.
+     */
     private PolicySelection selectWithPolicy(ChatDatabase.Session session, ChatDatabase.Snapshot snapshot, boolean truncated,
-                                             JSONArray projected, int contextTokens, int inputTokens, int outputTokens) {
+                                             JSONArray projected, String summary, int contextTokens, int inputTokens, int outputTokens) {
         String full = promptPolicy.instructions(session, snapshot, truncated);
         try {
-            return new PolicySelection(full, budgets.select(full, projected, contextTokens, inputTokens, outputTokens));
+            return new PolicySelection(full, budgets.select(full + summary, projected, contextTokens, inputTokens, outputTokens));
         } catch (IllegalArgumentException fullFailure) {
             if (ContextMode.MINIMAL.equals(ContextMode.normalize(session == null ? null : session.contextMode))) throw fullFailure;
             String compact = promptPolicy.compactInstructions(session, snapshot, truncated);
-            return new PolicySelection(compact, budgets.select(compact, projected, contextTokens, inputTokens, outputTokens));
-        }
-    }
-
-    private PolicySelection selectWithPolicyPercent(ChatDatabase.Session session, ChatDatabase.Snapshot snapshot, boolean truncated,
-                                                    JSONArray projected, int contextTokens, int inputTokens, int outputTokens, int percent) {
-        String full = promptPolicy.instructions(session, snapshot, truncated);
-        try {
-            return new PolicySelection(full, budgets.selectPercent(full, projected, contextTokens, inputTokens, outputTokens, percent));
-        } catch (IllegalArgumentException fullFailure) {
-            if (ContextMode.MINIMAL.equals(ContextMode.normalize(session == null ? null : session.contextMode))) throw fullFailure;
-            String compact = promptPolicy.compactInstructions(session, snapshot, truncated);
-            return new PolicySelection(compact, budgets.selectPercent(compact, projected, contextTokens, inputTokens, outputTokens, percent));
+            return new PolicySelection(compact, budgets.select(compact + summary, projected, contextTokens, inputTokens, outputTokens));
         }
     }
 
     private JSONArray mergeOptionalSuffixIfFits(ChatDatabase.Session session, ChatDatabase.Snapshot snapshot,
-                                                 JSONArray projected, String suffix, int contextTokens,
+                                                 JSONArray projected, String suffix, String summary, int contextTokens,
                                                  int inputTokens, int outputTokens) throws Exception {
         if (suffix == null || suffix.isEmpty()) return projected;
         JSONArray candidate = new JSONArray(projected.toString());
         mergeIntoLatestUser(candidate, suffix);
         try {
-            selectWithPolicy(session, snapshot, false, candidate, contextTokens, inputTokens, outputTokens);
+            selectWithPolicy(session, snapshot, false, candidate, summary, contextTokens, inputTokens, outputTokens);
             return candidate;
         } catch (IllegalArgumentException optionalOverflow) {
             return projected;
         }
-    }
-
-    private String snapshotRetrievalSuffix(ChatDatabase.Snapshot snapshot, String query, JSONArray alreadySelected, boolean smart) {
-        int maxItems = smart ? SMART_RETRIEVED_ITEMS : STANDARD_RETRIEVED_ITEMS;
-        int maxChars = smart ? SMART_RETRIEVED_CHARS : STANDARD_RETRIEVED_CHARS;
-        List<LocalKnowledgeStore.Hit> hits = knowledge.searchSnapshot(snapshot.id, query, maxItems * 2);
-        return renderHits(hits, alreadySelected, "Moyu retrieved historical snapshot excerpts", "snapshot", maxItems, maxChars);
     }
 
     private String memorySuffix(ChatDatabase.Session session, String query, boolean smart) {
@@ -335,15 +362,19 @@ final class ContextBuilder {
         projected.put(new JSONObject().put("role", "user").put("text", suffix));
     }
 
+    /**
+     * Visible history items in provider-neutral form, with an answer's tool calls (spec T3). {@code withMedia}: image
+     * bytes for the request; without them (compaction, coverage) an image is only its metadata.
+     */
     private void appendVisible(JSONArray out, JSONArray source, ChatDatabase.Session session,
-                               ChatDatabase.Provider provider, boolean allowNativeState) throws Exception {
+                               ChatDatabase.Provider provider, boolean allowNativeState, boolean withMedia) throws Exception {
         for (int i = 0; i < source.length(); i++) {
             JSONObject item = source.optJSONObject(i);
             if (item == null || !"message".equals(item.optString("kind")) || item.optBoolean("streaming", false)) continue;
             String role = item.optString("role", "");
             if (!("user".equals(role) || "assistant".equals(role))) continue;
             String text = item.optString("text", "");
-            JSONArray attachments = projectAttachments(item.optJSONArray("attachments"));
+            JSONArray attachments = withMedia ? projectAttachments(item.optJSONArray("attachments")) : imageMetadata(item.optJSONArray("attachments"));
 
             if ("assistant".equals(role) && item.optBoolean("incomplete", false)) {
                 String code = item.optString("terminalCode", "interrupted");
@@ -354,9 +385,11 @@ final class ContextBuilder {
                 text = text + (text.isEmpty() ? "" : "\n") + "[The assistant produced image output in this historical turn; the image bytes are not replayed in provider-neutral context.]";
                 attachments = new JSONArray();
             }
-            if (text.trim().isEmpty() && attachments.length() == 0) continue;
+            JSONArray calls = "assistant".equals(role) ? ToolHistory.of(item) : new JSONArray();
+            if (text.trim().isEmpty() && attachments.length() == 0 && calls.length() == 0) continue;
             JSONObject visible = new JSONObject().put("role", role).put("text", text);
             if (attachments.length() > 0) visible.put("attachments", attachments);
+            if (calls.length() > 0) visible.put(ToolHistory.FIELD, new JSONArray(calls.toString()));
             if (allowNativeState && "assistant".equals(role)) {
                 JSONObject state = item.optJSONObject("providerContinuation");
                 if (providerStateMatches(state, session, provider)) visible.put("_providerContinuation", new JSONObject(state.toString()));
@@ -373,6 +406,22 @@ final class ContextBuilder {
         if (!expectedProfile.equals(state.optString("modelProfileId", "")) || state.optJSONArray("items") == null) return false;
         String fingerprint = state.optString("deploymentFingerprint", "");
         return !fingerprint.isEmpty() && fingerprint.equals(ProviderContinuationIdentity.fingerprint(db, provider, session));
+    }
+
+    /**
+     * Images as metadata only: what compaction and coverage see (spec C3: summarized images are not sent again). The same
+     * images as {@link #projectAttachments} keeps, so both projections hold the same items.
+     */
+    private JSONArray imageMetadata(JSONArray source) throws Exception {
+        JSONArray out = new JSONArray();
+        if (source == null) return out;
+        for (int i = 0; i < source.length(); i++) {
+            JSONObject item = source.optJSONObject(i); if (item == null || !"image".equals(item.optString("kind"))) continue;
+            String mediaId = item.optString("mediaId", "").trim(); String mime = item.optString("mimeType", "").trim();
+            if (mediaId.isEmpty() || mime.isEmpty() || (mediaStore != null && !mediaStore.exists(mediaId))) continue;
+            out.put(new JSONObject().put("kind", "image").put("fileName", item.optString("fileName", "image")));
+        }
+        return out;
     }
 
     private JSONArray projectAttachments(JSONArray source) throws Exception {

@@ -176,7 +176,7 @@ final class SmartVerifierService {
                 out.put(new JSONObject().put("id", "user:instructions").put("type", "user_custom_instructions").put("text", customInstruction.trim()));
             }
             if (checkpoint != null) {
-                out.put(new JSONObject().put("id", "context:checkpoint").put("type", "conversation_checkpoint").put("text", checkpoint.toJson().toString()));
+                out.put(new JSONObject().put("id", "context:checkpoint").put("type", "conversation_checkpoint").put("text", checkpoint.summary));
             }
             String context = renderContext(prompt);
             if (!context.isEmpty()) out.put(new JSONObject().put("id", "context:recent").put("type", "conversation_context").put("text", context));

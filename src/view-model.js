@@ -7,6 +7,7 @@ export const WEB_LABELS = { off: '关闭', auto: '自动', on: '开启' };
 
 const STAGES = {
   preparing: ['整理上下文', 'think'],
+  compacting: ['正在整理上下文', 'think'],
   connecting: ['连接模型', 'idle'],
   connected: ['已连接 · 等待模型', 'idle'],
   retrying: ['服务繁忙，稍后自动重试', 'idle'],

@@ -36,12 +36,13 @@ public class LocalKnowledgeStoreTest {
         snapshot.sourceItemCount = items.length();
         app.database().saveSnapshot(snapshot, items);
 
+        ChatDatabase.Session branch = app.database().createSession(profile(app.database()), "branch", snapshot.id, null, ReasoningPolicy.DEFAULT);
         LocalKnowledgeStore store = new LocalKnowledgeStore(app.database());
-        List<LocalKnowledgeStore.Hit> english = store.searchSnapshot(snapshot.id, "allocator ring buffer", 4);
+        List<LocalKnowledgeStore.Hit> english = store.searchSessionHistory(branch.id, "allocator ring buffer", 4);
         assertFalse(english.isEmpty());
         assertTrue(english.get(0).text.contains("allocator boundary"));
 
-        List<LocalKnowledgeStore.Hit> chinese = store.searchSnapshot(snapshot.id, "DMA 中断所有权", 4);
+        List<LocalKnowledgeStore.Hit> chinese = store.searchSessionHistory(branch.id, "DMA 中断所有权", 4);
         assertFalse(chinese.isEmpty());
         assertTrue(chinese.get(0).text.contains("DMA 所有权"));
     }
@@ -69,7 +70,7 @@ public class LocalKnowledgeStoreTest {
         db.saveSnapshot(origin, items);
         ChatDatabase.Session branch = db.createSession(profile(db), "branch", origin.id, null, ReasoningPolicy.DEFAULT);
         LocalKnowledgeStore store = new LocalKnowledgeStore(db);
-        assertFalse(store.searchSnapshot(origin.id, "privacy token", 4).isEmpty());
+        assertFalse(store.searchSessionHistory(branch.id, "privacy token", 4).isEmpty());
         assertTrue(countScope(LocalKnowledgeStore.snapshotScope(origin.id)) > 0);
         db.deleteSession(branch.id);
         assertNull("unreferenced branch snapshot is collected", db.getSnapshot(origin.id));
