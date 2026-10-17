@@ -42,10 +42,10 @@ final class TurnPipeline {
         void putActiveTurn(String sessionId, ChatTransport.Turn turn);
         ChatTransport.Turn removeActiveTurn(String sessionId);
         boolean ownsTurn(String sessionId, TurnControl control);
-        /** The turn this session's next turn re-answers (from turn.rerun), or null; consumed on read. */
-        String takeRerunOf(String sessionId);
         /** {retryOf, attempt} when this turn retries a failed one, else null. */
         JSONObject takeRetryOf(String sessionId);
+        /** The question (row key) this turn answers again, for a retry or re-answer (spec T7, H5), or null; consumed on read. */
+        default String takeAnswerTo(String sessionId) { return null; }
         /** What the composer keeps once this turn starts (a retry keeps text typed meanwhile), or ""; consumed on read. */
         default String takeKeptDraft(String sessionId) { return ""; }
         /** Whether redacted request / response text is recorded for the protocol inspector. */
@@ -147,7 +147,13 @@ final class TurnPipeline {
         // trim is an emptiness check only; the stored/prompted/sent text stays byte-for-byte original.
         String input = text == null ? "" : text;
         ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("会话不存在");
-        JSONArray pendingMedia = db.draftMedia(id);
+        // A retry or re-answer answers its question again: its text and images, no new message (spec T1, T7, H5).
+        String answerTo = env.takeAnswerTo(id);
+        JSONObject question = answerTo == null ? null : db.timelineItem(id, answerTo);
+        if (answerTo != null && question == null) throw new IllegalArgumentException("找不到要回答的提问");
+        JSONArray pendingMedia = question != null
+                ? (question.optJSONArray("attachments") == null ? new JSONArray() : new JSONArray(question.optJSONArray("attachments").toString()))
+                : db.draftMedia(id);
         if (input.trim().isEmpty() && pendingMedia.length() == 0) return null;
         if (turnConfig == null || turnConfig.provider == null || turnConfig.apiKey == null) throw new IllegalStateException("turn configuration missing");
         if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(turnConfig.inputModalities, "image")) throw new IllegalStateException("当前模型没有声明图片输入能力");
@@ -207,11 +213,9 @@ final class TurnPipeline {
         if (env.wireCaptureEnabled()) usage.setWireRecorder((stage, callIndex, direction, wireText) -> db.addTurnPayload(turnId, callIndex, stage, direction, wireText));
         r.live.put("turnId", turnId);
         JSONObject config = turnConfigJson(r);
-        String rerunOf = env.takeRerunOf(id);
-        if (rerunOf != null) config.put("rerunOf", rerunOf);
         JSONObject retry = env.takeRetryOf(id);
         if (retry != null) config.put("retryOf", retry.optString("retryOf")).put("attempt", retry.optInt("attempt", 2));
-        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(id));
+        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(id), answerTo);
         turnControl.usageState = new JSONObject().put("createdAt", Instant.now().toString());
         env.setStarting(id, true);
         r.requestStartedNanos = System.nanoTime();
@@ -605,8 +609,13 @@ final class TurnPipeline {
         if (q.length() > 400) q = q.substring(0, 400);
         StringBuilder out = new StringBuilder();
         int found = 0;
-        for (LocalKnowledgeStore.Hit hit : knowledge.searchSessionHistory(sessionId, q, RECALL_HITS * 3)) {
+        // Spec H1, D9: only the current path is history; other versions of a message are not recalled.
+        java.util.Set<Integer> onPath = new java.util.HashSet<>();
+        JSONArray local = SessionHistory.of(db, db.getSession(sessionId)).local;
+        for (int i = 0; i < local.length(); i++) { JSONObject row = local.optJSONObject(i); if (row != null) onPath.add(row.optInt("localSeq", -1)); }
+        for (LocalKnowledgeStore.Hit hit : knowledge.searchSessionHistory(sessionId, q, RECALL_HITS * 6)) {
             if (found >= RECALL_HITS || out.length() >= RECALL_RESULT_CHARS) break;
+            if (!LocalKnowledgeStore.inherited(hit) && !onPath.contains(hit.ordinal)) continue;
             if (hit.text == null || hit.text.trim().isEmpty() || (sent != null && sent.carries(hit.text))) continue;
             String text = hit.text.length() > RECALL_HIT_CHARS ? hit.text.substring(0, RECALL_HIT_CHARS) + " […]" : hit.text;
             if (LocalKnowledgeStore.inherited(hit)) out.append("\n[before this branch, message ").append(hit.ordinal + 1);

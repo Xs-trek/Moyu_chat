@@ -54,12 +54,16 @@ export type MoyuChatIntent =
   /** Mascot state kept natively (the WebView has no DOM storage). Whitelisted keys only; gameBest only rises; koiDay is YYYY-MM-DD or ''. */
   | UiIntent<'ui.mascot.set', { key: 'disguise'; value: boolean } | { key: 'gameBest'; value: number } | { key: 'koiDay'; value: string }>
   | UiIntent<'chat.session.delete', { localSessionId: string } | { localSessionIds: string[] }>
+  /** Edit (spec H5): the path ends before the question, its text and images go to the composer; sending adds its new version. */
   | UiIntent<'chat.message.edit', { localSessionId: string; localSeq: number }>
+  /** "回到这里" (spec H5): the path ends at this answer (before this question); nothing is removed. */
   | UiIntent<'chat.message.rollback', { localSessionId: string; localSeq: number }>
+  /** Version switch (spec G3): the path goes through this message to its newest message. Also "回到最新" with `resumeLocalSeq`. */
+  | UiIntent<'chat.message.version', { localSessionId: string; localSeq: number }>
   /**
-   * Rewinds the last turn when it failed or did not finish (`SessionDetailView.retryLocalSeq`) and sends the same
-   * question and images again with the session's current settings; the failed turn's record is removed, the
-   * composer's text is kept. Refused (nothing rewound) while images wait in the composer.
+   * Retry (spec T7): when the path's last turn failed or did not finish (`SessionDetailView.retryLocalSeq`), its
+   * question is answered again with the session's current settings as a new version; the failed version stays and the
+   * composer is left alone.
    */
   | UiIntent<'chat.turn.retry', { localSessionId: string; budgetConfirmed?: boolean }>
   /**
@@ -108,7 +112,8 @@ export type MoyuChatIntent =
   /** 1 = good answer, -1 = bad answer, 0 clears. */
   | UiIntent<'turn.rate', { localSessionId: string; turnId: string; rating: 1 | -1 | 0 }>
   /** Re-ask the user message at localSeq in a new branch; result `data: { localSessionId, text }`, then send `text` there. */
-  | UiIntent<'turn.rerun', { localSessionId: string; localSeq: number; modelProfileId?: string; contextMode?: ContextMode }>
+  /** Re-answer (spec H5): a new answer version under this question; the model and mode become the session's settings. */
+  | UiIntent<'turn.rerun', { localSessionId: string; localSeq: number; modelProfileId?: string; contextMode?: ContextMode; budgetConfirmed?: boolean }>
   /** Read-only; result `data: AnswerGroupView`. */
   | UiIntent<'turn.answers.get', { localSessionId: string; turnId: string }>
   /** Read-only; result `data: { days, since, groupBy, includeArchived, rows: StatsRowView[] }`. */
@@ -378,7 +383,7 @@ export interface SessionView {
 }
 
 export type TimelineItem =
-  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question across re-answers, when more than one. */ answers?: number; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'compacting' | 'connecting' | 'connected' | 'retrying' | 'queued' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question (its versions and older re-answer branches), when more than one. */ answers?: number; /** Spec G3: position among the message's versions, when it has others. */ version?: { index: number; count: number; prevSeq?: number; nextSeq?: number }; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'compacting' | 'connecting' | 'connected' | 'retrying' | 'queued' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
   /** Projected from the turn record (not a stored timeline row): placed right after the turn's reply, or after its user row when there is none. */
   | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; /** Input the last main call sent (inputTokens sums every main call of a tool loop). */ lastMainInputTokens?: number; /** Rate-limit / overload retries before output. */ providerRetries?: number; /** Estimated from the profile's prices, all calls of the turn. */ cost?: { currency: 'USD' | 'CNY'; amount: number; partial: boolean; offPeak: boolean }; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
@@ -431,11 +436,11 @@ export interface TurnPayloadView {
   parts: { part: number; direction: 'request' | 'response'; createdAt: string; body: string }[];
 }
 
-/** Every answer to one question: the original turn and its re-answers (original first). */
+/** Every answer to one question: its versions in this session and older re-answer branches (first answer first). */
 export interface AnswerGroupView {
   rootTurnId: string;
   question: string;
-  answers: { turnId: string; localSessionId: string; sessionTitle: string; userSeq: number; status: string; terminalCode: string; config: Record<string, unknown>; usage: Record<string, unknown>; rating?: 1 | -1; original: boolean; startedAt: string; text?: string; verification?: { verdict: string; action: string; repaired: boolean } }[];
+  answers: { turnId: string; localSessionId: string; sessionTitle: string; userSeq: number; status: string; terminalCode: string; config: Record<string, unknown>; usage: Record<string, unknown>; rating?: 1 | -1; original: boolean; startedAt: string; /** A version in this session: `answerSeq` switches to it. */ sameSession: boolean; answerSeq?: number; text?: string; verification?: { verdict: string; action: string; repaired: boolean } }[];
 }
 
 /** In-use statistics of finished turns in the window, grouped by stats.get's groupBy. */
@@ -471,6 +476,8 @@ export interface SessionDetailView extends SessionView {
   postProcessingStage?: 'verifying' | 'repairing' | string;
   /** localSeq of the question a retry would send again; present only while idle after a failed or unfinished last turn. */
   retryLocalSeq?: number;
+  /** Spec H5: the path's end has more after it; `chat.message.version` with this seq returns to the newest message there. */
+  resumeLocalSeq?: number;
   /** The session's frozen copy differs from its (enabled) model profile, which was edited; `chat.session.model.set` with the same id applies it. */
   profileChanged?: boolean;
   /** Usable input window (context − output − safety margin), the same budget the context builder fills. */

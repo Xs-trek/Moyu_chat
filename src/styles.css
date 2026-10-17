@@ -487,6 +487,9 @@ h1, h2, h3, p { margin: 0; }
 }
 .msg.error strong { display: block; font-size: var(--text-sm); font-weight: 600; }
 .msg.error code { font-size: var(--text-xs); color: var(--muted); }
+.version-switch { display: inline-flex; align-items: center; gap: 0; color: var(--muted); }
+.version-switch .version-label { min-width: 2.4em; text-align: center; font-variant-numeric: tabular-nums; }
+.version-switch .icon-btn:disabled { opacity: .35; }
 .retry-row { display: flex; align-items: center; gap: 12px; padding: 0 2px 0 14px; color: var(--muted); font-size: var(--text-sm); }
 .btn.mini { padding: 0 14px; font-size: var(--text-sm); }
 

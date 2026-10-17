@@ -450,7 +450,8 @@ public class ChatCoordinatorE2eTest {
         assertEquals("kept across restarts in the settings table", "true", app.database().setting("mascot.disguise", "false"));
     }
 
-    @Test public void editAndRollbackRewindCurrentSessionWhileBranchingStaysExplicit() throws Exception {
+    /** Spec H5, D9: edit, "回到这里" and the version switch stay in the session and remove nothing; branching stays explicit. */
+    @Test public void editReturnAndVersionSwitchStayInTheSessionWhileBranchingStaysExplicit() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         String sourceId = createSession();
         post("chat.session.send", new JSONObject().put("localSessionId", sourceId).put("text", "original prompt"));
@@ -493,15 +494,23 @@ public class ChatCoordinatorE2eTest {
             if (item != null && "message".equals(item.optString("kind")) && "assistant".equals(item.optString("role"))) secondAssistantSeq = item.optInt("localSeq", -1);
         }
         assertTrue(secondAssistantSeq > 0);
+        // The edited question is a second version of the first one; the original and its answer are kept.
+        JSONObject secondQuestion = activeSession(latestView()).getJSONArray("messages").getJSONObject(0);
+        assertEquals("second prompt", secondQuestion.optString("text"));
+        assertEquals(2, secondQuestion.getJSONObject("version").getInt("count"));
+        assertEquals(userSeq, secondQuestion.getJSONObject("version").getInt("prevSeq"));
+
         post("chat.message.rollback", new JSONObject().put("localSessionId", sourceId).put("localSeq", secondAssistantSeq));
-        await("rollback removes selected assistant and later rows", () -> {
+        await("回到这里 keeps the answer it returns to", () -> app.database().timeline(sourceId).length() == 2);
+        post("chat.message.version", new JSONObject().put("localSessionId", sourceId).put("localSeq", userSeq));
+        final int originalAnswerSeq = assistantSeq;
+        await("the original version is back", () -> {
             JSONArray rows = app.database().timeline(sourceId);
-            if (rows.length() != 1) return false;
-            JSONObject only = rows.optJSONObject(0);
-            return only != null && "user".equals(only.optString("role")) && "second prompt".equals(only.optString("text"));
+            return rows.length() == 2 && "original prompt".equals(rows.optJSONObject(0).optString("text"))
+                    && rows.optJSONObject(1).optInt("localSeq") == originalAnswerSeq;
         });
-        assertEquals("rollback must stay in the same session", sourceId, latestView().optString("activeLocalSessionId"));
-        assertEquals("rollback must not silently create a branch", 1, latestView().optJSONArray("sessions").length());
+        assertEquals("all of it stays in the same session", sourceId, latestView().optString("activeLocalSessionId"));
+        assertEquals("nothing silently creates a branch", 1, latestView().optJSONArray("sessions").length());
 
         // Branching is still available, but only through the explicit branch intent.
         post("branch.create.local", new JSONObject().put("localSessionId", sourceId));
@@ -2569,9 +2578,9 @@ public class ChatCoordinatorE2eTest {
         assertEquals("[\"verify\"]", app.database().setting(HelperSwitches.SETTING_KEY, ""));
     }
 
-    @Test public void aRetriedTurnIsArchivedLinkedFromItsRetryAndStillCounted() throws Exception {
+    /** Spec T7, D9: a retry is a new version of the answer; the failed version stays, is linked and still counted. */
+    @Test public void aRetryIsANewVersionLinkedToTheFailedOneWhichStaysAndIsCounted() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
-        assertTrue(awaitResult(post("instruction.global.set", new JSONObject().put("text", "private preference text"))).optBoolean("ok"));
         String sessionId = createSession();
         failFirstRequest();
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "the question"));
@@ -2580,34 +2589,24 @@ public class ChatCoordinatorE2eTest {
         post("chat.turn.retry", new JSONObject().put("localSessionId", sessionId));
         await("retried turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
 
-        String turnId = app.database().timeline(sessionId).getJSONObject(1).optString("turnId");
+        JSONArray path = app.database().timeline(sessionId);
+        assertEquals("the question is not sent again as a new message", "the question", path.getJSONObject(0).optString("text"));
+        String turnId = path.getJSONObject(1).optString("turnId");
         JSONObject trace = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data");
         assertEquals(2, trace.getJSONObject("config").optInt("attempt"));
         JSONObject previous = trace.getJSONObject("previousAttempt");
         assertEquals(trace.getJSONObject("config").optString("retryOf"), previous.optString("turnId"));
         assertEquals("failed", previous.optString("status"));
-        assertEquals(ChatDatabase.ARCHIVE_RETRY, previous.optString("reason"));
+        assertTrue("the failed version is kept, not archived", previous.optBoolean("kept"));
 
-        try (android.database.Cursor c = app.database().getReadableDatabase().rawQuery("SELECT config,spans FROM turn_archive WHERE turn_id=?", new String[]{previous.optString("turnId")})) {
-            assertTrue(c.moveToFirst());
-            JSONObject config = new JSONObject(c.getString(0));
-            assertFalse("the instruction text is not archived", c.getString(0).contains("private preference text"));
-            assertEquals("private preference text".length(), config.optInt("customInstructionChars"));
-            JSONArray spans = new JSONArray(c.getString(1));
-            assertTrue(spans.length() > 0);
-            for (int i = 0; i < spans.length(); i++) {
-                JSONObject detail = spans.getJSONObject(i).getJSONObject("detail");
-                for (java.util.Iterator<String> keys = detail.keys(); keys.hasNext(); ) assertFalse("no free text in archived details", detail.get(keys.next()) instanceof String);
-            }
-        }
+        JSONObject answer = activeSession(latestView()).getJSONArray("messages").getJSONObject(1);
+        assertEquals(2, answer.getJSONObject("version").getInt("count"));
+        assertEquals(2, answer.getInt("answers"));
         JSONObject stats = awaitResult(post("stats.get", new JSONObject().put("days", 7).put("groupBy", "model"))).getJSONObject("data");
         JSONObject row = stats.getJSONArray("rows").getJSONObject(0);
         assertEquals(2, row.getInt("turns"));
         assertEquals(1, row.getInt("failed"));
-        assertEquals(1, row.getInt("archived"));
-        JSONObject live = awaitResult(post("stats.get", new JSONObject().put("days", 7).put("groupBy", "model").put("includeArchived", false))).getJSONObject("data");
-        assertEquals(1, live.getJSONArray("rows").getJSONObject(0).getInt("turns"));
-        assertEquals(0, live.getJSONArray("rows").getJSONObject(0).getInt("archived"));
+        assertEquals(0, row.getInt("archived"));
     }
 
     @Test public void aNewChatIsListedOnlyOnceItHasAMessageOrADraftAndUnusedOnesDoNotPileUp() throws Exception {

@@ -53,8 +53,8 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, String> webPreparingStages = new ConcurrentHashMap<>();
     private final Map<String, String> postProcessingStages = new ConcurrentHashMap<>();
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
-    /** Branch session → the turn its next turn re-answers (set by turn.rerun, consumed when that turn starts). */
-    private final Map<String, String> pendingReruns = new ConcurrentHashMap<>();
+    /** The question (row key) a session's next turn answers instead of a new message: retry and re-answer (spec T7, H5). */
+    private final Map<String, String> pendingAnswers = new ConcurrentHashMap<>();
     /** Retry link of a session's next accepted turn: {retryOf: archived turn id, attempt: n}. */
     private final Map<String, JSONObject> pendingRetries = new ConcurrentHashMap<>();
     /** Sessions automatic naming already ran for in this process; a failed attempt is not repeated on its own. */
@@ -237,7 +237,8 @@ final class ChatCoordinator implements AutoCloseable {
                     return;
                 }
                 case "chat.message.edit": editMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
-                case "chat.message.rollback": rollbackMessageInPlace(required(p, "localSessionId"), requiredSeq(p)); break;
+                case "chat.message.rollback": returnToMessage(required(p, "localSessionId"), requiredSeq(p)); break;
+                case "chat.message.version": selectVersion(required(p, "localSessionId"), requiredSeq(p)); break;
                 // Configuration editors live in the WebView; only the API Key has a native entry. Saves push
                 // the view before the result, so the editor's follow-up already sees the saved rows (ids).
                 case "provider.save": { JSONObject saved = config.saveAccount(p); emitView(); result(requestId, true, null, saved); return; }
@@ -262,13 +263,8 @@ final class ChatCoordinator implements AutoCloseable {
                     db.rateTurn(required(p, "localSessionId"), required(p, "turnId"), rating);
                     break;
                 }
-                case "turn.rerun": {
-                    JSONObject branch = rerunTurn(required(p, "localSessionId"), requiredSeq(p),
-                            p.optString("modelProfileId", "").trim(), p.optString("contextMode", "").trim());
-                    emitView();
-                    result(requestId, true, null, branch);
-                    return;
-                }
+                case "turn.rerun": rerunTurn(requestId, required(p, "localSessionId"), requiredSeq(p),
+                        p.optString("modelProfileId", "").trim(), p.optString("contextMode", "").trim(), p.optBoolean("budgetConfirmed", false)); return;
                 case "turn.answers.get": {
                     JSONObject group = db.answerGroup(required(p, "localSessionId"), required(p, "turnId"));
                     if (group == null) throw new IllegalArgumentException("找不到这一轮的记录");
@@ -329,7 +325,7 @@ final class ChatCoordinator implements AutoCloseable {
                 host.setTurnRuntimeActive(sessionId, false);
                 throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
             }
-        } catch (Exception rejected) { sendRejected(requestId, sessionId, restoreOnReject, rejected); return; }
+        } catch (Exception rejected) { pendingAnswers.remove(sessionId); sendRejected(requestId, sessionId, restoreOnReject, rejected); return; }
         // The composer is cleared only after the runtime lease makes this an accepted turn.
         db.setDraft(sessionId, keptDraft);
         if (keptDraft.isEmpty()) pendingKeptDrafts.remove(sessionId); else pendingKeptDrafts.put(sessionId, keptDraft);
@@ -646,8 +642,8 @@ final class ChatCoordinator implements AutoCloseable {
         @Override public ChatTransport.Turn removeActiveTurn(String sessionId) { return activeTurns.remove(sessionId); }
         @Override public boolean ownsTurn(String sessionId, TurnControl control) { return turnControls.get(sessionId) == control; }
         @Override public boolean wireCaptureEnabled() { return wireCapture; }
-        @Override public String takeRerunOf(String sessionId) { return pendingReruns.remove(sessionId); }
         @Override public JSONObject takeRetryOf(String sessionId) { return pendingRetries.remove(sessionId); }
+        @Override public String takeAnswerTo(String sessionId) { return pendingAnswers.remove(sessionId); }
         @Override public String takeKeptDraft(String sessionId) { String kept = pendingKeptDrafts.remove(sessionId); return kept == null ? "" : kept; }
         @Override public void releaseTurn(String id) {
             activeTurns.remove(id);
@@ -778,39 +774,31 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     /**
-     * Re-asks one user message in a new branch: the branch carries the conversation before that message,
-     * optionally another model and/or context mode, and the message's attachments as its draft. The
-     * caller sends the returned text; that turn is recorded as a re-answer of the original turn.
+     * Re-answers one question as a new version under it, in this session (spec H5, D9): the chosen model and context
+     * mode become the session's settings (shown in the header, used by later turns too), then the question is answered
+     * again with only the history before it. Answers to the same question can then be switched and compared.
      */
-    private JSONObject rerunTurn(String sourceSessionId, int userSeq, String modelProfileId, String contextMode) throws Exception {
-        ChatDatabase.Session source = db.getSession(sourceSessionId); if (source == null) throw new IllegalArgumentException("原会话不存在");
-        if (sessionBusy(sourceSessionId)) throw new IllegalStateException("请等当前回合结束再重答");
-        JSONObject question = messageAt(sourceSessionId, userSeq);
-        if (!"user".equals(question.optString("role"))) throw new IllegalArgumentException("只能对用户消息重答");
-        String originalTurn = db.turnAt(sourceSessionId, userSeq);
-        String snapshotId = userSeq > 1 || source.originSnapshotId != null ? snapshots.createLocal(sourceSessionId, userSeq - 1).id : null;
-        ChatDatabase.Session branch = db.branchSession(source, "重答 · " + source.title, snapshotId, sourceSessionId);
-        // A re-answer is judged on its own: re-route and re-plan instead of inheriting the source's routing.
-        branch.taskProfile = "";
-        if (!contextMode.isEmpty()) {
-            branch.contextMode = ContextMode.normalize(contextMode);
-            branch.subagentMode = ContextMode.MINIMAL.equals(branch.contextMode) ? HarnessPolicyResolver.SUBAGENT_OFF
-                    : ContextMode.SMART.equals(branch.contextMode) ? HarnessPolicyResolver.SUBAGENT_AUTO : standardSubagentMode;
+    private void rerunTurn(String requestId, String sessionId, int userSeq, String modelProfileId, String contextMode, boolean budgetConfirmed) throws Exception {
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请等当前回合结束再重答");
+        JSONObject question = messageAt(sessionId, userSeq);
+        if (!"user".equals(question.optString("role")) || question.optBoolean("inherited", false)) throw new IllegalArgumentException("只能对本会话的提问重答");
+        String questionKey = db.itemKeyAt(sessionId, userSeq);
+        if (!modelProfileId.isEmpty() && !modelProfileId.equals(session.modelProfileId)) setSessionModel(sessionId, modelProfileId);
+        if (!contextMode.isEmpty() && !ContextMode.normalize(contextMode).equals(ContextMode.normalize(session.contextMode))) {
+            String mode = ContextMode.normalize(contextMode);
+            db.setContextMode(sessionId, mode, ContextMode.MINIMAL.equals(mode) ? HarnessPolicyResolver.SUBAGENT_OFF
+                    : ContextMode.SMART.equals(mode) ? HarnessPolicyResolver.SUBAGENT_AUTO : standardSubagentMode);
         }
-        db.saveSession(branch);
-        inheritCheckpoint(source, branch.id);
-        JSONArray attachments = question.optJSONArray("attachments");
-        db.replaceDraftMedia(branch.id, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
-        try {
-            if (!modelProfileId.isEmpty() && !modelProfileId.equals(branch.modelProfileId)) setSessionModel(branch.id, modelProfileId);
-        } catch (Exception error) {
-            db.deleteSession(branch.id);
-            mediaStore.pruneUnreferenced(db.referencedMediaIds());
-            throw error;
-        }
-        if (originalTurn != null) pendingReruns.put(branch.id, originalTurn);
-        activate(branch.id);
-        return new JSONObject().put("localSessionId", branch.id).put("text", question.optString("text", ""));
+        answerAgain(requestId, sessionId, questionKey, question.optString("text", ""), new JSONObject().put("budgetConfirmed", budgetConfirmed));
+    }
+
+    /** Starts a turn that answers an existing question (no new message, the composer untouched). */
+    private void answerAgain(String requestId, String sessionId, String questionKey, String text, JSONObject send) {
+        ChatDatabase.Session session = db.getSession(sessionId);
+        String keptDraft = session == null || session.draft == null ? "" : session.draft;
+        pendingAnswers.put(sessionId, questionKey);
+        startTurn(requestId, sessionId, text, send, keptDraft, "");
     }
 
     private void createLocalBranch(String sourceSessionId, Integer throughSeq) throws Exception {
@@ -835,7 +823,7 @@ final class ChatCoordinator implements AutoCloseable {
         db.setContextCheckpoint(branchId, source.contextCheckpoint, source.checkpointCoveredItems);
     }
 
-    /** Edit rewinds the current local session and restores the selected user input into the composer. */
+    /** Edit (spec H5): the path ends before the message and its text and images go back to the composer; sending adds its new version. */
     private void editMessageInPlace(String sessionId, int localSeq) throws Exception {
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
         if (sessionBusy(sessionId)) throw new IllegalStateException("请先停止当前回合再编辑历史");
@@ -843,37 +831,27 @@ final class ChatCoordinator implements AutoCloseable {
         if (!"user".equals(selected.optString("role"))) throw new IllegalArgumentException("只能编辑用户消息");
         String text = selected.optString("text", "");
         JSONArray attachments = selected.optJSONArray("attachments");
-        db.truncateTimelineFrom(sessionId, localSeq);
+        db.moveLeafBefore(sessionId, localSeq);
         db.setDraft(sessionId, text);
         db.replaceDraftMedia(sessionId, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
-        mediaStore.pruneUnreferenced(db.referencedMediaIds());
         activate(sessionId);
     }
 
     /**
-     * Retry rewinds the last turn when it failed or did not finish and sends the same question again with the
-     * session's current settings. Like edit, the failed turn's record moves to the archive
-     * (statistics and budgets keep it) and the new turn links to it; text typed in the composer stays.
+     * Retry (spec T7): when the path's last turn failed or did not finish, its question is answered again with the
+     * session's current settings, as a new version; the failed version stays and the new turn links to it. The
+     * composer (text and images) is left alone.
      */
     private void retryTurn(String requestId, String sessionId, boolean budgetConfirmed) throws Exception {
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
         if (sessionBusy(sessionId)) throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
         JSONObject question = retryTarget(db.timeline(sessionId));
         if (question == null) throw new IllegalStateException("最后一轮已经完成，不需要重试");
-        if (db.draftMedia(sessionId).length() > 0) throw new IllegalStateException("输入框里还有待发送的图片，请先发送或移除再重试");
-        TurnConfig planned = freezeTurnConfig(sessionId); // a turn that could not start is refused before anything is rewound
-        JSONObject reached = budgetConfirmed ? null : config.budgetReached(planned.providerId);
-        if (reached != null) { BudgetReached refusal = new BudgetReached(reached); result(requestId, false, refusal.getMessage(), new JSONObject().put("budget", reached)); return; }
-        String keptDraft = session.draft == null ? "" : session.draft;
-        String text = question.optString("text", "");
-        JSONArray attachments = question.optJSONArray("attachments");
-        String failedTurnId = db.truncateTimelineFrom(sessionId, question.optInt("localSeq"), ChatDatabase.ARCHIVE_RETRY);
-        db.replaceDraftMedia(sessionId, attachments == null ? new JSONArray() : new JSONArray(attachments.toString()));
-        db.setDraft(sessionId, keptDraft);
+        int questionSeq = question.optInt("localSeq");
         JSONObject send = new JSONObject().put("budgetConfirmed", budgetConfirmed);
-        JSONObject failed = failedTurnId == null ? null : db.archivedTurn(failedTurnId);
-        if (failed != null) send.put("retry", new JSONObject().put("retryOf", failedTurnId).put("attempt", failed.optInt("attempt", 1) + 1));
-        startTurn(requestId, sessionId, text, send, keptDraft, keptDraft.trim().isEmpty() ? text : text + "\n\n" + keptDraft);
+        String failedTurnId = db.turnAt(sessionId, questionSeq);
+        if (failedTurnId != null) send.put("retry", new JSONObject().put("retryOf", failedTurnId).put("attempt", db.attemptsAt(sessionId, questionSeq) + 1));
+        answerAgain(requestId, sessionId, db.itemKeyAt(sessionId, questionSeq), question.optString("text", ""), send);
     }
 
     /** The last local question when its turn failed or did not finish (error row, unfinished or missing answer), else null. */
@@ -942,13 +920,23 @@ final class ChatCoordinator implements AutoCloseable {
 
     static final String CHECKS_BUSY = "已有 " + MAX_RUNNING_CHECKS + " 项检查在进行，请稍后再试";
 
-    /** Rollback rewinds the current local session; branching is a separate explicit user action. */
-    private void rollbackMessageInPlace(String sessionId, int localSeq) throws Exception {
+    /**
+     * "回到这里" (spec H5): on an answer, the path ends at it; on a question, before it. Nothing is removed: what came
+     * after stays as another path, reachable through "回到最新" or the version switch.
+     */
+    private void returnToMessage(String sessionId, int localSeq) throws Exception {
         if (db.getSession(sessionId) == null) throw new IllegalArgumentException("会话不存在");
-        if (sessionBusy(sessionId)) throw new IllegalStateException("请先停止当前回合再回退");
-        messageAt(sessionId, localSeq);
-        db.truncateTimelineFrom(sessionId, localSeq);
-        mediaStore.pruneUnreferenced(db.referencedMediaIds());
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请先停止当前回合");
+        JSONObject message = messageAt(sessionId, localSeq);
+        if ("user".equals(message.optString("role"))) db.moveLeafBefore(sessionId, localSeq); else db.moveLeafTo(sessionId, localSeq);
+        activate(sessionId);
+    }
+
+    /** Version switch (spec G3): the path goes through the chosen version to its newest message. */
+    private void selectVersion(String sessionId, int localSeq) {
+        if (db.getSession(sessionId) == null) throw new IllegalArgumentException("会话不存在");
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请等当前回合结束再切换版本");
+        db.selectVersion(sessionId, localSeq);
         activate(sessionId);
     }
 
@@ -1104,7 +1092,7 @@ final class ChatCoordinator implements AutoCloseable {
                 ? new DisplayTimeline(new JSONArray(), 0)
                 : boundedInheritedDisplay(db.snapshotItems(s.originSnapshotId));
         JSONArray out = new JSONArray(inheritedDisplay.items.toString());
-        JSONArray local = withTurnUsage(db.timeline(s.id), db.turns(s.id));
+        JSONArray local = withVersions(withTurnUsage(db.timeline(s.id), db.turns(s.id)), db.versions(s.id));
         for (int i = 0; i < local.length(); i++) {
             JSONObject item = local.optJSONObject(i); if (item == null) continue;
             JSONObject visible = new JSONObject(item.toString());
@@ -1122,39 +1110,42 @@ final class ChatCoordinator implements AutoCloseable {
      * produced no reply), so the frontend attaches it to the reply it belongs to.
      */
     static JSONArray withTurnUsage(JSONArray timeline, JSONArray turns) throws Exception {
-        java.util.HashMap<Integer, JSONObject> byUserSeq = new java.util.HashMap<>();
-        for (int i = 0; turns != null && i < turns.length(); i++) {
-            JSONObject turn = turns.optJSONObject(i); if (turn == null) continue;
-            JSONObject usage = turn.optJSONObject("usage");
-            if (usage == null || usage.length() == 0) continue;
-            byUserSeq.put(turn.optInt("userSeq"), new JSONObject(usage.toString()).put("kind", "usage").put("turnId", turn.optString("turnId")));
-        }
-        java.util.HashMap<Integer, JSONObject> turnBySeq = new java.util.HashMap<>();
-        for (int i = 0; turns != null && i < turns.length(); i++) { JSONObject turn = turns.optJSONObject(i); if (turn != null) turnBySeq.put(turn.optInt("userSeq"), turn); }
-        JSONObject currentTurn = null;
+        // Since v3 a question can have several turns (versions): a turn is found by its answer (turnId on the
+        // answer row, or on the error row of a turn that left no answer), not by its question.
+        java.util.HashMap<String, JSONObject> byTurn = new java.util.HashMap<>();
+        for (int i = 0; turns != null && i < turns.length(); i++) { JSONObject turn = turns.optJSONObject(i); if (turn != null) byTurn.put(turn.optString("turnId"), turn); }
+        java.util.HashSet<String> placed = new java.util.HashSet<>();
         JSONArray out = new JSONArray();
-        JSONObject pending = null;
         for (int i = 0; timeline != null && i < timeline.length(); i++) {
             JSONObject item = timeline.optJSONObject(i); if (item == null) continue;
-            boolean message = "message".equals(item.optString("kind", "message"));
-            String role = item.optString("role", "");
-            if (message && "user".equals(role)) {
-                if (pending != null) out.put(pending);
-                out.put(item);
-                pending = byUserSeq.get(item.optInt("localSeq", -1));
-                currentTurn = turnBySeq.get(item.optInt("localSeq", -1));
-                continue;
-            }
-            if (currentTurn != null && message && "assistant".equals(role)) {
+            boolean answer = "message".equals(item.optString("kind", "message")) && "assistant".equals(item.optString("role", ""));
+            boolean error = "error".equals(item.optString("kind"));
+            JSONObject turn = (answer || error) ? byTurn.get(item.optString("turnId", "")) : null;
+            if (turn != null && answer) {
                 item = new JSONObject(item.toString());
-                if (currentTurn.has("rating")) item.put("rating", currentTurn.optInt("rating"));
-                if (currentTurn.optInt("answers", 1) > 1) item.put("answers", currentTurn.optInt("answers"));
-                currentTurn = null;
+                if (turn.has("rating")) item.put("rating", turn.optInt("rating"));
+                if (turn.optInt("answers", 1) > 1) item.put("answers", turn.optInt("answers"));
             }
             out.put(item);
-            if (pending != null && message && "assistant".equals(role)) { out.put(pending); pending = null; }
+            if (turn == null || placed.contains(turn.optString("turnId"))) continue;
+            JSONObject usage = turn.optJSONObject("usage");
+            if (usage == null || usage.length() == 0) continue;
+            out.put(new JSONObject(usage.toString()).put("kind", "usage").put("turnId", turn.optString("turnId")));
+            placed.add(turn.optString("turnId"));
         }
-        if (pending != null) out.put(pending);
+        return out;
+    }
+
+    /** Spec G3: "‹ i/n ›" on the messages that have other versions ({index, count, prevSeq?, nextSeq?}). */
+    static JSONArray withVersions(JSONArray timeline, JSONObject versions) throws Exception {
+        if (versions == null || versions.length() == 0) return timeline;
+        JSONArray out = new JSONArray();
+        for (int i = 0; i < timeline.length(); i++) {
+            JSONObject item = timeline.optJSONObject(i); if (item == null) continue;
+            JSONObject version = versions.optJSONObject(String.valueOf(item.optInt("localSeq", -1)));
+            if (version != null) item = new JSONObject(item.toString()).put("version", version);
+            out.put(item);
+        }
         return out;
     }
 
@@ -1225,6 +1216,8 @@ final class ChatCoordinator implements AutoCloseable {
                     .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", turnControls.containsKey(s.id))
                     .put("canConfigureTurn", !active).put("contextPreparing", preparing);
             if (display.omittedInheritedItems > 0) o.put("displayOmittedInheritedItems", display.omittedInheritedItems);
+            Integer resume = db.resumeSeq(s.id);
+            if (resume != null && !active) o.put("resumeLocalSeq", resume);
             if (!active) {
                 JSONObject retry = retryTarget(display.items);
                 if (retry != null) o.put("retryLocalSeq", retry.optInt("localSeq"));

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const VERSION_NAME = '0.0.6';
 const VERSION_CODE = 6;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const uiRoot = join(projectRoot, 'src');
 const javaRoot = join(projectRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'moyu', 'chat');
 let failed = false;
@@ -70,14 +70,23 @@ if (!db.includes(`static final int VERSION = ${SCHEMA_VERSION};`)) fail(`SQLite 
 if (/CREATE TABLE handoffs/.test(db)) fail('the removed Remote handoff table must never be recreated');
 // Beta line: schema numbering restarts at 1 in its own file; the pre-beta file is deleted, newer files reset.
 if (!db.includes('static final String FILE_NAME = "moyu-beta.db";') || !db.includes('context.deleteDatabase(LEGACY_FILE_NAME);') || !db.includes('public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }')) fail('beta database must live in its own file, delete the pre-beta file and reset newer files');
-if (/ALTER TABLE/.test(db)) fail('baseline schema must be created whole; post-baseline migrations need a reviewed onUpgrade step and a matching assertion here');
+// Migrations: ALTER TABLE only inside a reviewed onUpgrade step (v3: migrateMessageTree), each with an assertion here.
+const migrationV3 = (db.match(/private static void migrateMessageTree\(SQLiteDatabase db\) \{[\s\S]*?\n    \}\n/) || [''])[0];
+if (/ALTER TABLE/.test(db.replace(migrationV3, ''))) fail('baseline schema must be created whole; post-baseline migrations need a reviewed onUpgrade step and a matching assertion here');
 // v2: turn_archive keeps removed turns for statistics and budgets. Created by onCreate and by the v1→v2 step (which
 // also turns the v1 spend carry into archive rows); it must never hold message text or the custom instruction.
-if (!/public void onUpgrade\(SQLiteDatabase db, int oldVersion, int newVersion\) \{\s*if \(oldVersion < 2\) \{ createTurnArchive\(db\); migrateSpendCarry\(db\); \}\s*\}/.test(db)
+if (!/public void onUpgrade\(SQLiteDatabase db, int oldVersion, int newVersion\) \{\s*if \(oldVersion < 2\) \{ createTurnArchive\(db\); migrateSpendCarry\(db\); \}\s*if \(oldVersion < 3\) migrateMessageTree\(db\);\s*\}/.test(db)
     || !/settings\(key TEXT PRIMARY KEY,value TEXT NOT NULL\)"\);\s*createTurnArchive\(db\);/.test(db)
     || !db.includes('new String[]{"turn_archive", "knowledge_fts",')) fail('schema v2 must add turn_archive in onCreate and in a reviewed v1 to v2 onUpgrade step, and drop it on reset');
 if (!db.includes('out.remove("customInstruction");') || /CREATE TABLE turn_archive\([^)]*\b(text|body|instruction)\b/.test(db)
-    || !/archiveTurns\(db, "session_id=\? AND user_seq>=\?", removed, reason\);\s*db\.delete\("turns"/.test(db)) fail('rewound turns must be archived before deletion, without message text or the custom instruction');
+    || !/archiveTurns\(db, "session_id=\?", new String\[\]\{id\}, ARCHIVE_DELETED\);[\s\S]{0,200}db\.delete\("sessions"/.test(db)) fail('a deleted session\'s turns must be archived before deletion, without message text or the custom instruction');
+// v3, spec G2, G3, H5, D9: the timeline is a tree (parent_key) shown along sessions.leaf_key; a question can have several
+// turns; edit, "回到这里", retry and re-answer remove nothing. The migration chains existing rows and rebuilds turns.
+if (!migrationV3.includes('ALTER TABLE timeline ADD COLUMN parent_key TEXT') || !migrationV3.includes('ALTER TABLE sessions ADD COLUMN leaf_key TEXT')
+    || !migrationV3.includes('ALTER TABLE turns_v3 RENAME TO turns') || !migrationV3.includes('db.execSQL("DROP TABLE turn_spans");')
+    || /UNIQUE\(session_id,user_seq\)/.test((db.match(/private static void createTurnTables\([\s\S]*?\n    \}\n/) || [''])[0]) || !db.includes('"parent_key TEXT,UNIQUE(session_id,local_seq))"') || !db.includes('+ "leaf_key TEXT)");'))
+  fail('schema v3 must make the timeline a tree with a per-session leaf, allow several turns per question, and migrate v2 files in place (spec D9)');
+if (/db\.delete\("timeline", "session_id=\? AND local_seq>=\?"/.test(db) || db.includes('truncateTimelineFrom(')) fail('since v3 nothing rewinds by deleting rows: versions are kept (spec H5, D9)');
 // Accounts persist only identity, preset, key status and budget; endpoints live on routes; capabilities on Model Profile (frozen into Session).
 if (/CREATE TABLE providers\([^)]*(protocol|auth_mode|base_url|reasoning_wire|\bmodel\b|context_tokens)/.test(db)) fail('accounts must not persist endpoint or deployment fields (routes own endpoints, Model Profiles own capabilities)');
 if (!db.includes('CREATE TABLE provider_routes(') || !db.includes('confirmed_host TEXT NOT NULL') || !db.includes('route_id TEXT NOT NULL REFERENCES provider_routes(route_id) ON DELETE CASCADE')) fail('accounts need routes (protocol + Base URL + auth + dialect) with a confirmed key host');
@@ -91,8 +100,9 @@ for (const file of ['ProviderContinuationIdentity', 'LocalKnowledgeStore', 'Smar
 // timeline.kind mirrors body.kind so queries never pattern-match JSON text.
 if (!db.includes('local_seq INTEGER NOT NULL,kind TEXT NOT NULL') || db.includes("instr(t.body,'\\\"kind")) fail('timeline queries must use the kind column');
 // Turn records: usage and stage traces live beside the timeline, owned by the session and rewound with it.
-if (!db.includes('CREATE TABLE turns(') || !db.includes('CREATE TABLE turn_spans(') || !db.includes('REFERENCES turns(turn_id) ON DELETE CASCADE')) fail('turn records and stage spans need their own tables');
-if (!db.includes('SELECT usage FROM turns WHERE started_at>=?') || !db.includes('db.delete("turns", "session_id=? AND user_seq>=?"') || !db.includes("terminal_code='process_died'")) fail('usage queries, rollback and cold-start recovery must cover turn records');
+if (!db.includes('db.execSQL("CREATE TABLE " + turns + "(turn_id TEXT PRIMARY KEY,"') || !db.includes('db.execSQL("CREATE TABLE " + spans + "(turn_id TEXT NOT NULL REFERENCES " + turns + "(turn_id) ON DELETE CASCADE,"')
+    || !db.includes('createTurnTables(db, "turns", "turn_spans", "turn_payloads");')) fail('turn records and stage spans need their own tables');
+if (!db.includes('SELECT usage FROM turns WHERE started_at>=?') || !db.includes("terminal_code='process_died'")) fail('usage queries and cold-start recovery must cover turn records');
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
 for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 for (const marker of ['protocol', 'auth_mode', 'reasoning_wire', 'thinking_mode', 'thinking_budget_tokens', 'continuation_mode', 'send_output_cap', 'service_tier']) if (!db.includes(marker)) fail(`deployment-scoped route/model/session persistence missing: ${marker}`);
@@ -155,8 +165,8 @@ if (!wireOpenAi.includes('WireCapture.request(url, body, apiKey)') || !wireMessa
 if (!wireTerminal.includes('@Override public void onWire(String direction, String text) { delegate.onWire(direction, text); }')) fail('wire records must pass the terminal guard (responses are recorded after the terminal callback)');
 // Comparison and feedback: answers are linked turn to turn, rated on the turn record, summarised from turn records.
 if (!db.includes('rating INTEGER CHECK(rating IN (-1,1))') || !db.includes('rerun_of TEXT') || !db.includes('public synchronized JSONObject answerGroup(') || !db.includes('public synchronized JSONArray turnStats(')) fail('ratings, re-answer links, answer groups and statistics must live on turn records');
-if (!coordinatorOnly.includes('case "turn.rerun"') || !coordinatorOnly.includes('snapshots.createLocal(sourceSessionId, userSeq - 1)') || !turnPipeline.includes('env.takeRerunOf(id)')) fail('a re-answer must branch before the re-asked message and record which turn it re-answers');
-if (!db.includes('CREATE TABLE turn_payloads(') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
+if (!coordinatorOnly.includes('case "turn.rerun"') || !db.includes('OR (t.session_id=? AND t.user_seq=?) ORDER BY t.started_at')) fail('a re-answer is a version of the answer to the same question, grouped with the others (spec H5, D9)');
+if (!db.includes('createTurnTables(db, "turns", "turn_spans", "turn_payloads");') || !db.includes('db.execSQL("CREATE TABLE " + payloads + "(turn_id TEXT NOT NULL REFERENCES " + turns + "(turn_id) ON DELETE CASCADE,"') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
 if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
 if (!coordinator.includes('r.prompt = committedPrompt(r, r.session);') || !coordinator.includes('contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "", r.modules)')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
@@ -405,7 +415,8 @@ if (!overlays.includes("'session-model-set'") || !overlays.includes("'session-re
 if (!overlays.includes("const locked = !session.canConfigureTurn")) fail('turn settings must be locked while a turn is running');
 if (!mainUi.includes("action: 'branch-local'") || !mainUi.includes('disabled: running') || !coordinator.includes('if (sessionBusy(sourceSessionId)) throw new IllegalStateException("请等当前回合结束再创建分支")')) fail('local branching must be reachable from conversation UI and blocked during incomplete turns');
 if (!mainUi.includes("action === 'branch-message'") || !coordinator.includes('createLocalBranch(')) fail('branching must remain a separate explicit user action');
-if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'") || !coordinator.includes('editMessageInPlace(') || !coordinator.includes('rollbackMessageInPlace(') || !db.includes('truncateTimelineFrom(')) fail('edit/rollback must rewind the current local session in place');
+if (!mainUi.includes("postIntent('chat.message.edit'") || !mainUi.includes("postIntent('chat.message.rollback'") || !mainUi.includes("postIntent('chat.message.version'")
+    || !coordinator.includes('editMessageInPlace(') || !coordinator.includes('returnToMessage(') || !db.includes('public synchronized int selectVersion(')) fail('edit, "回到这里" and the version switch must act on the current session in place (spec H5, D9)');
 if (!mainUi.includes("postIntent('chat.session.delete'") || !mainUi.includes("action: 'delete-session'")) fail('session delete intent exists natively but is not exposed by the WebView UI');
 if (!mainUi.includes("requestIntent('chat.session.delete', { localSessionIds: ids })") || !mainUi.includes('function deleteSelected()') || !/function deleteSelected\(\)[\s\S]*?openConfirmDialog/.test(mainUi) || !coordinator.includes('if (deleteBlocker(id) != null) { skipped.put(id); continue; }') || !sessionSelect.includes("export function selectable(session) { return session?.state !== 'running'; }")) fail('multi-select delete must confirm in app-owned UI and skip sessions with a turn in flight');
 if (!mainUi.includes("action === 'rename-session'") || !mainUi.includes("postIntent('chat.session.rename'") || !mainUi.includes('openTextDialog')) fail('manual session rename must be exposed through app-owned UI');
@@ -576,7 +587,7 @@ walk(javaRoot, '.java', (file, text) => {
     fail(`${name}: prompt budgeting belongs to the context assembler (spec R2)`);
   if (/\.contains\(hit\.text\)/.test(text)) fail(`${name}: "already in the prompt" is CanonicalPrompt.carries (spec T4)`);
 });
-if ((coordinatorOnly.match(/db\.saveSession\(/g) || []).length !== 4) fail('ChatCoordinator saves whole session rows only for the three setting intents and a new re-answer branch (spec R1)');
+if ((coordinatorOnly.match(/db\.saveSession\(/g) || []).length !== 3) fail('ChatCoordinator saves whole session rows only for the three setting intents (spec R1)');
 if (!turnPipeline.includes('r.modules = TurnModules.resolve(turnConfig, r.contextPolicy, r.adaptivePolicy, r.clientCalling,') || !turnPipeline.includes('.put("modules", r.modules.toJson())'))
   fail('module decisions are made once at accept and recorded on the accept stage (spec M4)');
 // Spec C5, D7: other conversations are a tool, never injected; the current session's branch family is left out (H7).
@@ -629,7 +640,12 @@ walk(javaRoot, '.java', (file, text) => {
 });
 // D13: a branch copies tool calls and sources, not reasoning or replay state; the summary comes along when it fits.
 if (!snapshotService.includes('ToolHistory.stored(ToolHistory.of(item))') || snapshotService.includes('"reasoning"') || snapshotService.includes('providerContinuation')
-    || (coordinatorOnly.match(/inheritCheckpoint\(source, /g) || []).length !== 2)
+    || (coordinatorOnly.match(/inheritCheckpoint\(source, /g) || []).length !== 1)
   fail('a new-session branch copies tool calls, sources and a summary that lies before the branch point (spec H3, D13)');
+// Spec H5, T7, D9: edit moves the path end, retry and re-answer answer the existing question as a new version.
+if (!coordinatorOnly.includes('db.moveLeafBefore(sessionId, localSeq);') || !coordinatorOnly.includes('case "chat.message.version": selectVersion(')
+    || !coordinatorOnly.includes('pendingAnswers.put(sessionId, questionKey);') || !turnPipeline.includes('db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(id), answerTo);')
+    || coordinatorOnly.includes('db.branchSession(source, "重答 · "'))
+  fail('edit, retry and re-answer create versions in the same session (spec H5, T7, D9)');
 if (failed) process.exit(1); // the checks above run after the first exit and must fail the build too
 console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);

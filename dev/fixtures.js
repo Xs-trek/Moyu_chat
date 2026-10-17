@@ -186,6 +186,13 @@ function mainSessions() {
         { user: '继续', error: { code: 'provider.http_429', summary: 'Provider 限流：429 Too Many Requests。请稍后重试或切换模型。' } },
       ]),
     }),
+    session('s-versions', '排版的两个版本', 'm-gpt', {
+      updatedAt: at(3), preview: '行高 1.75', resumeLocalSeq: 9,
+      messages: timeline([{ user: '正文行高用多少合适？（改过一次）', assistant: '中文正文建议 1.7–1.8，英文 1.5 左右。' }])
+        .map((item) => item.kind !== 'message' ? item
+          : item.role === 'user' ? { ...item, version: { index: 2, count: 2, prevSeq: 3 } }
+          : { ...item, answers: 3, version: { index: 1, count: 3, nextSeq: 7 } }),
+    }),
     session('s-branch', '长文阅读排版怎么调 · 分支', 'm-gpt', {
       updatedAt: at(5), preview: '（分支）', origin: { snapshotId: 'snap-1', sourceSessionId: 's-reading', sourceTitle: '长文阅读排版怎么调', createdAt: at(5), itemCount: 3 },
       messages: timeline([{ user: '这个聊天界面看长回答很累，排版上该怎么调？', assistant: '（继承自原会话）先看行高和段间距。' }]).map((item) => ({ ...item, inherited: true })),
@@ -207,6 +214,7 @@ export const fixtures = {
   long: { label: '长会话（30 轮）', build: () => ({ route: 'conversation', activeSessionId: 's-long', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   streaming: { label: '流式回复（自动开始）', autoplay: 'stream', build: () => ({ route: 'conversation', activeSessionId: 's-reading', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   errors: { label: '错误与中断', build: () => ({ route: 'conversation', activeSessionId: 's-errors', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  versions: { label: '消息版本（‹ 1/2 ›）', build: () => ({ route: 'conversation', activeSessionId: 's-versions', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   branch: { label: '分支会话', build: () => ({ route: 'conversation', activeSessionId: 's-branch', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   providers: { label: 'Provider 页', build: () => ({ route: 'providers', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   settings: { label: '设置页', build: () => ({ route: 'settings', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },

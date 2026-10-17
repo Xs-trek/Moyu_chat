@@ -260,14 +260,19 @@ function conversationMenu(target) {
   void target;
 }
 
-/** Re-answer: create the branch natively, then send the same message there. */
+/** Re-answer (spec H5): a new answer version under the same question, in this conversation. */
 function rerun() {
   const choice = rerunChoice();
   if (!choice) return;
   closeSheet();
-  requestIntent('turn.rerun', { localSessionId: choice.sessionId, localSeq: choice.localSeq, modelProfileId: choice.modelProfileId, contextMode: choice.contextMode })
-    .then((data) => { if (data?.localSessionId) postIntent('chat.session.send', { localSessionId: data.localSessionId, text: String(data.text || '') }); })
-    .catch((error) => setNotice({ level: 'error', text: `重答失败：${error?.message || error}` }));
+  const payload = { localSessionId: choice.sessionId, localSeq: choice.localSeq, modelProfileId: choice.modelProfileId, contextMode: choice.contextMode };
+  postIntent('turn.rerun', payload, {
+    resolve() {},
+    reject(error) {
+      if (error?.data?.budget) confirmOverBudget(error.message, () => postIntent('turn.rerun', { ...payload, budgetConfirmed: true }));
+      else setNotice({ level: 'error', text: `重答失败：${error?.message || error}` });
+    },
+  });
 }
 
 function messageItem(seq) {
@@ -282,14 +287,14 @@ function messageMenu(target) {
   const turnId = !user && item?.turnId && !item.inherited ? item.turnId : '';
   const rating = Number(item?.rating) || 0;
   openActions(user ? '这条提问' : '这条回答', [
-    user ? { label: '编辑后重发', icon: 'edit', action: 'edit-message', data: { sessionId, localSeq } } : null,
-    user && !item?.inherited ? { label: '换个模型或模式重答', icon: 'retry', action: 'rerun-open', data: { sessionId, localSeq }, hint: '在新分支里重新发送，原会话不变' } : null,
+    user ? { label: '编辑后重发', icon: 'edit', action: 'edit-message', data: { sessionId, localSeq }, hint: '原提问和它后面的内容保留为另一个版本' } : null,
+    user && !item?.inherited ? { label: '换个模型或模式重答', icon: 'retry', action: 'rerun-open', data: { sessionId, localSeq }, hint: '在这条提问下生成新的回答版本' } : null,
     turnId ? { label: rating > 0 ? '取消“好答案”' : '好答案', icon: 'thumbUp', action: 'rate-turn', data: { sessionId, turnId, rating: rating > 0 ? '0' : '1' } } : null,
     turnId ? { label: rating < 0 ? '取消“不好”' : '不好', icon: 'thumbDown', action: 'rate-turn', data: { sessionId, turnId, rating: rating < 0 ? '0' : '-1' } } : null,
     turnId && Number(item?.answers) > 1 ? { label: `对比 ${item.answers} 次回答`, icon: 'compare', action: 'open-answers', data: { sessionId, turnId } } : null,
     { label: '复制', icon: 'copy', action: 'copy-message', data: { sessionId, localSeq } },
-    { label: '从这里分支', icon: 'branch', action: 'branch-message', data: { sessionId, localSeq }, hint: '保留原会话，另开一条路线' },
-    { label: '回退到这里之前', icon: 'undo', action: 'rollback-message', data: { sessionId, localSeq }, danger: true, hint: '撤销这条及之后的消息' },
+    { label: '在新会话中分支', icon: 'branch', action: 'branch-message', data: { sessionId, localSeq }, hint: '复制到这里为止的对话，开一个新会话' },
+    !user && !item?.inherited ? { label: '回到这里', icon: 'undo', action: 'return-here', data: { sessionId, localSeq }, hint: '从这条回答继续，后面的内容保留为另一个版本' } : null,
   ]);
 }
 
@@ -476,16 +481,14 @@ document.addEventListener('click', (event) => {
     const localSeq = seqOf(target);
     if (sessionId && localSeq) postIntent('chat.message.edit', { localSessionId: sessionId, localSeq });
   }
-  else if (action === 'rollback-message') {
+  else if (action === 'return-here') {
     const localSeq = seqOf(target);
-    if (sessionId && localSeq) {
-      openConfirmDialog({
-        title: '回退当前会话',
-        message: '这条消息及其后的本地消息将从当前会话撤销，不会自动创建分支。若要保留两条路线，请先使用“分支”。',
-        confirmText: '回退', danger: true,
-        onConfirm: () => postIntent('chat.message.rollback', { localSessionId: sessionId, localSeq }),
-      });
-    }
+    if (sessionId && localSeq) postIntent('chat.message.rollback', { localSessionId: sessionId, localSeq });
+  }
+  else if (action === 'version-select') {
+    const localSeq = seqOf(target);
+    if (target.dataset.closeSheet) closeSheet();
+    if (sessionId && localSeq) postIntent('chat.message.version', { localSessionId: sessionId, localSeq });
   }
   else if (action === 'branch-message') {
     const localSeq = seqOf(target);

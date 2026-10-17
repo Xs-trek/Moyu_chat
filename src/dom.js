@@ -36,6 +36,7 @@ const ICONS = {
   chevronUp: ['M6 15l6-6 6 6'],
   close: ['M6 6l12 12', 'M18 6L6 18'],
   back: ['M15 6l-6 6 6 6'],
+  forward: ['M9 6l6 6-6 6'],
   branch: ['M7 4v10', 'M7 14a4 4 0 0 0 4 4h2', 'M17 6a2 2 0 1 0 0 .01', 'M17 8v2a4 4 0 0 1-4 4H7'],
   edit: ['M4 20h4L19 9l-4-4L4 16z', 'M13 7l4 4'],
   undo: ['M9 7L4 12l5 5', 'M4 12h11a5 5 0 0 1 0 10h-3'],

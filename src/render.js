@@ -498,7 +498,7 @@ function summaryFooter(item, ctx, canAct) {
   const key = vm.timelineKey(item);
   const expanded = expandedTurns.has(key);
   const verification = vm.verificationState(item.verification);
-  const signature = JSON.stringify({ usage: item.__usage || null, v: item.verification || null, canAct, expanded, d: ctx.delight, inc: item.incomplete, src: item.sources?.length || 0, wb: item.webBackend || '', tr: expanded ? peekTrace(item.turnId)?.state || '' : '', r: item.rating || 0, a: item.answers || 0 });
+  const signature = JSON.stringify({ usage: item.__usage || null, v: item.verification || null, canAct, expanded, d: ctx.delight, inc: item.incomplete, src: item.sources?.length || 0, wb: item.webBackend || '', tr: expanded ? peekTrace(item.turnId)?.state || '' : '', r: item.rating || 0, a: item.answers || 0, ver: item.version || null, run: ctx.running });
   return h('footer', { class: 'turn-foot', dataset: { footerSignature: signature } },
     h('div', { class: 'turn-sum' },
       h('button', { type: 'button', class: 'sum-toggle', 'aria-expanded': expanded ? 'true' : 'false', 'aria-label': expanded ? '收起用量详情' : '展开用量详情', dataset: { action: 'toggle-turn-details', itemKey: key } },
@@ -507,9 +507,20 @@ function summaryFooter(item, ctx, canAct) {
         Number(item.answers) > 1 ? h('span', { class: 'chip quiet', title: '这个问题有多次回答', text: `${item.answers} 答` }) : null,
         icon(expanded ? 'chevronUp' : 'chevronDown', 'ico ico-xs')),
       verification?.seal ? h('span', { class: `seal${verification.seal === '存疑' ? ' doubt' : ''}`, title: verification.label, text: verification.seal }) : null,
+      versionSwitch(item, ctx),
       canAct ? iconButton('copy', '复制回答', 'copy-message', { sessionId: ctx.sessionId, localSeq: item.localSeq }, 'icon-btn mini') : null,
       canAct ? iconButton('more', '回答操作', 'message-menu', { sessionId: ctx.sessionId, localSeq: item.localSeq, role: 'assistant' }, 'icon-btn mini') : null),
     expanded ? detailRows(item, ctx.sessionId, canAct) : null);
+}
+
+/** Spec G3: "‹ i/n ›" between the versions of a message; switching waits for a running turn. */
+function versionSwitch(item, ctx) {
+  const version = vm.messageVersion(item);
+  if (!version || item.inherited) return null;
+  const step = (seq, name, label) => h('button', { type: 'button', class: 'icon-btn mini', 'aria-label': label, title: label, disabled: !seq || ctx.running,
+    dataset: { action: 'version-select', sessionId: ctx.sessionId, localSeq: seq || '' } }, icon(name));
+  return h('span', { class: 'version-switch' }, step(version.prevSeq, 'back', '上一个版本'),
+    h('small', { class: 'version-label', text: version.label }), step(version.nextSeq, 'forward', '下一个版本'));
 }
 
 function liveLabel(item, ctx) {
@@ -551,19 +562,20 @@ function userNode(item, ctx) {
   return h('article', { class: `msg user${item.inherited ? ' inherited' : ''}`, dataset: { itemKey: vm.timelineKey(item), turnAnchor: 'user' } },
     item.text ? h('div', { class: 'message user-bubble', dataset: { messageBody: 'plain', selectionScope: 'message' }, text: item.text }) : null,
     mediaGallery(item.attachments),
-    h('div', { class: 'msg-meta' }, item.inherited ? h('span', { class: 'chip quiet', text: '历史' }) : null, h('small', { text: vm.messageTime(item.createdAt) }),
+    h('div', { class: 'msg-meta' }, item.inherited ? h('span', { class: 'chip quiet', text: '历史' }) : null, versionSwitch(item, ctx), h('small', { text: vm.messageTime(item.createdAt) }),
       canAct ? iconButton('more', '消息操作', 'message-menu', { sessionId: ctx.sessionId, localSeq: item.localSeq, role: 'user' }, 'icon-btn mini') : null));
 }
 
-function errorNode(item) {
+function errorNode(item, ctx) {
   return h('article', { class: 'msg error', dataset: { itemKey: vm.timelineKey(item) } },
-    fish('fail', 'sm', { static: '1' }), h('div', { class: 'grow' }, h('strong', { text: item.summary }), h('code', { text: item.code })));
+    fish('fail', 'sm', { static: '1' }), h('div', { class: 'grow' }, h('strong', { text: item.summary }), h('code', { text: item.code })),
+    ctx ? versionSwitch(item, ctx) : null);
 }
 
 function timelineItem(item, ctx) {
   if (item.kind === 'message' && item.role === 'assistant') return assistantNode(item, ctx);
   if (item.kind === 'message' && item.role === 'user') return userNode(item, ctx);
-  if (item.kind === 'error') return errorNode(item);
+  if (item.kind === 'error') return errorNode(item, ctx);
   return null;
 }
 
@@ -627,7 +639,8 @@ function patchItem(node, item, ctx) {
   if (item.kind === 'message' && item.role === 'assistant' && node.classList.contains('assistant')) { patchAssistant(node, item, ctx); return node; }
   if (item.kind === 'message' && item.role === 'user' && node.classList.contains('user')) {
     const desired = userNode(item, ctx);
-    if (node.textContent !== desired.textContent || Boolean(node.querySelector('[data-action="message-menu"]')) !== Boolean(desired.querySelector('[data-action="message-menu"]'))) return morph(node, desired);
+    if (node.textContent !== desired.textContent || Boolean(node.querySelector('[data-action="message-menu"]')) !== Boolean(desired.querySelector('[data-action="message-menu"]'))
+        || node.querySelectorAll('.version-switch button:disabled').length !== desired.querySelectorAll('.version-switch button:disabled').length) return morph(node, desired);
     replaceBySignature(node, '.media-grid', mediaGallery(item.attachments), 'mediaSignature', node.querySelector('.msg-meta'));
     return node;
   }
@@ -658,13 +671,22 @@ function reconcileTimeline(timeline, items, ctx, animate = false) {
   }
   const retry = vm.retrySeq(ctx.session);
   if (retry) place(`retry:${retry}`, () => retryRow(ctx), null);
+  const resume = vm.resumeSeq(ctx.session);
+  if (resume) place(`resume:${resume}`, () => resumeRow(ctx, resume), null);
   for (const [key, node] of existing) if (!used.has(key)) node.remove();
 }
 
 function retryRow(ctx) {
   return h('div', { class: 'retry-row' },
-    h('small', { class: 'grow', text: '回退这一轮，用当前设置重新发送' }),
+    h('small', { class: 'grow', text: '用当前设置重新回答，失败的版本保留' }),
     button('重试', 'retry-turn', { sessionId: ctx.sessionId }, 'btn mini'));
+}
+
+/** Spec H5: after "回到这里" or an unsent edit, the later messages are one tap away. */
+function resumeRow(ctx, seq) {
+  return h('div', { class: 'retry-row' },
+    h('small', { class: 'grow', text: '后面还有内容，保留在另一个版本里' }),
+    button('回到最新', 'version-select', { sessionId: ctx.sessionId, localSeq: seq }, 'btn mini'));
 }
 
 function conversationHero(session) {

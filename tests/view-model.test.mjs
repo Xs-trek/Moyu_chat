@@ -177,3 +177,19 @@ test('a verification stopped by the user reads as stopped, and compaction notes 
   assert.match(trace.rows[0].note, /等待后台压缩 · 覆盖 4 条/);
   assert.equal(trace.rows[1].note, '由回答的模型自己决定');
 });
+
+test('versions: "i/n" with the seqs to switch to, the resume target, and versions in the answer comparison (spec D9)', () => {
+  assert.deepEqual(vm.messageVersion({ version: { index: 2, count: 3, prevSeq: 4, nextSeq: 9 } }), { label: '2/3', prevSeq: 4, nextSeq: 9 });
+  assert.deepEqual(vm.messageVersion({ version: { index: 1, count: 2, nextSeq: 7 } }), { label: '1/2', prevSeq: null, nextSeq: 7 });
+  assert.equal(vm.messageVersion({ version: { index: 1, count: 1 } }), null);
+  assert.equal(vm.messageVersion({}), null);
+  assert.equal(vm.resumeSeq({ canSend: true, resumeLocalSeq: 12 }), 12);
+  assert.equal(vm.resumeSeq({ canSend: false, resumeLocalSeq: 12 }), null);
+  const view = vm.answersView({ question: 'q', answers: [
+    { turnId: 't1', localSessionId: 's', original: true, sameSession: true, answerSeq: 2, config: {}, usage: {} },
+    { turnId: 't2', localSessionId: 'old-branch', original: false, sameSession: false, config: {}, usage: {} },
+  ] });
+  assert.equal(view.items[0].title, '第 1 次回答');
+  assert.equal(view.items[0].versionSeq, 2);
+  assert.equal(view.items[1].versionSeq, null, 'an old re-answer branch is opened, not switched to');
+});

@@ -27,8 +27,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
      */
     static final String FILE_NAME = "moyu-beta.db";
     static final String LEGACY_FILE_NAME = "moyu-chat.db";
-    /** 1 = frozen at layout revision 2 (installed on devices); 2 = turn_archive. Steps live in {@link #onUpgrade}. */
-    static final int VERSION = 2;
+    /**
+     * 1 = frozen at layout revision 2 (installed on devices); 2 = turn_archive; 3 = message tree (spec D9: timeline
+     * parent_key, sessions leaf_key, several turns per question). Steps live in {@link #onUpgrade}.
+     */
+    static final int VERSION = 3;
     /**
      * Pre-release layout of schema 1, stamped in PRAGMA application_id. A file with a different stamp is an
      * older pre-release v1 layout and is reset (dropped and recreated). Schema 1 froze at revision 2 (accounts
@@ -207,35 +210,19 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 + "tool_capabilities TEXT NOT NULL DEFAULT '',client_tool_calling TEXT NOT NULL,harness_preset TEXT NOT NULL,"
                 + "reasoning_effort TEXT NOT NULL,web_mode TEXT NOT NULL,context_mode TEXT NOT NULL,subagent_mode TEXT NOT NULL,"
                 + "task_profile TEXT NOT NULL DEFAULT '',context_checkpoint TEXT NOT NULL DEFAULT '',"
-                + "checkpoint_covered_items INTEGER NOT NULL DEFAULT 0,knowledge_indexed_at TEXT NOT NULL DEFAULT '')");
+                + "checkpoint_covered_items INTEGER NOT NULL DEFAULT 0,knowledge_indexed_at TEXT NOT NULL DEFAULT '',"
+                + "leaf_key TEXT)");
         db.execSQL("CREATE INDEX sessions_updated ON sessions(updated_at)");
-        // Timeline: one JSON item per row (message / usage / error), ordered by local_seq. kind mirrors
-        // body.kind so queries never pattern-match JSON. UNIQUE(session_id,local_seq) is the session index.
+        // Timeline: one JSON item per row (message / error), local_seq in creation order. kind mirrors body.kind so
+        // queries never pattern-match JSON. parent_key makes the rows a tree (spec G2, D9); the conversation shown is
+        // the path from sessions.leaf_key to the root (G3).
         db.execSQL("CREATE TABLE timeline(item_key TEXT PRIMARY KEY,"
                 + "session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
                 + "local_seq INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,"
-                + "UNIQUE(session_id,local_seq))");
-        // Turn: one accepted user turn. Holds the frozen turn configuration and the usage summary (the
-        // timeline holds only what the user sees). Rows are owned by the session and rewound with it.
-        db.execSQL("CREATE TABLE turns(turn_id TEXT PRIMARY KEY,"
-                + "session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
-                + "user_seq INTEGER NOT NULL,assistant_key TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,"
-                + "status TEXT NOT NULL,terminal_code TEXT NOT NULL DEFAULT '',config TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',"
-                + "rating INTEGER CHECK(rating IN (-1,1)),rerun_of TEXT,"
-                + "UNIQUE(session_id,user_seq))");
-        // A re-answer points at the turn it re-asks (any session); the original may be deleted later.
-        db.execSQL("CREATE INDEX turns_rerun ON turns(rerun_of)");
-        db.execSQL("CREATE INDEX turns_started ON turns(started_at)");
-        // Turn span: one pipeline stage of a turn (ran / skipped and why, duration, decision, helper usage).
-        db.execSQL("CREATE TABLE turn_spans(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"
-                + "ordinal INTEGER NOT NULL,stage TEXT NOT NULL,status TEXT NOT NULL,started_at_ms INTEGER NOT NULL,duration_ms INTEGER NOT NULL,"
-                + "reason TEXT NOT NULL DEFAULT '',calls INTEGER NOT NULL DEFAULT 0,input_tokens INTEGER,output_tokens INTEGER,"
-                + "detail TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(turn_id,ordinal))");
-        // Turn payload: redacted request / response text of one model call (protocol inspector). No headers,
-        // no key; bounded per record and kept only for the most recent turns.
-        db.execSQL("CREATE TABLE turn_payloads(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"
-                + "call_index INTEGER NOT NULL,part INTEGER NOT NULL,stage TEXT NOT NULL,direction TEXT NOT NULL,"
-                + "created_at TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(turn_id,call_index,part))");
+                + "parent_key TEXT,UNIQUE(session_id,local_seq))");
+        db.execSQL("CREATE INDEX timeline_parent ON timeline(session_id,parent_key)");
+        createTurnTables(db, "turns", "turn_spans", "turn_payloads");
+        createTurnIndexes(db);
         // Snapshot: immutable branch origin. The source session may be deleted later; the snapshot stays.
         db.execSQL("CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY,source_session_id TEXT NOT NULL,source_title TEXT NOT NULL,"
                 + "created_at TEXT NOT NULL,item_count INTEGER NOT NULL,source_item_count INTEGER NOT NULL,"
@@ -256,6 +243,72 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** Forward migrations from v1: one reviewed step per version, each with a static-check assertion. */
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 2) { createTurnArchive(db); migrateSpendCarry(db); }
+        if (oldVersion < 3) migrateMessageTree(db);
+    }
+
+    /**
+     * Turn: one answer to one question. Holds the frozen turn configuration and the usage summary (the timeline holds
+     * only what the user sees). Since v3 a question can have several turns (versions, spec D9): user_seq is the
+     * question's row, assistant_key the answer's. Span: one pipeline stage. Payload: redacted request / response text
+     * of one model call (protocol inspector), bounded and kept only for recent turns.
+     */
+    private static void createTurnTables(SQLiteDatabase db, String turns, String spans, String payloads) {
+        db.execSQL("CREATE TABLE " + turns + "(turn_id TEXT PRIMARY KEY,"
+                + "session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
+                + "user_seq INTEGER NOT NULL,assistant_key TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,"
+                + "status TEXT NOT NULL,terminal_code TEXT NOT NULL DEFAULT '',config TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',"
+                + "rating INTEGER CHECK(rating IN (-1,1)),rerun_of TEXT)");
+        db.execSQL("CREATE TABLE " + spans + "(turn_id TEXT NOT NULL REFERENCES " + turns + "(turn_id) ON DELETE CASCADE,"
+                + "ordinal INTEGER NOT NULL,stage TEXT NOT NULL,status TEXT NOT NULL,started_at_ms INTEGER NOT NULL,duration_ms INTEGER NOT NULL,"
+                + "reason TEXT NOT NULL DEFAULT '',calls INTEGER NOT NULL DEFAULT 0,input_tokens INTEGER,output_tokens INTEGER,"
+                + "detail TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(turn_id,ordinal))");
+        db.execSQL("CREATE TABLE " + payloads + "(turn_id TEXT NOT NULL REFERENCES " + turns + "(turn_id) ON DELETE CASCADE,"
+                + "call_index INTEGER NOT NULL,part INTEGER NOT NULL,stage TEXT NOT NULL,direction TEXT NOT NULL,"
+                + "created_at TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(turn_id,call_index,part))");
+    }
+
+    private static void createTurnIndexes(SQLiteDatabase db) {
+        // A re-answer from before v3 points at the turn it re-asks (any session); the original may be deleted later.
+        db.execSQL("CREATE INDEX turns_rerun ON turns(rerun_of)");
+        db.execSQL("CREATE INDEX turns_started ON turns(started_at)");
+        db.execSQL("CREATE INDEX turns_question ON turns(session_id,user_seq)");
+    }
+
+    /**
+     * v3. Message tree (spec D9): every row's parent is the row before it, the newest row is the session's leaf, so
+     * each existing Chat is one path and reads exactly as before. The turns table is rebuilt without
+     * UNIQUE(session_id,user_seq); spans and payloads move with it (children first, so no cascade fires).
+     */
+    private static void migrateMessageTree(SQLiteDatabase db) {
+        if (!hasColumn(db, "timeline", "parent_key")) db.execSQL("ALTER TABLE timeline ADD COLUMN parent_key TEXT");
+        if (!hasColumn(db, "sessions", "leaf_key")) db.execSQL("ALTER TABLE sessions ADD COLUMN leaf_key TEXT");
+        db.execSQL("CREATE INDEX IF NOT EXISTS timeline_parent ON timeline(session_id,parent_key)");
+        java.util.LinkedHashMap<String, String> leaves = new java.util.LinkedHashMap<>();
+        try (Cursor c = db.rawQuery("SELECT local_id FROM sessions", null)) { while (c.moveToNext()) leaves.put(c.getString(0), ""); }
+        for (String sessionId : new ArrayList<>(leaves.keySet())) {
+            String previous = null;
+            try (Cursor c = db.rawQuery("SELECT item_key FROM timeline WHERE session_id=? ORDER BY local_seq", new String[]{sessionId})) {
+                while (c.moveToNext()) {
+                    String key = c.getString(0);
+                    if (previous != null) { ContentValues v = new ContentValues(); v.put("parent_key", previous); db.update("timeline", v, "item_key=?", new String[]{key}); }
+                    previous = key;
+                }
+            }
+            ContentValues leaf = new ContentValues(); leaf.put("leaf_key", previous == null ? "" : previous);
+            db.update("sessions", leaf, "local_id=?", new String[]{sessionId});
+        }
+        createTurnTables(db, "turns_v3", "turn_spans_v3", "turn_payloads_v3");
+        db.execSQL("INSERT INTO turns_v3 SELECT turn_id,session_id,user_seq,assistant_key,started_at,ended_at,status,terminal_code,config,usage,rating,rerun_of FROM turns");
+        db.execSQL("INSERT INTO turn_spans_v3 SELECT turn_id,ordinal,stage,status,started_at_ms,duration_ms,reason,calls,input_tokens,output_tokens,detail FROM turn_spans");
+        db.execSQL("INSERT INTO turn_payloads_v3 SELECT turn_id,call_index,part,stage,direction,created_at,body FROM turn_payloads");
+        db.execSQL("DROP TABLE turn_payloads");
+        db.execSQL("DROP TABLE turn_spans");
+        db.execSQL("DROP TABLE turns");
+        // With foreign keys on, renaming the parent rewrites the children's REFERENCES clauses.
+        db.execSQL("ALTER TABLE turns_v3 RENAME TO turns");
+        db.execSQL("ALTER TABLE turn_spans_v3 RENAME TO turn_spans");
+        db.execSQL("ALTER TABLE turn_payloads_v3 RENAME TO turn_payloads");
+        createTurnIndexes(db);
     }
 
     /**
@@ -301,6 +354,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             }
         }
         db.delete("settings", "key=?", new String[]{LEGACY_SPEND_CARRY_KEY});
+    }
+
+    private static boolean hasColumn(SQLiteDatabase db, String table, String column) {
+        try (Cursor c = db.rawQuery("PRAGMA table_info(" + table + ")", null)) {
+            while (c.moveToNext()) if (column.equals(c.getString(1))) return true;
+        }
+        return false;
     }
 
     /** A beta build may meet a file from a newer experimental build; the beta line resets rather than guessing. */
@@ -448,7 +508,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             for (String[] stale : staleRows) {
-                if (stale[2] == null) { db.delete("timeline", "item_key=?", new String[]{stale[0]}); continue; }
+                if (stale[2] == null) { removeRowKeepingPath(db, stale[1], stale[0]); continue; }
                 ContentValues row = new ContentValues(); row.put("body", stale[2]);
                 db.update("timeline", row, "item_key=?", new String[]{stale[0]});
                 try { updatePreviewFromBody(db, stale[1], new JSONObject(stale[2])); } catch (Exception ignored) { }
@@ -461,9 +521,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 }
                 JSONObject error = new JSONObject().put("kind", "error").put("code", PROCESS_DIED)
                         .put("summary", PROCESS_DIED_SUMMARY).put("createdAt", now).put("localSeq", seq);
-                ContentValues errorRow = new ContentValues(); errorRow.put("item_key", "error:" + UUID.randomUUID()); errorRow.put("session_id", sessionId);
-                errorRow.put("local_seq", seq); errorRow.put("kind", "error"); errorRow.put("body", error.toString()); errorRow.put("created_at", now);
-                db.insertWithOnConflict("timeline", null, errorRow, SQLiteDatabase.CONFLICT_ABORT);
+                appendErrorRow(db, sessionId, seq, error);
                 ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", now);
                 db.update("sessions", state, "local_id=?", new String[]{sessionId});
             }
@@ -689,6 +747,20 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
     }
 
+    /** The context mode and the subagent mode that goes with it (re-answer in another mode, spec H5), nothing else. */
+    public synchronized void setContextMode(String id, String contextMode, String subagentMode) {
+        ContentValues v = new ContentValues(); v.put("context_mode", ContextMode.normalize(contextMode));
+        v.put("subagent_mode", HarnessPolicyResolver.normalizeSubagentMode(subagentMode));
+        getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
+    }
+
+    /** One row of the session by key, or null. */
+    public synchronized JSONObject timelineItem(String sessionId, String itemKey) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT body FROM timeline WHERE session_id=? AND item_key=?", new String[]{sessionId, itemKey})) {
+            return c.moveToFirst() ? new JSONObject(c.getString(0)) : null;
+        } catch (org.json.JSONException broken) { return null; }
+    }
+
     /** See {@link #setTaskProfile}: the checkpoint and how many items it covers, nothing else. */
     public synchronized void setContextCheckpoint(String id, String checkpoint, int coveredItems) {
         ContentValues v = new ContentValues(); v.put("context_checkpoint", checkpoint == null ? "" : checkpoint);
@@ -727,50 +799,192 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         getWritableDatabase().update("sessions", v, "local_id=?", new String[]{id});
     }
 
-    /** Deletes the timeline item at localSeq and everything after it (edit/rollback). */
-    public synchronized void truncateTimelineFrom(String sessionId, int localSeq) { truncateTimelineFrom(sessionId, localSeq, ARCHIVE_REWIND); }
+    // ---------- message tree (spec G2, G3, H5, D9) ----------
+
+    private static final class Row {
+        final String key, parent, kind, role; final int seq; final String body;
+        Row(String key, String parent, String kind, int seq, String body) {
+            this.key = key; this.parent = parent == null || parent.isEmpty() ? null : parent; this.kind = kind; this.seq = seq; this.body = body;
+            String r = ""; try { r = new JSONObject(body).optString("role", ""); } catch (Exception ignored) { }
+            this.role = r;
+        }
+        boolean message() { return "message".equals(kind) && ("user".equals(role) || "assistant".equals(role)); }
+    }
+
+    /** All of a session's rows, by key, in creation order. */
+    private static java.util.LinkedHashMap<String, Row> rowsOf(SQLiteDatabase db, String sessionId) {
+        java.util.LinkedHashMap<String, Row> out = new java.util.LinkedHashMap<>();
+        try (Cursor c = db.rawQuery("SELECT item_key,parent_key,kind,local_seq,body FROM timeline WHERE session_id=? ORDER BY local_seq", new String[]{sessionId})) {
+            while (c.moveToNext()) out.put(c.getString(0), new Row(c.getString(0), c.isNull(1) ? null : c.getString(1), c.getString(2), c.getInt(3), c.getString(4)));
+        }
+        return out;
+    }
+
+    /** The session's leaf: a row key, "" for an empty path, null when unset. */
+    private static String leafOf(SQLiteDatabase db, String sessionId) {
+        try (Cursor c = db.rawQuery("SELECT leaf_key FROM sessions WHERE local_id=?", new String[]{sessionId})) {
+            return c.moveToFirst() && !c.isNull(0) ? c.getString(0) : null;
+        }
+    }
+
+    private static void setLeaf(SQLiteDatabase db, String sessionId, String key) {
+        ContentValues v = new ContentValues(); v.put("leaf_key", key == null ? "" : key);
+        db.update("sessions", v, "local_id=?", new String[]{sessionId});
+    }
+
+    private static String parentOf(SQLiteDatabase db, String itemKey) {
+        try (Cursor c = db.rawQuery("SELECT parent_key FROM timeline WHERE item_key=?", new String[]{itemKey})) {
+            return c.moveToFirst() && !c.isNull(0) && !c.getString(0).isEmpty() ? c.getString(0) : null;
+        }
+    }
+
+    /** The current path (spec G3), root first. A leaf that is unset or gone falls back to the newest row. */
+    private static java.util.List<Row> pathOf(SQLiteDatabase db, String sessionId) {
+        java.util.LinkedHashMap<String, Row> rows = rowsOf(db, sessionId);
+        String leaf = leafOf(db, sessionId);
+        ArrayList<Row> out = new ArrayList<>();
+        if (leaf != null && leaf.isEmpty()) return out;
+        Row current = leaf == null ? null : rows.get(leaf);
+        if (current == null && !rows.isEmpty()) { Row last = null; for (Row r : rows.values()) last = r; current = last; }
+        for (int guard = 0; current != null && guard <= rows.size(); guard++) {
+            out.add(current);
+            current = current.parent == null ? null : rows.get(current.parent);
+        }
+        java.util.Collections.reverse(out);
+        return out;
+    }
+
+    private static JSONArray bodies(java.util.List<Row> rows) {
+        JSONArray out = new JSONArray();
+        for (Row r : rows) try { out.put(new JSONObject(r.body)); } catch (Exception ignored) { }
+        return out;
+    }
+
+    /** The newest row at or under {@code key}: where a switched-to version continues (D9: its latest message). */
+    private static Row newestUnder(java.util.LinkedHashMap<String, Row> rows, String key) {
+        java.util.HashMap<String, java.util.List<Row>> children = new java.util.HashMap<>();
+        for (Row r : rows.values()) if (r.parent != null) children.computeIfAbsent(r.parent, k -> new ArrayList<>()).add(r);
+        Row best = rows.get(key);
+        java.util.ArrayDeque<String> todo = new java.util.ArrayDeque<>(); todo.add(key);
+        while (!todo.isEmpty()) {
+            for (Row child : children.getOrDefault(todo.poll(), java.util.Collections.emptyList())) {
+                if (best == null || child.seq > best.seq) best = child;
+                todo.add(child.key);
+            }
+        }
+        return best;
+    }
+
+    private static Row rowAt(java.util.LinkedHashMap<String, Row> rows, int seq) {
+        for (Row r : rows.values()) if (r.seq == seq) return r;
+        throw new IllegalArgumentException("找不到这条消息");
+    }
+
+    /** The row key at {@code seq} in the session, or null. */
+    public synchronized String itemKeyAt(String sessionId, int seq) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT item_key FROM timeline WHERE session_id=? AND local_seq=?", new String[]{sessionId, String.valueOf(seq)})) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    /** Edit (spec H5): the path ends before the message at {@code seq}; sending then adds its new version beside it. */
+    public synchronized void moveLeafBefore(String sessionId, int seq) {
+        SQLiteDatabase db = getWritableDatabase();
+        Row row = rowAt(rowsOf(db, sessionId), seq);
+        setLeaf(db, sessionId, row.parent);
+        refreshPreview(db, sessionId);
+    }
+
+    /** "回到这里" (spec H5): the path ends at the message at {@code seq}; what came after stays as another path. */
+    public synchronized void moveLeafTo(String sessionId, int seq) {
+        SQLiteDatabase db = getWritableDatabase();
+        setLeaf(db, sessionId, rowAt(rowsOf(db, sessionId), seq).key);
+        refreshPreview(db, sessionId);
+    }
+
+    /** Version switch (spec G3, H5): the path goes through the row at {@code seq} to its newest row; returns that row's seq. */
+    public synchronized int selectVersion(String sessionId, int seq) {
+        SQLiteDatabase db = getWritableDatabase();
+        java.util.LinkedHashMap<String, Row> rows = rowsOf(db, sessionId);
+        Row newest = newestUnder(rows, rowAt(rows, seq).key);
+        setLeaf(db, sessionId, newest.key);
+        refreshPreview(db, sessionId);
+        return newest.seq;
+    }
+
+    /** When the path's end has more after it (after "回到这里" or an unsent edit), the seq of the newest row there; else null. */
+    public synchronized Integer resumeSeq(String sessionId) {
+        SQLiteDatabase db = getReadableDatabase();
+        java.util.LinkedHashMap<String, Row> rows = rowsOf(db, sessionId);
+        String leaf = leafOf(db, sessionId);
+        if (leaf == null) return null;
+        Row newest;
+        if (leaf.isEmpty()) {
+            newest = null;
+            for (Row r : rows.values()) if (r.parent == null) { Row under = newestUnder(rows, r.key); if (newest == null || under.seq > newest.seq) newest = under; }
+        } else {
+            if (!rows.containsKey(leaf)) return null;
+            newest = newestUnder(rows, leaf);
+            if (newest != null && newest.key.equals(leaf)) newest = null;
+        }
+        return newest == null ? null : newest.seq;
+    }
 
     /**
-     * Deletes the timeline item at localSeq and everything after it; the removed turns move to the archive
-     * with {@code reason}. Returns the id of the first removed turn (the one being retried), or null.
+     * Versions of the messages on the path (spec G3): for each message with siblings (same parent, same role), its
+     * position among them and the seqs to switch to, keyed by seq. Messages without siblings are left out.
      */
-    public synchronized String truncateTimelineFrom(String sessionId, int localSeq, String reason) {
-        if (sessionId == null || sessionId.trim().isEmpty() || localSeq < 1) throw new IllegalArgumentException("invalid rollback target");
-        SQLiteDatabase db = getWritableDatabase();
-        db.beginTransaction();
+    public synchronized JSONObject versions(String sessionId) {
+        SQLiteDatabase db = getReadableDatabase();
+        java.util.LinkedHashMap<String, Row> rows = rowsOf(db, sessionId);
+        java.util.HashMap<String, java.util.List<Row>> groups = new java.util.HashMap<>();
+        for (Row r : rows.values()) { String role = versionRole(rows, r); if (role != null) groups.computeIfAbsent((r.parent == null ? "" : r.parent) + "\u0000" + role, k -> new ArrayList<>()).add(r); }
+        JSONObject out = new JSONObject();
         try {
-            // A turn's rows run from its user row to the next user row; rewinding into a turn removes that turn's record too.
-            Integer firstRemovedTurn = null;
-            try (Cursor c = db.rawQuery("SELECT MAX(user_seq) FROM turns WHERE session_id=? AND user_seq<=?", new String[]{sessionId, String.valueOf(localSeq)})) {
-                if (c.moveToFirst() && !c.isNull(0)) firstRemovedTurn = c.getInt(0);
+            for (Row r : pathOf(db, sessionId)) {
+                String role = versionRole(rows, r);
+                if (role == null) continue;
+                java.util.List<Row> group = groups.get((r.parent == null ? "" : r.parent) + "\u0000" + role);
+                if (group == null || group.size() < 2) continue;
+                int index = -1;
+                for (int i = 0; i < group.size() && index < 0; i++) if (group.get(i).key.equals(r.key)) index = i;
+                if (index < 0) continue;
+                JSONObject v = new JSONObject().put("index", index + 1).put("count", group.size());
+                if (index > 0) v.put("prevSeq", group.get(index - 1).seq);
+                if (index < group.size() - 1) v.put("nextSeq", group.get(index + 1).seq);
+                out.put(String.valueOf(r.seq), v);
             }
-            String[] removed = {sessionId, String.valueOf(firstRemovedTurn == null ? localSeq : firstRemovedTurn)};
-            String firstTurnId = null;
-            try (Cursor c = db.rawQuery("SELECT turn_id FROM turns WHERE session_id=? AND user_seq=?", removed)) { if (c.moveToFirst()) firstTurnId = c.getString(0); }
-            archiveTurns(db, "session_id=? AND user_seq>=?", removed, reason);
-            db.delete("turns", "session_id=? AND user_seq>=?", removed);
-            db.delete("timeline", "session_id=? AND local_seq>=?", new String[]{sessionId, String.valueOf(localSeq)});
-            db.delete("knowledge_fts", "scope_id=?", new String[]{LocalKnowledgeStore.chatScope(sessionId)});
-            ContentValues state = new ContentValues();
-            state.put("state", "idle"); state.put("updated_at", Instant.now().toString()); state.put("draft", ""); state.put("draft_media", "[]");
-            state.put("task_profile", ""); state.put("context_checkpoint", ""); state.put("checkpoint_covered_items", 0); state.put("knowledge_indexed_at", "");
-            state.putNull("preview");
-            if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalArgumentException("会话不存在");
-            try (Cursor c = db.rawQuery("SELECT body FROM timeline WHERE session_id=? ORDER BY local_seq DESC", new String[]{sessionId})) {
-                while (c.moveToNext()) {
-                    try {
-                        JSONObject body = new JSONObject(c.getString(0));
-                        if (!"message".equals(body.optString("kind")) || body.optBoolean("streaming", false)) continue;
-                        String text = body.optString("text", "").trim(); if (text.isEmpty()) continue;
-                        String preview = text.length() > 160 ? text.substring(0, 160) : text;
-                        ContentValues p = new ContentValues(); p.put("preview", preview); db.update("sessions", p, "local_id=?", new String[]{sessionId});
-                        break;
-                    } catch (Exception ignored) { }
-                }
-            }
-            db.setTransactionSuccessful();
-            return firstTurnId;
-        } finally { db.endTransaction(); }
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
+        return out;
+    }
+
+    /**
+     * What a row is a version of: a message is a version of its role; an error right under a question stands for an
+     * answer that never came (spec T7: the failed version stays and can be switched back to). Other rows: null.
+     */
+    private static String versionRole(java.util.Map<String, Row> rows, Row r) {
+        if (r.message()) return r.role;
+        if (!"error".equals(r.kind) || r.parent == null) return null;
+        Row parent = rows.get(r.parent);
+        return parent != null && parent.message() && "user".equals(parent.role) ? "assistant" : null;
+    }
+
+    /** The preview follows the path: its newest message with text. */
+    private static void refreshPreview(SQLiteDatabase db, String sessionId) {
+        java.util.List<Row> path = pathOf(db, sessionId);
+        String preview = null;
+        for (int i = path.size() - 1; i >= 0 && preview == null; i--) {
+            try {
+                JSONObject body = new JSONObject(path.get(i).body);
+                if (!"message".equals(body.optString("kind")) || body.optBoolean("streaming", false)) continue;
+                String text = body.optString("text", "").trim();
+                if (!text.isEmpty()) preview = text.length() > 160 ? text.substring(0, 160) : text;
+            } catch (Exception ignored) { }
+        }
+        ContentValues v = new ContentValues();
+        if (preview == null) v.putNull("preview"); else v.put("preview", preview);
+        v.put("updated_at", Instant.now().toString());
+        db.update("sessions", v, "local_id=?", new String[]{sessionId});
     }
 
     /** Atomically commits the user's turn, one unique live assistant projection and the turn record before network streaming starts. */
@@ -782,6 +996,16 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     /** As above; the composer is left holding {@code keptDraft} instead of being cleared. */
     public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody,
                                        String turnId, JSONObject config, String keptDraft) {
+        beginTurn(sessionId, userKey, userBody, streamKey, liveBody, turnId, config, keptDraft, null);
+    }
+
+    /**
+     * {@code answerToKey}: the turn answers an existing question (retry, re-answer; spec T1, T7, H5). No user row is
+     * written, the answer becomes a new version under that question and the draft images stay. Otherwise the user row
+     * goes under the path's end. Either way the answer becomes the path's end.
+     */
+    public synchronized void beginTurn(String sessionId, String userKey, JSONObject userBody, String streamKey, JSONObject liveBody,
+                                       String turnId, JSONObject config, String keptDraft, String answerToKey) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -790,18 +1014,34 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 if (!c.moveToFirst()) throw new IllegalStateException("cannot allocate user timeline sequence");
                 seq = c.getInt(0);
             }
-            userBody.put("localSeq", seq);
-            ContentValues user = new ContentValues(); user.put("item_key", userKey); user.put("session_id", sessionId); user.put("local_seq", seq);
-            user.put("kind", kindOf(userBody)); user.put("body", userBody.toString()); user.put("created_at", userBody.optString("createdAt", Instant.now().toString()));
-            db.insertWithOnConflict("timeline", null, user, SQLiteDatabase.CONFLICT_ABORT);
-            updatePreviewFromBody(db, sessionId, userBody);
+            String questionKey;
+            int questionSeq, liveSeq;
+            if (answerToKey == null) {
+                String parent = leafOf(db, sessionId);
+                if (parent == null) { java.util.List<Row> path = pathOf(db, sessionId); parent = path.isEmpty() ? "" : path.get(path.size() - 1).key; }
+                userBody.put("localSeq", seq);
+                ContentValues user = new ContentValues(); user.put("item_key", userKey); user.put("session_id", sessionId); user.put("local_seq", seq);
+                user.put("kind", kindOf(userBody)); user.put("body", userBody.toString()); user.put("created_at", userBody.optString("createdAt", Instant.now().toString()));
+                if (!parent.isEmpty()) user.put("parent_key", parent);
+                db.insertWithOnConflict("timeline", null, user, SQLiteDatabase.CONFLICT_ABORT);
+                updatePreviewFromBody(db, sessionId, userBody);
+                questionKey = userKey; questionSeq = seq; liveSeq = seq + 1;
+            } else {
+                try (Cursor c = db.rawQuery("SELECT local_seq FROM timeline WHERE session_id=? AND item_key=?", new String[]{sessionId, answerToKey})) {
+                    if (!c.moveToFirst()) throw new IllegalArgumentException("找不到要回答的提问");
+                    questionSeq = c.getInt(0);
+                }
+                questionKey = answerToKey; liveSeq = seq;
+            }
 
-            liveBody.put("localSeq", seq + 1);
-            ContentValues live = new ContentValues(); live.put("item_key", streamKey); live.put("session_id", sessionId); live.put("local_seq", seq + 1);
+            liveBody.put("localSeq", liveSeq);
+            ContentValues live = new ContentValues(); live.put("item_key", streamKey); live.put("session_id", sessionId); live.put("local_seq", liveSeq);
             live.put("kind", kindOf(liveBody)); live.put("body", liveBody.toString()); live.put("created_at", liveBody.optString("createdAt", Instant.now().toString()));
+            live.put("parent_key", questionKey);
             db.insertWithOnConflict("timeline", null, live, SQLiteDatabase.CONFLICT_ABORT);
+            setLeaf(db, sessionId, streamKey);
 
-            ContentValues turn = new ContentValues(); turn.put("turn_id", turnId); turn.put("session_id", sessionId); turn.put("user_seq", seq);
+            ContentValues turn = new ContentValues(); turn.put("turn_id", turnId); turn.put("session_id", sessionId); turn.put("user_seq", questionSeq);
             turn.put("assistant_key", streamKey); turn.put("started_at", Instant.now().toString()); turn.put("status", "running");
             turn.put("config", config == null ? "{}" : config.toString());
             String rerunOf = config == null ? "" : config.optString("rerunOf", "");
@@ -809,7 +1049,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             db.insertWithOnConflict("turns", null, turn, SQLiteDatabase.CONFLICT_ABORT);
 
             ContentValues state = new ContentValues(); state.put("state", "running"); state.put("updated_at", Instant.now().toString());
-            state.put("draft", keptDraft == null ? "" : keptDraft); state.put("draft_media", "[]");
+            state.put("draft", keptDraft == null ? "" : keptDraft);
+            if (answerToKey == null) state.put("draft_media", "[]");
             if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalStateException("session missing while starting turn");
             db.setTransactionSuccessful();
         } catch (org.json.JSONException error) {
@@ -824,10 +1065,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             c.moveToFirst(); seq = c.getInt(0);
         } catch (Exception error) { throw new IllegalStateException(error); }
         try { body.put("localSeq", seq); } catch (Exception ignored) { }
+        java.util.List<Row> path = pathOf(db, sessionId);
         ContentValues v = new ContentValues();
         v.put("item_key", itemKey); v.put("session_id", sessionId); v.put("local_seq", seq); v.put("kind", kindOf(body)); v.put("body", body.toString());
         v.put("created_at", body.optString("createdAt", Instant.now().toString()));
+        if (!path.isEmpty()) v.put("parent_key", path.get(path.size() - 1).key);
         db.insertWithOnConflict("timeline", null, v, SQLiteDatabase.CONFLICT_ABORT);
+        setLeaf(db, sessionId, itemKey);
         updatePreviewFromBody(db, sessionId, body);
         return seq;
     }
@@ -848,8 +1092,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            String question = parentOf(db, streamKey);
+            String end = streamKey;
             if (finalBody == null) {
                 db.delete("timeline", "session_id=? AND item_key=?", new String[]{sessionId, streamKey});
+                end = question; // no answer: the error (if any) and the path end go under the question
+                setLeaf(db, sessionId, end);
             } else {
                 ContentValues row = new ContentValues(); row.put("body", finalBody.toString());
                 if (db.update("timeline", row, "session_id=? AND item_key=?", new String[]{sessionId, streamKey}) != 1) {
@@ -866,9 +1114,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 JSONObject error = new JSONObject().put("kind", "error").put("code", errorCode)
                         .put("summary", errorSummary == null ? "模型服务出错" : errorSummary)
                         .put("createdAt", Instant.now().toString()).put("localSeq", seq);
-                ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
+                try (Cursor c = db.rawQuery("SELECT turn_id FROM turns WHERE assistant_key=?", new String[]{streamKey})) { if (c.moveToFirst()) error.put("turnId", c.getString(0)); }
+                String errorKey = "error:" + UUID.randomUUID();
+                ContentValues row = new ContentValues(); row.put("item_key", errorKey); row.put("session_id", sessionId);
                 row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
+                if (end != null) row.put("parent_key", end);
                 db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
+                setLeaf(db, sessionId, errorKey); // spec G2: the error belongs to its turn's answer (or question)
             }
             ContentValues state = new ContentValues(); state.put("state", finalState); state.put("updated_at", Instant.now().toString());
             if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalStateException("session missing during turn finalization");
@@ -891,7 +1143,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                     catch (Exception ignored) { }
                 }
             }
-            for (String key : streamingKeys) db.delete("timeline", "item_key=?", new String[]{key});
+            for (String key : streamingKeys) removeRowKeepingPath(db, sessionId, key);
             Session session = getSession(sessionId);
             if (session != null && "running".equals(session.state)) {
                 int seq;
@@ -902,9 +1154,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 JSONObject error = new JSONObject().put("kind", "error").put("code", code == null ? "turn_internal_error" : code)
                         .put("summary", summary == null ? "回合在请求发出前失败" : summary)
                         .put("createdAt", Instant.now().toString()).put("localSeq", seq);
-                ContentValues row = new ContentValues(); row.put("item_key", "error:" + UUID.randomUUID()); row.put("session_id", sessionId);
-                row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
-                db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
+                appendErrorRow(db, sessionId, seq, error);
                 ContentValues state = new ContentValues(); state.put("state", "failed"); state.put("updated_at", Instant.now().toString());
                 db.update("sessions", state, "local_id=?", new String[]{sessionId});
             }
@@ -917,7 +1167,33 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
-    public synchronized void deleteTimelineItem(String itemKey) { getWritableDatabase().delete("timeline", "item_key=?", new String[]{itemKey}); }
+    public synchronized void deleteTimelineItem(String itemKey) {
+        SQLiteDatabase db = getWritableDatabase();
+        String sessionId = null;
+        try (Cursor c = db.rawQuery("SELECT session_id FROM timeline WHERE item_key=?", new String[]{itemKey})) { if (c.moveToFirst()) sessionId = c.getString(0); }
+        if (sessionId == null) return;
+        removeRowKeepingPath(db, sessionId, itemKey);
+    }
+
+    /** Deletes a childless row (a stale live answer); the path end moves to its parent when it pointed at it. */
+    private static void removeRowKeepingPath(SQLiteDatabase db, String sessionId, String itemKey) {
+        String parent = parentOf(db, itemKey);
+        if (itemKey.equals(leafOf(db, sessionId))) setLeaf(db, sessionId, parent);
+        db.delete("timeline", "item_key=?", new String[]{itemKey});
+    }
+
+    /** An error row under the path's end, which it then becomes. */
+    private static void appendErrorRow(SQLiteDatabase db, String sessionId, int seq, JSONObject error) {
+        java.util.List<Row> path = pathOf(db, sessionId);
+        String key = "error:" + UUID.randomUUID();
+        ContentValues row = new ContentValues(); row.put("item_key", key); row.put("session_id", sessionId);
+        row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt", Instant.now().toString()));
+        if (!path.isEmpty()) row.put("parent_key", path.get(path.size() - 1).key);
+        db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
+        setLeaf(db, sessionId, key);
+    }
+
+    /** The session's current path (spec G3, H1): what the user sees and what history means. */
     public synchronized JSONArray timeline(String sessionId) { return timelineThrough(sessionId, null); }
 
     /** Usage summaries of turns started at or after {@code sinceIso} (turns_started index). Turns without model calls are left out. */
@@ -1023,14 +1299,16 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized JSONArray turns(String sessionId) {
         JSONArray out = new JSONArray();
         if (sessionId == null) return out;
-        // answers = this question's answers across re-answers (the original turn plus every turn that re-asks it).
+        // answers = this question's answers: its versions in this session (spec D9) plus re-answers in branch sessions
+        // made before v3 (rerun_of).
         String sql = "SELECT t.turn_id,t.user_seq,t.status,t.usage,t.rating,"
-                + "(SELECT COUNT(*) FROM turns g WHERE g.turn_id=COALESCE(t.rerun_of,t.turn_id) OR g.rerun_of=COALESCE(t.rerun_of,t.turn_id))"
-                + " FROM turns t WHERE t.session_id=? ORDER BY t.user_seq";
+                + "(SELECT COUNT(*) FROM turns g WHERE g.session_id=t.session_id AND g.user_seq=t.user_seq)"
+                + "+(SELECT COUNT(*) FROM turns g WHERE g.session_id<>t.session_id AND (g.rerun_of=t.turn_id OR g.turn_id=t.rerun_of OR (t.rerun_of IS NOT NULL AND g.rerun_of=t.rerun_of))),"
+                + "t.assistant_key FROM turns t WHERE t.session_id=? ORDER BY t.started_at";
         try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sessionId})) {
             while (c.moveToNext()) try {
                 JSONObject turn = new JSONObject().put("turnId", c.getString(0)).put("userSeq", c.getInt(1)).put("status", c.getString(2))
-                        .put("usage", new JSONObject(c.getString(3))).put("answers", c.getInt(5));
+                        .put("usage", new JSONObject(c.getString(3))).put("answers", c.getInt(5)).put("assistantKey", c.getString(6));
                 if (!c.isNull(4)) turn.put("rating", c.getInt(4));
                 out.put(turn);
             } catch (Exception ignored) { }
@@ -1038,10 +1316,17 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return out;
     }
 
-    /** The turn record that started at the given user row, or null. */
+    /** The newest turn that answered the question at {@code userSeq}, or null. */
     public synchronized String turnAt(String sessionId, int userSeq) {
-        try (Cursor c = getReadableDatabase().rawQuery("SELECT turn_id FROM turns WHERE session_id=? AND user_seq=?", new String[]{sessionId, String.valueOf(userSeq)})) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT turn_id FROM turns WHERE session_id=? AND user_seq=? ORDER BY started_at DESC LIMIT 1", new String[]{sessionId, String.valueOf(userSeq)})) {
             return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    /** Failed or unfinished turns that answered the question at {@code userSeq}: a retry's attempt number is this plus one. */
+    public synchronized int attemptsAt(String sessionId, int userSeq) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM turns WHERE session_id=? AND user_seq=?", new String[]{sessionId, String.valueOf(userSeq)})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
         }
     }
 
@@ -1054,32 +1339,36 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     }
 
     /**
-     * Every answer to one question: the original turn and all turns that re-ask it, oldest first, with
-     * the session, the turn's config and usage, its rating, verification summary and answer text.
+     * Every answer to one question, oldest first: its versions in this session (spec D9, H5) and the re-answers in
+     * branch sessions made before v3 (rerun_of), with the session, the turn's config and usage, its rating, verification
+     * summary, answer text and, for a version here, the answer's seq to switch to.
      */
     public synchronized JSONObject answerGroup(String sessionId, String turnId) {
         SQLiteDatabase db = getReadableDatabase();
         try {
-            String root;
-            try (Cursor c = db.rawQuery("SELECT COALESCE(rerun_of,turn_id) FROM turns WHERE session_id=? AND turn_id=?", new String[]{sessionId, turnId})) {
+            String root; int userSeq;
+            try (Cursor c = db.rawQuery("SELECT COALESCE(rerun_of,turn_id),user_seq FROM turns WHERE session_id=? AND turn_id=?", new String[]{sessionId, turnId})) {
                 if (!c.moveToFirst()) return null;
-                root = c.getString(0);
+                root = c.getString(0); userSeq = c.getInt(1);
             }
             JSONArray answers = new JSONArray();
             String question = "";
             String sql = "SELECT t.turn_id,t.session_id,s.title,t.user_seq,t.assistant_key,t.status,t.terminal_code,t.config,t.usage,t.rating,t.started_at"
-                    + " FROM turns t JOIN sessions s ON s.local_id=t.session_id WHERE t.turn_id=? OR t.rerun_of=? ORDER BY t.started_at";
-            try (Cursor c = db.rawQuery(sql, new String[]{root, root})) {
+                    + " FROM turns t JOIN sessions s ON s.local_id=t.session_id"
+                    + " WHERE t.turn_id=? OR t.rerun_of=? OR (t.session_id=? AND t.user_seq=?) ORDER BY t.started_at";
+            boolean first = true;
+            try (Cursor c = db.rawQuery(sql, new String[]{root, root, sessionId, String.valueOf(userSeq)})) {
                 while (c.moveToNext()) {
                     JSONObject answer = new JSONObject().put("turnId", c.getString(0)).put("localSessionId", c.getString(1)).put("sessionTitle", c.getString(2))
                             .put("userSeq", c.getInt(3)).put("status", c.getString(5)).put("terminalCode", c.getString(6))
                             .put("config", new JSONObject(c.getString(7))).put("usage", new JSONObject(c.getString(8))).put("startedAt", c.getString(10))
-                            .put("original", c.getString(0).equals(root));
+                            .put("original", first).put("sameSession", sessionId.equals(c.getString(1)));
+                    first = false;
                     if (!c.isNull(9)) answer.put("rating", c.getInt(9));
                     try (Cursor body = db.rawQuery("SELECT body FROM timeline WHERE item_key=?", new String[]{c.getString(4)})) {
                         if (body.moveToFirst()) {
                             JSONObject item = new JSONObject(body.getString(0));
-                            answer.put("text", item.optString("text", ""));
+                            answer.put("text", item.optString("text", "")).put("answerSeq", item.optInt("localSeq", 0));
                             JSONObject verification = item.optJSONObject("verification");
                             if (verification != null) answer.put("verification", new JSONObject().put("verdict", verification.optString("verdict", ""))
                                     .put("action", verification.optString("action", "")).put("repaired", verification.optBoolean("repaired", false)));
@@ -1158,6 +1447,11 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             }
             String retryOf = turn.getJSONObject("config").optString("retryOf", "");
             JSONObject previous = retryOf.isEmpty() ? null : archivedTurn(retryOf);
+            // Since v3 the failed version stays in the session (spec T7): its record is still a turn.
+            if (previous == null && !retryOf.isEmpty()) try (Cursor c = db.rawQuery("SELECT status,terminal_code,usage,started_at FROM turns WHERE session_id=? AND turn_id=?", new String[]{sessionId, retryOf})) {
+                if (c.moveToFirst()) previous = new JSONObject().put("turnId", retryOf).put("status", c.getString(0)).put("terminalCode", c.getString(1))
+                        .put("usage", new JSONObject(c.getString(2))).put("startedAt", c.getString(3)).put("kept", true);
+            }
             if (previous != null) turn.put("previousAttempt", previous);
             JSONArray spans = new JSONArray();
             try (Cursor c = db.rawQuery("SELECT stage,status,started_at_ms,duration_ms,reason,calls,input_tokens,output_tokens,detail FROM turn_spans WHERE turn_id=? ORDER BY ordinal", new String[]{turnId})) {
@@ -1200,17 +1494,13 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         return out;
     }
 
+    /** The current path up to and including the row at {@code throughSeq} (null = all); the row must be on the path. */
     public synchronized JSONArray timelineThrough(String sessionId, Integer throughSeq) {
-        JSONArray out = new JSONArray();
-        if (sessionId == null) return out;
-        String sql = throughSeq == null
-                ? "SELECT body FROM timeline WHERE session_id=? ORDER BY local_seq"
-                : "SELECT body FROM timeline WHERE session_id=? AND local_seq<=? ORDER BY local_seq";
-        String[] args = throughSeq == null ? new String[]{sessionId} : new String[]{sessionId, String.valueOf(throughSeq)};
-        try (Cursor c = getReadableDatabase().rawQuery(sql, args)) {
-            while (c.moveToNext()) try { out.put(new JSONObject(c.getString(0))); } catch (Exception ignored) { }
-        }
-        return out;
+        if (sessionId == null) return new JSONArray();
+        java.util.List<Row> path = pathOf(getReadableDatabase(), sessionId);
+        if (throughSeq == null) return bodies(path);
+        for (int i = 0; i < path.size(); i++) if (path.get(i).seq == throughSeq) return bodies(path.subList(0, i + 1));
+        throw new IllegalArgumentException("这条消息不在当前显示的对话里");
     }
 
     /** Records the outcome of a key check or of a turn; returns false when nothing changed. */

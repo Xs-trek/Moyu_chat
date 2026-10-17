@@ -128,7 +128,7 @@ public class ChatDatabaseTest {
         assertEquals("a carry has nothing to show in statistics", 0, db.turnStats("").length());
     }
 
-    @Test public void rewoundTurnsMoveToTheArchiveWithoutTheirInstructionText() throws Exception {
+    @Test public void aDeletedSessionsTurnsMoveToTheArchiveWithoutTheirInstructionText() throws Exception {
         TestDeployments.save(db, provider("p-archive"));
         ChatDatabase.Session s = TestDeployments.session(db, "p-archive", "model", null, null);
         String turnId = "turn-archive";
@@ -137,10 +137,9 @@ public class ChatDatabaseTest {
                 new JSONObject().put("providerId", "p-archive").put("contextMode", "standard").put("customInstruction", "secret style"));
         db.completeTurn(turnId, "ok", "", new JSONObject().put("cost", new JSONObject().put("amount", 0.5).put("currency", "USD")), new JSONArray());
         db.finalizeTurn(s.id, "live:" + turnId, message("assistant", "answer"), null, null, "completed");
-        assertEquals(turnId, db.truncateTimelineFrom(s.id, 1, ChatDatabase.ARCHIVE_REWIND));
-        assertEquals(0, db.turns(s.id).length());
+        db.deleteSession(s.id);
         JSONObject archived = db.archivedTurn(turnId);
-        assertEquals(ChatDatabase.ARCHIVE_REWIND, archived.optString("reason"));
+        assertEquals(ChatDatabase.ARCHIVE_DELETED, archived.optString("reason"));
         assertEquals(1, archived.optInt("attempt"));
         try (android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT config FROM turn_archive WHERE turn_id=?", new String[]{turnId})) {
             assertTrue(c.moveToFirst());
@@ -152,7 +151,7 @@ public class ChatDatabaseTest {
         assertEquals(0, db.turnStats("", null, false).length());
     }
 
-    @Test public void aHelperFinishingAfterItsTurnWasRewoundIsBilledToTheArchive() throws Exception {
+    @Test public void aHelperFinishingAfterItsSessionWasDeletedIsBilledToTheArchive() throws Exception {
         TestDeployments.save(db, provider("p-late"));
         ChatDatabase.Session s = TestDeployments.session(db, "p-late", "model", null, null);
         String turnId = "turn-late";
@@ -161,7 +160,7 @@ public class ChatDatabaseTest {
         db.completeTurn(turnId, "ok", "", new JSONObject().put("auxiliaryCallCount", 1).put("totalInputTokens", 10)
                 .put("cost", new JSONObject().put("amount", 0.5).put("currency", "USD")), new JSONArray());
         db.finalizeTurn(s.id, "live:" + turnId, message("assistant", "answer"), null, null, "completed");
-        db.truncateTimelineFrom(s.id, 1, ChatDatabase.ARCHIVE_REWIND); // rewound while the title call was out
+        db.deleteSession(s.id); // deleted while the title call was out
 
         JSONObject span = new JSONObject().put("stage", "title").put("status", "ok").put("durationMs", 900)
                 .put("usage", new JSONObject().put("calls", 1).put("inputTokens", 40).put("outputTokens", 6))
@@ -257,7 +256,8 @@ public class ChatDatabaseTest {
         for (int i = 0; i < db.timeline(s.id).length(); i++) assertNotEquals("usage", db.timeline(s.id).getJSONObject(i).optString("kind"));
     }
 
-    @Test public void rewindingIntoATurnRemovesItsRecordAndColdStartFailsRunningTurns() throws Exception {
+    /** Spec H5, D9: returning to an earlier answer removes nothing; a cold start fails the running turn. */
+    @Test public void returningToAnEarlierAnswerKeepsLaterTurnsAndColdStartFailsRunningTurns() throws Exception {
         TestDeployments.save(db, provider("p-rewind"));
         ChatDatabase.Session s = TestDeployments.session(db, "p-rewind", "model", null, null);
         String first = startTurn(s, "first");
@@ -267,9 +267,11 @@ public class ChatDatabaseTest {
         assertEquals("process_died", db.turnTrace(s.id, second).optString("terminalCode"));
         assertEquals("failed", db.turnTrace(s.id, second).optString("status"));
 
-        db.truncateTimelineFrom(s.id, 2); // the first turn's assistant row
-        assertEquals("rewinding into a turn removes that turn and every later one", 0, db.turns(s.id).length());
-        assertNull(db.turnTrace(s.id, first));
+        db.moveLeafTo(s.id, 2); // the first turn's answer
+        assertEquals("nothing is removed", 2, db.turns(s.id).length());
+        assertNotNull(db.turnTrace(s.id, first));
+        assertEquals("the path ends at that answer", 2, db.timeline(s.id).length());
+        assertNotNull("and the rest is one tap away", db.resumeSeq(s.id));
     }
 
     @Test public void wirePayloadsAreKeptOnlyForRecentTurns() throws Exception {
@@ -294,9 +296,9 @@ public class ChatDatabaseTest {
     @Test public void viewProjectsTurnUsageRightAfterItsReply() throws Exception {
         JSONArray timeline = new JSONArray()
                 .put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 1))
-                .put(new JSONObject().put("kind", "message").put("role", "assistant").put("localSeq", 2))
+                .put(new JSONObject().put("kind", "message").put("role", "assistant").put("localSeq", 2).put("turnId", "t1"))
                 .put(new JSONObject().put("kind", "message").put("role", "user").put("localSeq", 3))
-                .put(new JSONObject().put("kind", "error").put("localSeq", 4));
+                .put(new JSONObject().put("kind", "error").put("localSeq", 4).put("turnId", "t2"));
         JSONArray turns = new JSONArray()
                 .put(new JSONObject().put("turnId", "t1").put("userSeq", 1).put("usage", new JSONObject().put("inputTokens", 5)))
                 .put(new JSONObject().put("turnId", "t2").put("userSeq", 3).put("usage", new JSONObject().put("inputTokens", 7)));
@@ -306,6 +308,99 @@ public class ChatDatabaseTest {
         assertEquals("t1", view.getJSONObject(2).optString("turnId"));
         assertEquals("error", view.getJSONObject(4).optString("kind"));
         assertEquals("a turn without a reply keeps its usage after its own rows", 7, view.getJSONObject(5).optInt("inputTokens"));
+    }
+
+    // ---------- message tree (spec G2, G3, H5, D9) ----------
+
+    @Test public void editingAddsASiblingVersionAndSwitchingShowsItsNewestMessage() throws Exception {
+        TestDeployments.save(db, provider("p-tree"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-tree", "model", null, null);
+        String first = startTurn(s, "first question");
+        db.finalizeTurn(s.id, "live:" + first, message("assistant", "first answer"), null, null, "completed");
+        String second = startTurn(s, "second question");
+        db.finalizeTurn(s.id, "live:" + second, message("assistant", "second answer"), null, null, "completed");
+        assertEquals(4, db.timeline(s.id).length());
+
+        db.moveLeafBefore(s.id, 3); // edit the second question
+        assertEquals(2, db.timeline(s.id).length());
+        String edited = startTurn(s, "second question, edited");
+        db.finalizeTurn(s.id, "live:" + edited, message("assistant", "edited answer"), null, null, "completed");
+        JSONArray path = db.timeline(s.id);
+        assertEquals(4, path.length());
+        assertEquals("second question, edited", path.getJSONObject(2).optString("text"));
+        JSONObject version = db.versions(s.id).getJSONObject(String.valueOf(path.getJSONObject(2).optInt("localSeq")));
+        assertEquals(2, version.getInt("index"));
+        assertEquals(2, version.getInt("count"));
+        assertEquals("the older version", 3, version.getInt("prevSeq"));
+
+        db.selectVersion(s.id, 3);
+        path = db.timeline(s.id);
+        assertEquals("back on the old version, down to its newest message", "second answer", path.getJSONObject(3).optString("text"));
+        assertEquals("nothing was deleted", 6, db.latestTimelineSeqs().get(s.id).intValue());
+        assertEquals(3, db.turns(s.id).length());
+    }
+
+    @Test public void aSecondAnswerToTheSameQuestionIsAnotherVersionUnderIt() throws Exception {
+        TestDeployments.save(db, provider("p-again"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-again", "model", null, null);
+        String first = startTurn(s, "question");
+        db.finalizeTurn(s.id, "live:" + first, null, "http_500", "boom", "failed");
+        assertEquals("error", db.timeline(s.id).getJSONObject(1).optString("kind"));
+        assertEquals("the error belongs to its turn", first, db.timeline(s.id).getJSONObject(1).optString("turnId"));
+
+        String questionKey = db.itemKeyAt(s.id, 1);
+        String again = java.util.UUID.randomUUID().toString();
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
+        db.beginTurn(s.id, "unused", message("user", "ignored"), "live:" + again, live, again, new JSONObject(), "", questionKey);
+        db.finalizeTurn(s.id, "live:" + again, message("assistant", "answer"), null, null, "completed");
+        JSONArray path = db.timeline(s.id);
+        assertEquals("question, then the new answer; the failed version is off the path", 2, path.length());
+        assertEquals("answer", path.getJSONObject(1).optString("text"));
+        assertEquals("both turns answer question 1", 2, db.attemptsAt(s.id, 1));
+        assertEquals(2, db.turns(s.id).getJSONObject(1).getInt("answers"));
+    }
+
+    @Test public void versionTwoUpgradesToAMessageTreeAndSeveralTurnsPerQuestion() throws Exception {
+        TestDeployments.save(db, provider("p-v2"));
+        ChatDatabase.Session s = TestDeployments.session(db, "p-v2", "model", null, null);
+        String turn = startTurn(s, "old question");
+        db.finalizeTurn(s.id, "live:" + turn, message("assistant", "old answer"), null, null, "completed");
+        db.completeTurn(turn, "ok", "", null, new JSONArray().put(new JSONObject().put("stage", "generate").put("status", "ok").put("durationMs", 5)));
+        android.database.sqlite.SQLiteDatabase raw = db.getWritableDatabase();
+        // Back to the v2 shape: a linear timeline without tree data, and turns unique per question.
+        raw.execSQL("UPDATE timeline SET parent_key=NULL");
+        raw.execSQL("UPDATE sessions SET leaf_key=NULL");
+        raw.setForeignKeyConstraintsEnabled(false);
+        raw.execSQL("CREATE TABLE turns_old AS SELECT * FROM turns");
+        raw.execSQL("CREATE TABLE spans_old AS SELECT * FROM turn_spans");
+        raw.execSQL("DROP TABLE turn_payloads"); raw.execSQL("DROP TABLE turn_spans"); raw.execSQL("DROP TABLE turns");
+        raw.execSQL("CREATE TABLE turns(turn_id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
+                + "user_seq INTEGER NOT NULL,assistant_key TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,status TEXT NOT NULL,"
+                + "terminal_code TEXT NOT NULL DEFAULT '',config TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',rating INTEGER CHECK(rating IN (-1,1)),rerun_of TEXT,"
+                + "UNIQUE(session_id,user_seq))");
+        raw.execSQL("CREATE TABLE turn_spans(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,ordinal INTEGER NOT NULL,stage TEXT NOT NULL,"
+                + "status TEXT NOT NULL,started_at_ms INTEGER NOT NULL,duration_ms INTEGER NOT NULL,reason TEXT NOT NULL DEFAULT '',calls INTEGER NOT NULL DEFAULT 0,"
+                + "input_tokens INTEGER,output_tokens INTEGER,detail TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(turn_id,ordinal))");
+        raw.execSQL("CREATE TABLE turn_payloads(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,call_index INTEGER NOT NULL,part INTEGER NOT NULL,"
+                + "stage TEXT NOT NULL,direction TEXT NOT NULL,created_at TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(turn_id,call_index,part))");
+        raw.execSQL("INSERT INTO turns SELECT * FROM turns_old"); raw.execSQL("INSERT INTO turn_spans SELECT * FROM spans_old");
+        raw.execSQL("DROP TABLE turns_old"); raw.execSQL("DROP TABLE spans_old");
+        raw.execSQL("DROP INDEX IF EXISTS timeline_parent");
+        raw.setForeignKeyConstraintsEnabled(true);
+        raw.setVersion(2);
+        db.close();
+
+        db = new ChatDatabase(context);
+        assertEquals(3, db.getReadableDatabase().getVersion());
+        JSONArray path = db.timeline(s.id);
+        assertEquals("the old Chat reads as before", 2, path.length());
+        assertEquals("old answer", path.getJSONObject(1).optString("text"));
+        assertEquals("its turn and spans survived", 1, db.turnTrace(s.id, turn).getJSONArray("spans").length());
+        String questionKey = db.itemKeyAt(s.id, 1);
+        String again = java.util.UUID.randomUUID().toString();
+        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
+        db.beginTurn(s.id, "unused", message("user", "ignored"), "live:" + again, live, again, new JSONObject(), "", questionKey);
+        assertEquals("a second turn on the same question is allowed now", 2, db.attemptsAt(s.id, 1));
     }
 
     @Test public void credentialEpochLivesOnTheProviderRow() {
@@ -330,8 +425,8 @@ public class ChatDatabaseTest {
         assertEquals("marking the index never bumps updated_at", s.updatedAt, db.getSession(s.id).updatedAt);
         db.saveSession(db.getSession(s.id));
         assertEquals("session saves keep the marker", s.updatedAt, db.knowledgeIndexedAt(s.id));
-        db.truncateTimelineFrom(s.id, 1);
-        assertEquals("rollback invalidates the index", "", db.knowledgeIndexedAt(s.id));
+        db.moveLeafBefore(s.id, 1);
+        assertEquals("rows are never removed by moving the path end, so the index stays valid", s.updatedAt, db.knowledgeIndexedAt(s.id));
     }
 
     @Test public void verifierLabelsAreBoundedPerCalibrationKey() throws Exception {

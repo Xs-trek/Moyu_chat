@@ -213,6 +213,21 @@ export function contextFill(session) {
 }
 
 /** The failed or unfinished question the composer can send again, when the session is idle. */
+/** Spec G3: "‹ i/n ›" for a message with other versions, or null. */
+export function messageVersion(item) {
+  const v = item?.version;
+  const count = Number(v?.count), index = Number(v?.index);
+  if (!Number.isInteger(count) || count < 2 || !Number.isInteger(index)) return null;
+  const seq = (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : null);
+  return { label: `${index}/${count}`, prevSeq: seq(v.prevSeq), nextSeq: seq(v.nextSeq) };
+}
+
+/** Spec H5: the path's end has more after it ("回到这里" or an unsent edit); the seq to return to, or null. */
+export function resumeSeq(session) {
+  const seq = Number(session?.resumeLocalSeq);
+  return session?.canSend && Number.isInteger(seq) && seq > 0 ? seq : null;
+}
+
 export function retrySeq(session) {
   const seq = Number(session?.retryLocalSeq);
   return session?.canSend && Number.isInteger(seq) && seq > 0 ? seq : null;
@@ -485,7 +500,7 @@ export function payloadParts(data) {
 
 /** Every answer to one question, as comparable cards (original first, then re-answers in order). */
 export function answersView(group) {
-  // Original first, then re-answers in the order they were asked.
+  // The first answer, then the later versions and re-answers in the order they were asked.
   const answers = (Array.isArray(group?.answers) ? group.answers : []).slice().sort((a, b) => Number(Boolean(b.original)) - Number(Boolean(a.original)));
   let rerun = 0;
   return {
@@ -499,7 +514,9 @@ export function answersView(group) {
       return {
         sessionId: answer.localSessionId,
         turnId: answer.turnId,
-        title: answer.original ? '原回答' : `重答 ${++rerun}`,
+        title: answer.original ? '第 1 次回答' : `第 ${++rerun + 1} 次回答`,
+        // A version in this conversation is switched to; a re-answer branch from before versions is opened.
+        versionSeq: answer.sameSession && Number(answer.answerSeq) > 0 ? Number(answer.answerSeq) : null,
         subtitle: [config.modelName || config.model, contextLabel(config.effectiveContextMode || config.contextMode)].filter(Boolean).join(' · '),
         metrics: [u?.firstMs !== null && u?.firstMs !== undefined ? `首字 ${secs(u.firstMs)}` : '', u?.totalMs !== null && u?.totalMs !== undefined ? `总耗 ${secs(u.totalMs)}` : '', tokens].filter(Boolean).join(' · '),
         verdict: verification ? `${VERDICTS[verification.verdict] || verification.verdict || '已校验'}${verification.repaired ? ' · 已修正' : ''}` : '',

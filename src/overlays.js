@@ -188,7 +188,7 @@ function modelChoiceList(view, selectedId, dataFor, disabled = false) {
 
 function rerunSheet(view, state) {
   return [h('h2', { class: 'sheet-title', text: '换个方式重答' }),
-    h('p', { class: 'sheet-note', text: '在新分支里重新发送这条消息，只带它之前的对话；原会话不变，两次回答可以放在一起对比。' }),
+    h('p', { class: 'sheet-note', text: '在这条提问下生成一个新的回答版本，只带它之前的对话。选的模型和模式会成为这个会话的设置；各个版本可以左右切换，也可以放在一起对比。' }),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '模型' }),
       modelChoiceList(view, state.modelProfileId, (model) => ({ action: 'rerun-model', modelProfileId: model.modelProfileId }))),
     segmented('上下文模式', ['minimal', 'standard', 'smart'], state.contextMode, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '',
@@ -224,7 +224,9 @@ function answersSheet(state) {
         item.rating ? h('span', { class: `rate-mark ${item.rating > 0 ? 'up' : 'down'}`, title: item.rating > 0 ? '好答案' : '不好' }, icon(item.rating > 0 ? 'thumbUp' : 'thumbDown', 'ico ico-xs')) : null),
       item.metrics || item.verdict ? h('p', { class: 'answer-metrics', text: [item.metrics, item.verdict].filter(Boolean).join(' · ') }) : null,
       answerText(item.text),
-      h('div', { class: 'answer-foot' }, button('打开会话', 'open-session', { sessionId: item.sessionId, closeSheet: '1' }, 'btn small ghost')))))];
+      h('div', { class: 'answer-foot' }, item.versionSeq
+        ? button('切换到这个版本', 'version-select', { sessionId: item.sessionId, localSeq: item.versionSeq, closeSheet: '1' }, 'btn small ghost')
+        : button('打开会话', 'open-session', { sessionId: item.sessionId, closeSheet: '1' }, 'btn small ghost')))))];
 }
 
 /** Protocol inspector: the redacted request / response text of one recorded model call. */
