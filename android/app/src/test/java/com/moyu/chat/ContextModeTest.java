@@ -48,6 +48,8 @@ public class ContextModeTest {
         assertEquals(java.util.Collections.singleton(HelperSwitches.ROUTER),
                 HelperSwitches.withDefaults(java.util.Collections.<String>emptySet(), 1));
         assertTrue(HelperSwitches.withDefaults(java.util.Collections.<String>emptySet(), HelperSwitches.DEFAULTS_REVISION).isEmpty());
-        assertTrue(HelperSwitches.known(HelperSwitches.RECALL) && HelperSwitches.known(HelperSwitches.WEB_TOOLS));
+        assertTrue(HelperSwitches.known(HelperSwitches.RECALL));
+        assertFalse("spec D5: the Web mode controls the model's Web tools; a stored webTools switch is dropped",
+                HelperSwitches.known("webTools") || HelperSwitches.parse("[\"webTools\",\"verify\"]").contains("webTools"));
     }
 }

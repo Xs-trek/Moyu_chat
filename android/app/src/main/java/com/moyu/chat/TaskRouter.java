@@ -3,7 +3,7 @@ package com.moyu.chat;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** First-turn model-as-controller classifier. Output is parsed into an allowlisted TaskProfile only. */
+/** Per-turn model-as-controller classifier (spec D8). Output is parsed into an allowlisted TaskProfile only. */
 final class TaskRouter {
     private static final String INSTRUCTIONS =
             "Classify the conversation for a chat application. Do not answer the user's task. " +
@@ -21,7 +21,8 @@ final class TaskRouter {
             JSONArray messages = new JSONArray();
             StringBuilder transcript = new StringBuilder("Conversation excerpt:\n");
             JSONArray source = baseline == null ? null : baseline.messages;
-            int start = source == null ? 0 : Math.max(0, source.length() - 8);
+            // Spec M5 Router: the current question and the round before it.
+            int start = source == null ? 0 : Math.max(0, source.length() - 3);
             if (source != null) for (int i = start; i < source.length(); i++) {
                 JSONObject item = source.optJSONObject(i); if (item == null) continue;
                 String text = item.optString("text", "");

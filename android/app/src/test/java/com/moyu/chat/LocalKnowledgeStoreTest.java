@@ -54,7 +54,7 @@ public class LocalKnowledgeStoreTest {
         ChatDatabase.Session current = db.createSession(profile, "current", null, null, ReasoningPolicy.DEFAULT);
         db.appendTimeline(source.id, "u", message("user", "privacy-secret-allocator-token"));
         LocalKnowledgeStore store = new LocalKnowledgeStore(db);
-        assertFalse(store.searchUserMemory(current.id, "privacy secret allocator", 4).isEmpty());
+        assertFalse(store.searchOtherConversations(java.util.Collections.singleton(current.id), "privacy secret allocator", 4).isEmpty());
         assertTrue(countScope(LocalKnowledgeStore.chatScope(source.id)) > 0);
         assertFalse("the index marker lives on the session row", db.knowledgeIndexedAt(source.id).isEmpty());
 
@@ -90,15 +90,15 @@ public class LocalKnowledgeStoreTest {
         db.appendTimeline(other.id, "b", message("user", "今天的天气是不是很好，我们是不是可以出去走走？"));
         LocalKnowledgeStore store = new LocalKnowledgeStore(db);
 
-        List<LocalKnowledgeStore.Hit> cat = store.searchUserMemory(current.id, "我的猫叫什么名字", 4);
+        List<LocalKnowledgeStore.Hit> cat = store.searchOtherConversations(java.util.Collections.singleton(current.id), "我的猫叫什么名字", 4);
         assertFalse("text far past the first 32 characters is indexed", cat.isEmpty());
         assertTrue(cat.get(0).text.contains("阿橘"));
         assertTrue("a hit is a chunk, not the whole long answer", cat.get(0).text.length() <= KnowledgeLexicon.CHUNK_CHARS);
-        for (LocalKnowledgeStore.Hit hit : store.searchUserMemory(current.id, "阿橘早上喂罐头了吗", 4)) {
+        for (LocalKnowledgeStore.Hit hit : store.searchOtherConversations(java.util.Collections.singleton(current.id), "阿橘早上喂罐头了吗", 4)) {
             assertNotEquals("a chat sharing only filler words does not come back", "other", hit.sourceTitle);
         }
-        assertTrue("an unrelated question sharing only single characters retrieves nothing", store.searchUserMemory(current.id, "量子计算机的原理", 4).isEmpty());
-        assertFalse("a one-character question still finds its memory", store.searchUserMemory(current.id, "猫", 4).isEmpty());
+        assertTrue("an unrelated question sharing only single characters retrieves nothing", store.searchOtherConversations(java.util.Collections.singleton(current.id), "量子计算机的原理", 4).isEmpty());
+        assertFalse("a one-character question still finds its memory", store.searchOtherConversations(java.util.Collections.singleton(current.id), "猫", 4).isEmpty());
     }
 
     @Test public void chatsAreIndexedIncrementallyAndUnfinishedAnswersWait() throws Exception {
@@ -109,21 +109,21 @@ public class LocalKnowledgeStoreTest {
         db.appendTimeline(source.id, "u1", message("user", "first question about quaternion rotation"));
         db.appendTimeline(source.id, "a1", message("assistant", "streaming answer about gimbal lock").put("streaming", true));
         LocalKnowledgeStore store = new LocalKnowledgeStore(db);
-        assertFalse(store.searchUserMemory(current.id, "quaternion rotation", 4).isEmpty());
+        assertFalse(store.searchOtherConversations(java.util.Collections.singleton(current.id), "quaternion rotation", 4).isEmpty());
         assertEquals("the marker stops before the unfinished answer", "v2:1", db.knowledgeIndexedAt(source.id));
-        assertTrue(store.searchUserMemory(current.id, "gimbal lock", 4).isEmpty());
+        assertTrue(store.searchOtherConversations(java.util.Collections.singleton(current.id), "gimbal lock", 4).isEmpty());
 
         try (Cursor c = db.getReadableDatabase().rawQuery("SELECT item_key FROM timeline WHERE session_id=? AND local_seq=2", new String[]{source.id})) {
             assertTrue(c.moveToFirst());
             db.replaceTimelineBody(c.getString(0), message("assistant", "final answer about gimbal lock").put("localSeq", 2));
         }
         int before = countScope(LocalKnowledgeStore.chatScope(source.id));
-        assertFalse("the finished answer is picked up", store.searchUserMemory(current.id, "gimbal lock", 4).isEmpty());
+        assertFalse("the finished answer is picked up", store.searchOtherConversations(java.util.Collections.singleton(current.id), "gimbal lock", 4).isEmpty());
         assertEquals("only the new row was added", before + 1, countScope(LocalKnowledgeStore.chatScope(source.id)));
         assertEquals("v2:2", db.knowledgeIndexedAt(source.id));
 
         db.markKnowledgeIndexed(source.id, "2026-10-01T00:00:00Z"); // an index from the old format
-        store.searchUserMemory(current.id, "quaternion", 4);
+        store.searchOtherConversations(java.util.Collections.singleton(current.id), "quaternion", 4);
         assertEquals("an old-format index is rebuilt once, not duplicated", before + 1, countScope(LocalKnowledgeStore.chatScope(source.id)));
     }
 

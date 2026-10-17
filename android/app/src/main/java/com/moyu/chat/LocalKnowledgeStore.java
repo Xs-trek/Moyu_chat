@@ -50,14 +50,21 @@ final class LocalKnowledgeStore {
 
     LocalKnowledgeStore(ChatDatabase db) { this.db = db; }
 
-    /** User-memory search spans other local Chat timelines; the current session is excluded to avoid echoing visible history. */
-    List<Hit> searchUserMemory(String excludeSessionId, String query, int limit) {
+    /**
+     * Spec C5, H7: the user's other Chats, without {@code excluded} (the current session and its branch family). Snapshot
+     * scopes are never searched here: a branch's inherited history belongs to its family.
+     */
+    List<Hit> searchOtherConversations(java.util.Set<String> excluded, String query, int limit) {
         if (limit <= 0) return new ArrayList<>();
         try {
-            ensureChatsIndexed(excludeSessionId);
+            ensureChatsIndexedExcept(excluded);
+            StringBuilder where = new StringBuilder("scope_id LIKE 'chat:%'");
+            ArrayList<String> args = new ArrayList<>();
+            for (String id : excluded) { where.append(" AND scope_id<>?"); args.add(chatScope(id)); }
             Map<String, String> titles = new HashMap<>();
-            return search("scope_id LIKE 'chat:%' AND scope_id<>?", new String[]{chatScope(excludeSessionId == null ? "" : excludeSessionId)}, query, limit, scope -> {
+            return search(where.toString(), args.toArray(new String[0]), query, limit, scope -> {
                 String sourceId = scope.startsWith("chat:") ? scope.substring(5) : scope;
+                if (excluded.contains(sourceId)) return null;
                 String title = titles.get(sourceId);
                 if (title == null) {
                     ChatDatabase.Session source = db.getSession(sourceId);
@@ -68,8 +75,18 @@ final class LocalKnowledgeStore {
                 return new String[]{sourceId, title};
             });
         } catch (Exception ignored) {
-            // Memory/RAG is optional. FTS corruption/module absence must not break ordinary Chat.
-            return new ArrayList<>();
+            return new ArrayList<>(); // a broken index is a failed lookup, not a failed turn
+        }
+    }
+
+    private void ensureChatsIndexedExcept(java.util.Set<String> excluded) {
+        Map<String, Integer> latest = db.latestTimelineSeqs();
+        for (ChatDatabase.Session session : db.listSessions()) {
+            if (session == null || session.id == null || excluded.contains(session.id)) continue;
+            Integer newest = latest.get(session.id);
+            if (newest == null) continue;
+            int indexed = indexedThrough(db.knowledgeIndexedAt(session.id));
+            if (indexed < newest) indexSession(session.id, indexed);
         }
     }
 
@@ -169,20 +186,6 @@ final class LocalKnowledgeStore {
             for (int i = 0; i < items.length(); i++) indexMessage(writable, scope, snapshotId + ":" + i, i, items.optJSONObject(i));
             writable.setTransactionSuccessful();
         } finally { writable.endTransaction(); }
-    }
-
-    /** Brings every Chat's index up to its latest finished row; sessions without new rows cost one map lookup. */
-    private void ensureChatsIndexed(String excludeSessionId) {
-        Map<String, Integer> latest = db.latestTimelineSeqs();
-        for (ChatDatabase.Session session : db.listSessions()) {
-            if (session == null || session.id == null || session.id.equals(excludeSessionId)) continue;
-            Integer newest = latest.get(session.id);
-            if (newest == null) continue;
-            String marker = db.knowledgeIndexedAt(session.id);
-            int indexed = indexedThrough(marker);
-            if (indexed >= newest) continue;
-            indexSession(session.id, indexed);
-        }
     }
 
     /** Last indexed sequence of a v2 marker; -1 (rebuild from scratch) for an empty or older marker. */

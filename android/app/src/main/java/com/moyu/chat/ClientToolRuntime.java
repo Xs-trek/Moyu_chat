@@ -19,8 +19,12 @@ final class ClientToolRuntime {
     static final String WEB_FETCH = "web_fetch";
     static final String DELEGATE_SUBTASK = "delegate_subtask";
     static final String HISTORY_RECALL = "history_recall";
+    /** Spec C5, D7: the user's other conversations, searched when the model decides it needs them. */
+    static final String CONVERSATION_SEARCH = "conversation_search";
     /** history_recall calls answered per turn; later ones get a tool error instead of another search. */
     static final int MAX_RECALLS_PER_TURN = 3;
+    /** conversation_search calls answered per turn (spec C5). */
+    static final int MAX_CONVERSATION_SEARCHES_PER_TURN = 3;
     static final int MAX_PARALLEL_SUBAGENTS = 4;
     static final int MAX_TOOL_CALLS_PER_BATCH = 8;
 
@@ -85,6 +89,12 @@ final class ClientToolRuntime {
                             .put("properties", new JSONObject().put("query", new JSONObject().put("type", "string")
                                     .put("description", "Distinctive words of the detail to find, e.g. a name, number, file or term.").put("maxLength", 400)))
                             .put("required", new JSONArray().put("query")).put("additionalProperties", false)));
+            if (names.contains(CONVERSATION_SEARCH)) out.put(new JSONObject().put("name", CONVERSATION_SEARCH)
+                    .put("description", "Search the user's other, earlier conversations in this app. Use it only when the user refers to a past conversation (for example \"as we discussed before\" or \"what did I tell you about ...\") or the answer clearly depends on something said there. Returns excerpts with the conversation's title and date. It does not search this conversation or the web.")
+                    .put("parameters", new JSONObject().put("type", "object")
+                            .put("properties", new JSONObject().put("query", new JSONObject().put("type", "string")
+                                    .put("description", "Distinctive words of what to find, e.g. a name, project, number or topic.").put("maxLength", 400)))
+                            .put("required", new JSONArray().put("query")).put("additionalProperties", false)));
         } catch (Exception ignored) { }
         return out;
     }
@@ -94,15 +104,18 @@ final class ClientToolRuntime {
                                     MoyuWebService web, FocusedSubagentService subagents,
                                     ChatTransport transport, ChatDatabase.Provider provider, String apiKey,
                                     String model, String effort, TurnCancellation cancellation) {
-        return executeBatch(calls, round, allowedToolNames, executor, web, subagents, transport, provider, apiKey, model, effort, cancellation, null, 0);
+        return executeBatch(calls, round, allowedToolNames, executor, web, subagents, transport, provider, apiKey, model, effort, cancellation, null, 0, null, 0);
     }
 
-    /** {@code recallsLeft}: history_recall calls this turn may still make (see {@link #MAX_RECALLS_PER_TURN}). */
+    /**
+     * {@code recallsLeft} / {@code searchesLeft}: history_recall / conversation_search calls this turn may still make
+     * (see {@link #MAX_RECALLS_PER_TURN}, {@link #MAX_CONVERSATION_SEARCHES_PER_TURN}).
+     */
     static BatchResult executeBatch(JSONArray calls, int round, String allowedToolNames, ExecutorService executor,
                                     MoyuWebService web, FocusedSubagentService subagents,
                                     ChatTransport transport, ChatDatabase.Provider provider, String apiKey,
                                     String model, String effort, TurnCancellation cancellation,
-                                    HistoryRecall history, int recallsLeft) {
+                                    HistoryRecall history, int recallsLeft, HistoryRecall conversations, int searchesLeft) {
         JSONArray entries = new JSONArray();
         if (calls == null || calls.length() == 0) return new BatchResult(entries, 0, 0, 0);
         java.util.LinkedHashSet<String> allowed = new java.util.LinkedHashSet<>();
@@ -119,6 +132,7 @@ final class ClientToolRuntime {
         }
         final boolean delegationOverflow = delegated > MAX_PARALLEL_SUBAGENTS;
         final java.util.concurrent.atomic.AtomicInteger recallBudget = new java.util.concurrent.atomic.AtomicInteger(Math.max(0, recallsLeft));
+        final java.util.concurrent.atomic.AtomicInteger searchBudget = new java.util.concurrent.atomic.AtomicInteger(Math.max(0, searchesLeft));
         for (int i = 0; i < calls.length(); i++) {
             final JSONObject call = calls.optJSONObject(i);
             if (call == null) continue;
@@ -149,6 +163,10 @@ final class ClientToolRuntime {
                         if (history == null) throw new IllegalStateException("history recall unavailable");
                         if (recallBudget.getAndDecrement() <= 0) throw new IllegalStateException("history_recall limit is " + MAX_RECALLS_PER_TURN + " calls per turn");
                         entry.put("result", history.recall(args == null ? "" : args.optString("query", "")));
+                    } else if (CONVERSATION_SEARCH.equals(name)) {
+                        if (conversations == null) throw new IllegalStateException("conversation search unavailable");
+                        if (searchBudget.getAndDecrement() <= 0) throw new IllegalStateException("conversation_search limit is " + MAX_CONVERSATION_SEARCHES_PER_TURN + " calls per turn");
+                        entry.put("result", conversations.recall(args == null ? "" : args.optString("query", "")));
                     } else throw new IllegalArgumentException("unsupported client tool: " + name);
                 } catch (Exception error) {
                     entry.put("error", error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());

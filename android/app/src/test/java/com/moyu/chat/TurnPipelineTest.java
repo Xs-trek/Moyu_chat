@@ -126,10 +126,11 @@ public class TurnPipelineTest {
         Trace trace = runTurn(ContextMode.MINIMAL, "hello");
 
         assertEquals(TurnTrace.OK, trace.terminalStatus());
-        assertEquals(Arrays.asList(TurnTrace.ACCEPT, TurnTrace.CONTEXT, TurnTrace.WEB_PLAN, TurnTrace.TOOLS, TurnTrace.GENERATE), trace.stages(TurnTrace.OK));
+        assertEquals(Arrays.asList(TurnTrace.ACCEPT, TurnTrace.CONTEXT, TurnTrace.TOOLS, TurnTrace.GENERATE), trace.stages(TurnTrace.OK));
+        assertEquals("web_off", trace.reason(TurnTrace.WEB_PLAN));
         assertEquals("mode_off", trace.reason(TurnTrace.ROUTE));
         assertEquals("mode_off", trace.reason(TurnTrace.CHECKPOINT));
-        assertEquals("web_not_needed", trace.reason(TurnTrace.WEB_RETRIEVE));
+        assertEquals("web_off", trace.reason(TurnTrace.WEB_RETRIEVE));
         assertEquals("mode_off", trace.reason(TurnTrace.VERIFY));
         assertEquals(1, trace.usage(TurnTrace.GENERATE).optInt("calls"));
         assertNull("no helper call was made", trace.usage(TurnTrace.ROUTE));

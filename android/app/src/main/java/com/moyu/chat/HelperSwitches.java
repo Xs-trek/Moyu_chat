@@ -12,9 +12,13 @@ import java.util.Set;
  * frozen into each turn's configuration, so results stay attributable and statistics can compare combinations.
  */
 final class HelperSwitches {
-    static final String ROUTER = "router", COMPACTION = "compaction", WEB_PLAN = "webPlan", WEB_TOOLS = "webTools",
+    static final String ROUTER = "router", COMPACTION = "compaction", WEB_PLAN = "webPlan",
             RECALL = "recall", VERIFY = "verify", SUBAGENT = "subagent";
-    static final String[] ALL = {ROUTER, COMPACTION, RECALL, WEB_PLAN, WEB_TOOLS, VERIFY, SUBAGENT};
+    /**
+     * Spec M3, D5: there is no "Web tools" switch any more; the Web mode controls Web. A stored "webTools" is an unknown
+     * id and is dropped on read (and statistics group by the remaining switches).
+     */
+    static final String[] ALL = {ROUTER, COMPACTION, RECALL, WEB_PLAN, VERIFY, SUBAGENT};
     static final String SETTING_KEY = "helpersOff";
     /**
      * Revision of the default switch set, applied once per install (settings key {@link #DEFAULTS_KEY}).

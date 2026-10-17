@@ -118,9 +118,10 @@ export type MoyuChatIntent =
 
 /**
  * Helper modules with a global on/off switch. recall = history_recall tool when older turns are out of the prompt;
- * webTools = Web tools offered on demand in Auto when the plan said no Web. The Router starts off (default revision 2).
+ * webPlan = the planner model of the host Web fallback (spec C8). There is no webTools switch (spec D5): the Web mode
+ * controls the model's own Web tools. The Router starts off (default revision 2).
  */
-export type HelperId = 'router' | 'compaction' | 'recall' | 'webPlan' | 'webTools' | 'verify' | 'subagent';
+export type HelperId = 'router' | 'compaction' | 'recall' | 'webPlan' | 'verify' | 'subagent';
 
 export interface MediaView {
   mediaId: string;
@@ -294,7 +295,8 @@ export interface VerificationCheckView {
 }
 
 export interface VerificationAttemptView {
-  status: 'valid' | 'invalid' | 'unavailable';
+  /** cancelled: stopped by the user while verifying or repairing; the answer stands (spec D11). */
+  status: 'valid' | 'invalid' | 'unavailable' | 'cancelled';
   verdict?: 'pass' | 'fail' | 'partial';
   selfConfidence?: number;
   checks?: VerificationCheckView[];

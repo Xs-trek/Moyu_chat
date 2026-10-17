@@ -121,7 +121,8 @@ final class ChatTurnOptions {
             String value = part.trim().toLowerCase(Locale.ROOT);
             if (value.isEmpty()) continue;
             if (!(ClientToolRuntime.WEB_SEARCH.equals(value) || ClientToolRuntime.WEB_FETCH.equals(value)
-                    || ClientToolRuntime.DELEGATE_SUBTASK.equals(value) || ClientToolRuntime.HISTORY_RECALL.equals(value))) {
+                    || ClientToolRuntime.DELEGATE_SUBTASK.equals(value) || ClientToolRuntime.HISTORY_RECALL.equals(value)
+                    || ClientToolRuntime.CONVERSATION_SEARCH.equals(value))) {
                 throw new IllegalArgumentException("unsupported Moyu client tool: " + value);
             }
             out.add(value);

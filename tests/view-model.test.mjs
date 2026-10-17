@@ -104,7 +104,7 @@ test('a repair the re-check did not accept is offered beside the kept answer', (
   assert.match(view.rows[1].note, /修正未采用/);
 });
 
-test('trace names on-demand Web, history recall and a Router call that failed', () => {
+test('trace names on-demand Web, history recall and a Router call without a result', () => {
   const view = vm.traceView({ status: 'ok', spans: [
     { stage: 'tools', status: 'ok', detail: { webExecution: 'none', webOnDemand: true, recall: true, clientTools: 'web_search,web_fetch,history_recall' } },
     { stage: 'generate', status: 'ok', detail: { rounds: 2, clientToolBatches: 1, usedClientWeb: true, recalls: 1 } },
@@ -112,12 +112,14 @@ test('trace names on-demand Web, history recall and a Router call that failed', 
   ], config: {} });
   assert.match(view.rows[0].note, /按需联网 · 可回查原文/);
   assert.match(view.rows[1].note, /自行联网 · 回查 1 次/);
-  assert.equal(view.rows[2].note, '路由调用失败，下一轮再试');
+  assert.equal(view.rows[2].note, '路由没有结果，这一轮不分类');
+  const modelWeb = vm.traceView({ status: 'ok', spans: [{ stage: 'tools', status: 'ok', detail: { webExecution: 'client_tools', modelWeb: true, conversationSearch: true } }], config: {} });
+  assert.match(modelWeb.rows[0].note, /工具调用联网 · 模型自行决定联网 · 可搜其他会话/);
 });
 
 test('helper switches: on unless the native view lists them, labels for what a turn had off', () => {
-  assert.deepEqual(vm.helperSwitches({ ui: {} }).map((h) => h.id), ['router', 'compaction', 'recall', 'webPlan', 'webTools', 'verify', 'subagent']);
-  assert.deepEqual(vm.helperSwitches({ ui: { helpersOff: ['router'] } }).map((h) => h.on), [false, true, true, true, true, true, true]);
+  assert.deepEqual(vm.helperSwitches({ ui: {} }).map((h) => h.id), ['router', 'compaction', 'recall', 'webPlan', 'verify', 'subagent']);
+  assert.deepEqual(vm.helperSwitches({ ui: { helpersOff: ['router'] } }).map((h) => h.on), [false, true, true, true, true, true]);
   const rows = vm.helperSwitches({ ui: { helpersOff: ['verify'] } });
   assert.equal(rows.find((h) => h.id === 'verify').on, false);
   assert.equal(vm.helpersOffLabel([]), '');
@@ -164,4 +166,14 @@ test('a never-sent Chat is listed by its draft; the naming stage is a helper', (
 test('a turn waiting for compaction says it is tidying the context (spec C3)', () => {
   assert.deepEqual(vm.stageInfo('compacting'), { label: '正在整理上下文', pose: 'think' });
   assert.equal(vm.stageInfo('unknown-stage').label, '连接模型');
+});
+
+test('a verification stopped by the user reads as stopped, and compaction notes say how it went', () => {
+  assert.equal(vm.verificationState({ status: 'cancelled' }).label, '智能校验 · 已停止');
+  const trace = vm.traceView({ spans: [
+    { stage: 'checkpoint', status: 'ok', durationMs: 900, detail: { mode: 'waited', applied: true, coveredItems: 4, waitedMs: 900 } },
+    { stage: 'web_plan', status: 'skipped', reason: 'model_decides', durationMs: 0 },
+  ] });
+  assert.match(trace.rows[0].note, /等待后台压缩 · 覆盖 4 条/);
+  assert.equal(trace.rows[1].note, '由回答的模型自己决定');
 });

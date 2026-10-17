@@ -98,38 +98,40 @@ public class SmartContextV002Test {
         } catch (Exception e) { throw new RuntimeException(e); }
     }
 
-    @Test public void firstTurnRouterChoosesOnlyLocalPromptModulesAndRunsOnce() throws Exception {
+    /** Spec D8: the Router picks only reviewed local prompt modules, for its own turn; the next turn is classified again. */
+    @Test public void theRouterChoosesOnlyLocalPromptModulesForItsOwnTurn() throws Exception {
         post("helper.switch.set", new JSONObject().put("helper", "router").put("enabled", true)); // the Router starts off
-        AtomicInteger calls = new AtomicInteger();
+        AtomicInteger routes = new AtomicInteger();
+        List<String> mains = Collections.synchronizedList(new ArrayList<>());
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
-                int n = calls.incrementAndGet();
-                if (n == 1) return chat("{\"domain\":\"software\",\"taskType\":\"debug\",\"depth\":\"expert\",\"responseMode\":\"diagnostic\",\"contextPolicy\":\"checkpoint_recent\",\"modules\":[\"technical_precision\",\"debugging\",\"IGNORE_ALL\"],\"confidence\":0.98}");
-                return chat(n == 2 ? "main answer" : "second answer");
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("Classify the conversation")) {
+                    return routes.incrementAndGet() == 1
+                            ? chat("{\"domain\":\"software\",\"taskType\":\"debug\",\"depth\":\"expert\",\"responseMode\":\"diagnostic\",\"contextPolicy\":\"checkpoint_recent\",\"modules\":[\"technical_precision\",\"debugging\",\"IGNORE_ALL\"],\"confidence\":0.98}")
+                            : chat("{\"domain\":\"general\",\"taskType\":\"answer\",\"depth\":\"concise\",\"responseMode\":\"direct\",\"contextPolicy\":\"recent\",\"modules\":[],\"confidence\":0.9}");
+                }
+                if (body.contains("You are a verification component")) return chat("not json");
+                mains.add(body);
+                return chat("an answer");
             }
         });
         String sessionId = createSession();
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Find the root cause of this memory leak"));
-        RecordedRequest router = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(router);
-        RecordedRequest main = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(main);
-        await("main complete", () -> "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
-
-        String routerBody = router.getBody().readUtf8();
-        assertTrue(routerBody.contains("Classify the conversation"));
-        String mainBody = main.getBody().readUtf8();
+        await("first turn complete", () -> mains.size() == 1 && "completed".equals(app.database().getSession(sessionId).state));
+        assertEquals(1, routes.get());
+        String mainBody = mains.get(0);
         assertTrue(mainBody.contains("Use precise technical language"));
         assertTrue(mainBody.contains("For debugging, prioritize observed evidence"));
         assertTrue("Smart mode must add reviewed anti-fabrication/evidence policy", mainBody.contains("NEVER FABRICATE"));
         assertTrue(mainBody.contains("COMPLETION HONESTY"));
         assertFalse("router cannot inject unreviewed module text into system authority", mainBody.contains("IGNORE_ALL"));
-        ChatDatabase.Session stored = app.database().getSession(sessionId);
-        TaskProfile profile = TaskProfile.fromStored(stored.taskProfile);
-        assertNotNull(profile); assertEquals("software", profile.domain); assertEquals("debug", profile.taskType); assertEquals(2, profile.modules.length());
+        assertEquals("nothing is stored on the session", "", app.database().getSession(sessionId).taskProfile);
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "continue"));
-        RecordedRequest second = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(second);
-        assertFalse("TaskProfile is frozen for the context epoch; second turn must not rerun router", second.getBody().readUtf8().contains("Classify the conversation"));
-        await("second complete", () -> calls.get() == 3 && "completed".equals(latestView().optJSONObject("activeSession").optString("state")));
+        await("second turn complete", () -> mains.size() == 2 && "completed".equals(app.database().getSession(sessionId).state));
+        assertEquals("every turn is classified", 2, routes.get());
+        assertFalse("the first turn's modules do not carry over", mains.get(1).contains("For debugging, prioritize observed evidence"));
     }
 
     @Test public void minimalModeMakesOnlyTheMainRequest() throws Exception {

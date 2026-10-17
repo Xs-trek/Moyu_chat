@@ -327,7 +327,7 @@ export function secs(ms) { return ms === null || ms === undefined ? '—' : `${(
 
 const STAGE_LABELS = { accept: '接收', context: '上下文', route: '路由', checkpoint: '压缩', web_plan: '联网规划', tools: '工具选择', web_retrieve: '联网检索', generate: '生成', verify: '校验', repair: '修正', subagent: '子任务', title: '命名' };
 const STATUS_LABELS = { ok: '完成', skipped: '跳过', failed: '失败', cancelled: '已停止', open: '未结束' };
-const SKIP_REASONS = { mode_off: '当前模式未启用', task_profile_cached: '沿用本会话的路由结果', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验', user_off: '已在设置中关闭' };
+const SKIP_REASONS = { mode_off: '当前模式未启用', task_profile_cached: '沿用本会话的路由结果', model_decides: '由回答的模型自己决定', web_off: '联网已关闭', no_web_tools: '模型没有联网工具', no_client_tools: '模型未声明工具调用', setting_off: '全局设置关闭', session_off: '会话设置关闭', helper_budget_exceeded: '辅助开销超过上限', cancelled: '已停止', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验', user_off: '已在设置中关闭' };
 const WEB_EXECUTION = { host: '本机检索', provider: '模型侧联网', client_tools: '工具调用联网', none: '不联网' };
 const VERDICTS = { pass: '通过', fail: '不通过', partial: '部分通过' };
 const ACTIONS = { accept: '采纳', repair: '需修正', abstain: '存疑' };
@@ -349,11 +349,10 @@ function failureCodeLabel(code) {
 
 /** Helper modules the user can switch off globally (HelperSwitches on the native side), with settings copy. */
 export const HELPER_SWITCHES = [
-  ['router', '路由', '智能模式下，第一轮先让模型给会话分类，之后按分类补充提示词、决定要不要校验。默认关闭：关闭时不分类，也不用这个会话之前的分类结果，要不要校验按这一轮的问题判断。'],
-  ['compaction', '历史压缩', '标准 / 智能模式下，上下文用到一半时，让模型把较早的历史写成摘要。关闭后不再写新摘要（已有的继续用），超长时直接舍弃最早的历史。'],
+  ['router', '路由', '智能模式下，每一轮先让模型给这一轮的问题分类，按分类补充提示词、决定要不要校验；分类只用于这一轮。默认关闭：关闭时要不要校验按这一轮的问题判断。'],
+  ['compaction', '历史压缩', '标准 / 智能模式下，上下文接近上限时，让模型把较早的历史写成摘要（回合结束后在后台进行），并清除最旧的工具结果。关闭后不压缩，也不用以前写的摘要，超长时直接舍弃最早的历史。'],
   ['recall', '原文回查', '标准 / 智能模式下，较早的历史被舍弃或只剩摘要时，让模型按需搜回这个会话的原话（带消息编号）。需要模型支持工具调用。'],
-  ['webPlan', '联网规划', '联网为“自动”时，让模型判断要不要搜、搜什么。关闭后只按规则判断，不调用模型。'],
-  ['webTools', '按需联网', '联网为“自动”、事先判断不用联网时，仍把搜索和抓取工具交给回答的模型，由它发现缺资料时自己去查。需要模型支持工具调用；极简模式不提供。'],
+  ['webPlan', '联网规划', '模型既没有服务商联网、也不支持工具调用时，由本机先检索；这个开关让模型判断要不要搜、搜什么。关闭后只按规则判断。极简模式只按规则。其他模型由回答的模型自己决定要不要搜。'],
   ['verify', '校验与修正', '智能模式下，回答后让模型再检查一遍，必要时改写；改写版要再次通过检查才会替换原回答。'],
   ['subagent', '子任务', '模型支持工具调用时，允许它把子问题交给同一模型的独立调用。'],
 ];
@@ -371,6 +370,14 @@ export function helpersOffLabel(ids) {
   return names.length ? `已关闭：${names.join('、')}` : '';
 }
 
+/** Spec C3: how compaction went in the turn (waited, ran, nothing to do) or in the background after it. */
+function compactionNote(d) {
+  if (d.updated !== undefined && d.mode === undefined) return d.updated ? `已更新 · 覆盖 ${d.coveredItems} 条` : '未更新';
+  const mode = { waited: '等待后台压缩', sync: '当场压缩', background: '后台压缩', none: '没有可压缩的历史' }[d.mode] || '';
+  const result = d.mode === 'none' ? '' : d.applied ? `覆盖 ${d.coveredItems} 条` : '未换入';
+  return [mode, result, d.waitedMs ? `等了 ${secs(d.waitedMs)}` : ''].filter(Boolean).join(' · ');
+}
+
 function stageNote(span) {
   const note = stageSummary(span);
   const failure = callFailureLabel(span.detail?.callFailure);
@@ -381,17 +388,17 @@ function stageSummary(span) {
   const d = span.detail || {};
   switch (span.stage) {
     case 'accept': return [contextLabel(d.effectiveContextMode || d.contextMode), d.harnessPreset].filter(Boolean).join(' · ');
-    case 'context': return `${d.messages ?? '—'} 条消息${d.truncated ? ' · 已截断' : ''}${d.compactionDue ? ' · 需要压缩' : ''}`;
-    case 'route': return d.routed === false ? (d.stored === false ? '路由调用失败，下一轮再试' : '路由未返回结果，按通用问答处理') : `${d.domain || '—'} / ${d.taskType || '—'}${Number.isFinite(d.confidence) ? ` · 置信 ${Number(d.confidence).toFixed(2)}` : ''}`;
-    case 'checkpoint': return d.updated ? `已更新 · 覆盖 ${d.coveredItems} 条` : '未更新';
+    case 'context': return [`${d.messages ?? '—'} 条消息`, d.summarizedItems ? `摘要代替 ${d.summarizedItems} 条` : '', d.clearedToolResults ? `清除 ${d.clearedToolResults} 个旧工具结果` : '', d.truncated ? '已截断' : '', d.compactionDue ? '需要压缩' : ''].filter(Boolean).join(' · ');
+    case 'route': return d.routed === false ? '路由没有结果，这一轮不分类' : `${d.domain || '—'} / ${d.taskType || '—'}${Number.isFinite(d.confidence) ? ` · 置信 ${Number(d.confidence).toFixed(2)}` : ''}`;
+    case 'checkpoint': return compactionNote(d);
     case 'web_plan': {
       const queries = Array.isArray(d.queries) ? d.queries : [];
       return `${d.useWeb ? '联网' : '不联网'}${d.useWeb && queries.length ? ` · ${queries.length} 个查询` : ''}${d.plannerCalled ? ' · 模型规划' : ' · 规则判断'}`;
     }
-    case 'tools': return [d.webOnDemand ? '按需联网' : WEB_EXECUTION[d.webExecution] || '', d.recall ? '可回查原文' : '', d.clientTools ? `工具 ${d.clientTools}` : '', d.schemasDropped ? '工具说明放不下已省略' : ''].filter(Boolean).join(' · ');
+    case 'tools': return [WEB_EXECUTION[d.webExecution] || '', d.modelWeb ? '模型自行决定联网' : d.webOnDemand ? '按需联网' : '', d.recall ? '可回查原文' : '', d.conversationSearch ? '可搜其他会话' : '', d.clientTools ? `工具 ${d.clientTools}` : '', d.schemasDropped ? '工具说明放不下已省略' : ''].filter(Boolean).join(' · ');
     case 'web_retrieve': return `${d.sources ?? 0} 个来源 · ${full(d.evidenceChars ?? 0)} 字${d.backend ? ` · ${d.backend}` : ''}`;
-    case 'generate': return `${d.rounds ?? 1} 轮${d.clientToolBatches ? ` · 工具 ${d.clientToolBatches} 次` : ''}${d.usedClientWeb ? ' · 自行联网' : ''}${d.recalls ? ` · 回查 ${d.recalls} 次` : ''}${d.subagents ? ` · 子任务 ${d.subagents}` : ''}`;
-    case 'verify': return [VERDICTS[d.verdict] || d.status || '', Number.isFinite(d.risk) ? `风险 ${Number(d.risk).toFixed(2)}` : '', d.repaired ? '已修正' : d.repairRejected ? '修正未采用' : ACTIONS[d.action] || ''].filter(Boolean).join(' · ');
+    case 'generate': return `${d.rounds ?? 1} 轮${d.clientToolBatches ? ` · 工具 ${d.clientToolBatches} 次` : ''}${d.usedClientWeb ? ' · 自行联网' : ''}${d.recalls ? ` · 回查 ${d.recalls} 次` : ''}${d.conversationSearches ? ` · 搜其他会话 ${d.conversationSearches} 次` : ''}${d.subagents ? ` · 子任务 ${d.subagents}` : ''}`;
+    case 'verify': return [VERDICTS[d.verdict] || d.status || '', d.helperBudgetExceeded ? '辅助开销超上限，跳过修正' : '', Number.isFinite(d.risk) ? `风险 ${Number(d.risk).toFixed(2)}` : '', d.repaired ? '已修正' : d.repairRejected ? '修正未采用' : ACTIONS[d.action] || ''].filter(Boolean).join(' · ');
     case 'repair': return d.repaired ? '已改写回答' : d.rejected ? '改写版没通过复查，保留原回答' : '没有产出修正';
     case 'title': return `${d.manual ? '手动 · ' : ''}${d.applied ? '已更新会话标题' : '标题已被修改，未覆盖'}`;
     default: return '';
@@ -591,7 +598,8 @@ export function verificationState(verification) {
   if (!verification) return null;
   const verdict = String(verification.verdict || '');
   let seal = null; let label = '智能校验 · 未裁决'; let tone = 'quiet';
-  if (verification.status !== 'valid') { label = '智能校验 · 无效'; }
+  if (verification.status === 'cancelled') { label = '智能校验 · 已停止'; }
+  else if (verification.status !== 'valid') { label = '智能校验 · 无效'; }
   else if (verification.coverageComplete === false) { seal = '存疑'; label = '智能校验 · 覆盖不足'; tone = 'warn'; }
   else if (verification.action === 'accept') { seal = '已校'; label = '智能校验 · 通过'; tone = 'good'; }
   else if (verification.action === 'repair') { seal = '已改'; label = '智能校验 · 已修正'; tone = 'warn'; }

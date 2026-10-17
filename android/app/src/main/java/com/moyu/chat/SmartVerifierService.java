@@ -12,6 +12,8 @@ final class SmartVerifierService {
     static final String STATUS_VALID = "valid";
     static final String STATUS_INVALID = "invalid";
     static final String STATUS_UNAVAILABLE = "unavailable";
+    /** Stopped by the user while verifying or repairing; the answer stands (spec T5, D11). */
+    static final String STATUS_CANCELLED = "cancelled";
     static final String VERDICT_PASS = "pass";
     static final String VERDICT_FAIL = "fail";
     static final String VERDICT_PARTIAL = "partial";
@@ -159,6 +161,7 @@ final class SmartVerifierService {
     static String toolEvidenceType(String tool) {
         if (ClientToolRuntime.WEB_SEARCH.equals(tool) || ClientToolRuntime.WEB_FETCH.equals(tool)) return "retrieved_web_context";
         if (ClientToolRuntime.HISTORY_RECALL.equals(tool)) return "conversation_recall";
+        if (ClientToolRuntime.CONVERSATION_SEARCH.equals(tool)) return "other_conversation_excerpt";
         if (ClientToolRuntime.DELEGATE_SUBTASK.equals(tool)) return "subtask_result";
         return "tool_result";
     }

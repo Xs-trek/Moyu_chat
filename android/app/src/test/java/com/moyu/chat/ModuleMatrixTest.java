@@ -29,7 +29,7 @@ import java.util.function.BooleanSupplier;
  * one), and leaves nothing of its own in the prompt. Each test first shows the module does run when allowed, so
  * "no call" is not vacuous.
  *
- * Not covered yet, by decision: the Web planner also runs in Minimal (D5, phase 4). Branch retrieval is removed (D6).
+ * Branch retrieval is removed (D6). The Web tools have no switch of their own (D5): the Web mode controls them.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
@@ -83,6 +83,10 @@ public class ModuleMatrixTest {
         String smart = session(ContextMode.SMART, ChatTurnOptions.WEB_OFF);
         int mark = send(smart, "Explain how tea is grown.");
         assertEquals("allowed: it runs", 1, calls(ROUTER, mark));
+        // Spec D8: every turn is classified on its own, and nothing is stored on the session.
+        mark = send(smart, "And how is it harvested?");
+        assertEquals("again on the next turn", 1, calls(ROUTER, mark));
+        assertEquals("", app.database().getSession(smart).taskProfile);
 
         String standard = session(ContextMode.STANDARD, ChatTurnOptions.WEB_OFF);
         mark = send(standard, "Explain how coffee is grown.");
@@ -168,20 +172,24 @@ public class ModuleMatrixTest {
         assertNoTool(smart, mark, "Plan a fence", "delegate_subtask", "subagent", HelperSwitches.USER_OFF);
     }
 
+    /** Spec M1, M5 Web, D5: the answering model has the Web tools in every mode and decides; no planner runs first. */
     @Test public void webTools() throws Exception {
         configure(true, HarnessProfile.BALANCED);
-        setSwitch(HelperSwitches.WEB_PLAN, false); // rules only: a poem needs no Web, so the tools are on demand
         String standard = session(ContextMode.STANDARD, ChatTurnOptions.WEB_AUTO);
-        int mark = send(standard, "Write a poem about tea.");
-        assertTrue("allowed: it is offered", mainBody(mark, "poem about tea").contains("\"web_search\""));
+        int mark = send(standard, "What is the latest Android release?");
+        assertTrue("allowed: it is offered", mainBody(mark, "latest Android release").contains("\"web_search\""));
+        assertEquals("the model decides, nothing plans before it", 0, calls(PLANNER, mark));
+        JSONObject plan = span(lastTrace(standard), TurnTrace.WEB_PLAN);
+        assertEquals(TurnTrace.SKIPPED, plan.optString("status"));
+        assertEquals(TurnPipeline.MODEL_DECIDES, plan.optString("reason"));
 
         String minimal = session(ContextMode.MINIMAL, ChatTurnOptions.WEB_AUTO);
-        mark = send(minimal, "Write a poem about rain.");
-        assertNoTool(minimal, mark, "poem about rain", "web_search", "webTools", TurnModules.MODE_OFF);
+        mark = send(minimal, "What is the latest iOS release?");
+        assertTrue("Minimal keeps the model's own Web", mainBody(mark, "latest iOS release").contains("\"web_search\""));
 
-        setSwitch(HelperSwitches.WEB_TOOLS, false);
-        mark = send(standard, "Write a poem about snow.");
-        assertNoTool(standard, mark, "poem about snow", "web_search", "webTools", HelperSwitches.USER_OFF);
+        String off = session(ContextMode.STANDARD, ChatTurnOptions.WEB_OFF);
+        mark = send(off, "What is the latest Windows release?");
+        assertNoTool(off, mark, "latest Windows release", "web_search", "webTools", TurnModules.WEB_OFF);
     }
 
     @Test public void webPlanner() throws Exception {
@@ -189,6 +197,12 @@ public class ModuleMatrixTest {
         String standard = session(ContextMode.STANDARD, ChatTurnOptions.WEB_AUTO);
         int mark = send(standard, "Why is the sky blue?");
         assertEquals("allowed: it runs", 1, calls(PLANNER, mark));
+
+        // Spec M1, D5: Minimal has no hidden helper call; its fallback plans by rules only.
+        String minimal = session(ContextMode.MINIMAL, ChatTurnOptions.WEB_AUTO);
+        mark = send(minimal, "Why is the snow white?");
+        assertEquals(0, calls(PLANNER, mark));
+        assertEquals(TurnModules.MODE_OFF, modules(lastTrace(minimal)).optString("webPlanner"));
 
         setSwitch(HelperSwitches.WEB_PLAN, false);
         mark = send(standard, "Why is the sea blue?");
@@ -198,25 +212,26 @@ public class ModuleMatrixTest {
         assertFalse(span(trace, TurnTrace.WEB_PLAN).getJSONObject("detail").optBoolean("plannerCalled"));
     }
 
+    /** Spec C5, D7: other conversations are a tool the model may call, never text injected before it. */
     @Test public void crossChatMemory() throws Exception {
-        configure(false, HarnessProfile.BALANCED);
+        configure(true, HarnessProfile.BALANCED);
         post("memory.global.set", new JSONObject().put("enabled", true));
         String other = session(ContextMode.STANDARD, ChatTurnOptions.WEB_OFF);
         send(other, "My locker number is QUOKKA-5521.");
 
         String standard = session(ContextMode.STANDARD, ChatTurnOptions.WEB_OFF);
         int mark = send(standard, "What is my QUOKKA-5521 locker?");
-        assertTrue("allowed: it injects", mainBody(mark, "my QUOKKA-5521 locker").contains("cross-chat user memory excerpts"));
+        String body = mainBody(mark, "my QUOKKA-5521 locker");
+        assertTrue("allowed: it is offered", body.contains("\"conversation_search\""));
+        assertEquals("nothing injected", 1, body.split("QUOKKA-5521", -1).length - 1);
 
         String minimal = session(ContextMode.MINIMAL, ChatTurnOptions.WEB_OFF);
         mark = send(minimal, "Which QUOKKA-5521 locker?");
-        assertFalse(mainBody(mark, "Which QUOKKA-5521").contains("cross-chat user memory excerpts"));
-        assertEquals(TurnModules.MODE_OFF, modules(lastTrace(minimal)).optString("memory"));
+        assertNoTool(minimal, mark, "Which QUOKKA-5521", "conversation_search", "memory", TurnModules.MODE_OFF);
 
         post("memory.global.set", new JSONObject().put("enabled", false));
         mark = send(standard, "Where is the QUOKKA-5521 locker?");
-        assertFalse(mainBody(mark, "Where is the QUOKKA-5521").contains("cross-chat user memory excerpts"));
-        assertEquals(TurnModules.SETTING_OFF, modules(lastTrace(standard)).optString("memory"));
+        assertNoTool(standard, mark, "Where is the QUOKKA-5521", "conversation_search", "memory", TurnModules.SETTING_OFF);
     }
 
     // ---------- spec N3 ----------

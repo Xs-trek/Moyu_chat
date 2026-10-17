@@ -855,7 +855,8 @@ public class ChatCoordinatorE2eTest {
         await("web-auto turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
     }
 
-    @Test public void autoWebToolsAreTurnScopedByProductPlanInsteadOfAlwaysExposed() throws Exception {
+    /** Spec M1, D5: in Auto the model has its Web tools on every turn, in Minimal too, and decides whether to search. */
+    @Test public void autoWebToolsAreOfferedOnEveryTurnAndTheModelDecides() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
         assertNotNull(profile);
@@ -869,15 +870,13 @@ public class ChatCoordinatorE2eTest {
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "first ordinary turn"));
         RecordedRequest first = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(first);
         JSONObject firstBody = new JSONObject(first.getBody().readUtf8());
-        assertFalse("Auto must not advertise Web tools on a stable turn merely because the deployment supports function calling",
-                firstBody.has("tools"));
+        assertTrue("the model decides; nothing decides for it beforehand", firstBody.toString().contains("\"web_search\""));
         await("first ordinary turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
 
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "second ordinary turn"));
         RecordedRequest second = server.takeRequest(5, TimeUnit.SECONDS); assertNotNull(second);
         JSONObject secondBody = new JSONObject(second.getBody().readUtf8());
-        assertFalse("client Web capability remains frozen in the session, but exposure is a per-turn product decision",
-                secondBody.has("tools"));
+        assertTrue(secondBody.toString().contains("\"web_search\""));
         assertEquals(ClientToolRuntime.OPENAI_CHAT, app.database().getSession(sessionId).clientToolCalling);
         await("second ordinary turn completes", () -> "completed".equals(app.database().getSession(sessionId).state));
     }
@@ -1647,7 +1646,8 @@ public class ChatCoordinatorE2eTest {
         return null;
     }
 
-    @Test public void minimalWebPlannerUsageIsIncludedEvenWhenItChoosesNoRetrieval() throws Exception {
+    /** Spec M1, D5: Minimal makes no hidden helper call; its Web fallback plans by rules only. */
+    @Test public void minimalNeverCallsTheWebPlannerModel() throws Exception {
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
                 return request.getBody().clone().readUtf8().contains("Web retrieval planner")
@@ -1661,14 +1661,12 @@ public class ChatCoordinatorE2eTest {
         await("minimal session created", () -> activeSession(latestView()) != null);
         String sessionId = latestView().optString("activeLocalSessionId");
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Who wrote Hamlet?"));
-        await("planner and answer complete", () -> "completed".equals(app.database().getSession(sessionId).state));
+        await("answer complete", () -> "completed".equals(app.database().getSession(sessionId).state));
         JSONObject usage = turnUsage(sessionId);
-        assertEquals(2, server.getRequestCount());
-        assertEquals(1, usage.getInt("auxiliaryCallCount"));
-        assertEquals(11, usage.getInt("auxiliaryInputTokens"));
+        assertEquals("only the main call", 1, server.getRequestCount());
+        assertEquals(0, usage.optInt("auxiliaryCallCount", 0));
         assertEquals(7, usage.getInt("inputTokens"));
-        assertEquals(18, usage.getInt("totalInputTokens"));
-        assertEquals(5, usage.getInt("totalOutputTokens"));
+        assertEquals(7, usage.getInt("totalInputTokens"));
         assertFalse(usage.getBoolean("usageIncomplete"));
     }
 
@@ -1766,7 +1764,83 @@ public class ChatCoordinatorE2eTest {
         assertEquals("typed while routing", stored.draft);
         assertEquals("Renamed meanwhile", stored.title);
         assertEquals(0, app.database().draftMedia(sessionId).length());
-        assertEquals("software", TaskProfile.fromStored(stored.taskProfile).domain);
+        assertEquals("spec D8: the Router result is the turn's, never stored", "", stored.taskProfile);
+    }
+
+    /** Spec M6, D12: past the helper budget a repair that has not started is skipped; the answer stands. */
+    @Test public void pastTheHelperBudgetARepairIsSkipped() throws Exception {
+        AtomicInteger verifications = new AtomicInteger(), repairs = new AtomicInteger();
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("Repair the candidate answer")) { repairs.incrementAndGet(); return completion("fixed answer", 13, 4); }
+                if (body.contains("You are a verification component")) { verifications.incrementAndGet(); return completion(verdict(true), 11, 3); }
+                return completion("candidate answer", 7, 2);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.harnessPreset = HarnessProfile.REINFORCED;
+        app.database().saveModelProfile(profile);
+        TurnRun.helperBudgetMs = 0L;
+        try {
+            post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                    .put("contextMode", ContextMode.SMART).put("webMode", ChatTurnOptions.WEB_OFF));
+            await("smart session created", () -> activeSession(latestView()) != null);
+            String sessionId = latestView().optString("activeLocalSessionId");
+            post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Reply with fixed answer."));
+            await("turn completed", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2);
+            assertEquals(1, verifications.get());
+            assertEquals("no repair call", 0, repairs.get());
+            JSONObject answer = app.database().timeline(sessionId).getJSONObject(1);
+            assertEquals("candidate answer", answer.getString("text"));
+            assertTrue(answer.getJSONObject("verification").getBoolean("helperBudgetExceeded"));
+            String turnId = answer.optString("turnId");
+            JSONArray spans = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data").getJSONArray("spans");
+            boolean skipped = false;
+            for (int i = 0; i < spans.length(); i++) {
+                JSONObject span = spans.getJSONObject(i);
+                if (TurnTrace.REPAIR.equals(span.optString("stage"))) {
+                    assertEquals(TurnTrace.SKIPPED, span.optString("status"));
+                    assertEquals(TurnPipeline.HELPER_BUDGET_EXCEEDED, span.optString("reason"));
+                    skipped = true;
+                }
+            }
+            assertTrue(skipped);
+        } finally { TurnRun.helperBudgetMs = TurnRun.HELPER_BUDGET_MS; }
+    }
+
+    /** Spec T5, D11: stopped while verifying, the answer was complete: it stays complete and its check reads cancelled. */
+    @Test public void stoppingDuringVerificationKeepsTheAnswerComplete() throws Exception {
+        java.util.concurrent.CountDownLatch verifying = new java.util.concurrent.CountDownLatch(1);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+                String body = request.getBody().clone().readUtf8();
+                if (body.contains("You are a verification component")) {
+                    verifying.countDown();
+                    Thread.sleep(1_500);
+                    return completion(verdict(true), 11, 3);
+                }
+                return completion("candidate answer", 7, 2);
+            }
+        });
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
+        profile.harnessPreset = HarnessProfile.REINFORCED;
+        app.database().saveModelProfile(profile);
+        post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
+                .put("contextMode", ContextMode.SMART).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("smart session created", () -> activeSession(latestView()) != null);
+        String sessionId = latestView().optString("activeLocalSessionId");
+        post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Explain why the sky is blue."));
+        assertTrue("verification started", verifying.await(10, TimeUnit.SECONDS));
+        post("chat.session.interrupt", new JSONObject().put("localSessionId", sessionId));
+        await("turn settled", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 2
+                && !app.database().timeline(sessionId).optJSONObject(1).optBoolean("streaming"));
+        JSONObject answer = app.database().timeline(sessionId).getJSONObject(1);
+        assertEquals("candidate answer", answer.getString("text"));
+        assertFalse("a complete answer, not a partial one", answer.optBoolean("incomplete"));
+        assertEquals(SmartVerifierService.STATUS_CANCELLED, answer.getJSONObject("verification").getString("status"));
     }
 
     @Test public void aRepairTheRecheckDoesNotAcceptIsKeptBesideTheFirstAnswer() throws Exception {
@@ -1802,7 +1876,8 @@ public class ChatCoordinatorE2eTest {
         assertEquals(2, verification.getJSONArray("attempts").length());
     }
 
-    @Test public void autoWebOffersTheAnsweringModelWebToolsWhenThePlanSaysNo() throws Exception {
+    /** Spec D5: in Auto the answering model gets the Web tools and decides; with Web off it gets none. */
+    @Test public void autoWebHandsTheAnsweringModelItsWebToolsAndOffGivesNone() throws Exception {
         List<String> bodies = Collections.synchronizedList(new ArrayList<>());
         server.setDispatcher(new Dispatcher() {
             @Override public MockResponse dispatch(RecordedRequest request) {
@@ -1814,7 +1889,6 @@ public class ChatCoordinatorE2eTest {
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");
         profile.clientToolCalling = ClientToolRuntime.OPENAI_CHAT;
         app.database().saveModelProfile(profile);
-        post("helper.switch.set", new JSONObject().put("helper", "webPlan").put("enabled", false)); // rules only: no planner call
         post("chat.session.create", new JSONObject().put("providerId", "mock-provider")
                 .put("contextMode", ContextMode.STANDARD).put("webMode", ChatTurnOptions.WEB_AUTO));
         await("session created", () -> activeSession(latestView()) != null);
@@ -1825,23 +1899,24 @@ public class ChatCoordinatorE2eTest {
         for (String body : new ArrayList<>(bodies)) if (body.contains("poem about tea") && !body.contains("You name chat conversations")) first = body;
         assertNotNull(first);
         assertTrue("the tools are offered", first.contains("\"web_search\"") && first.contains("\"web_fetch\""));
-        assertTrue(first.contains("No Web search was run in advance"));
+        assertTrue(first.contains("you decide whether to use it"));
         String turnId = app.database().timeline(sessionId).getJSONObject(1).optString("turnId");
         JSONArray spans = awaitResult(post("turn.trace.get", new JSONObject().put("localSessionId", sessionId).put("turnId", turnId))).getJSONObject("data").getJSONArray("spans");
         boolean seen = false;
         for (int i = 0; i < spans.length(); i++) if (TurnTrace.TOOLS.equals(spans.getJSONObject(i).optString("stage"))) {
-            assertTrue(spans.getJSONObject(i).getJSONObject("detail").getBoolean("webOnDemand"));
+            assertTrue(spans.getJSONObject(i).getJSONObject("detail").getBoolean("modelWeb"));
             seen = true;
         }
         assertTrue(seen);
 
-        post("helper.switch.set", new JSONObject().put("helper", "webTools").put("enabled", false));
+        post("chat.session.web.set", new JSONObject().put("localSessionId", sessionId).put("webMode", ChatTurnOptions.WEB_OFF));
+        await("Web off", () -> ChatTurnOptions.WEB_OFF.equals(app.database().getSession(sessionId).webMode));
         post("chat.session.send", new JSONObject().put("localSessionId", sessionId).put("text", "Another one about coffee."));
         await("second turn", () -> "completed".equals(app.database().getSession(sessionId).state) && app.database().timeline(sessionId).length() == 4);
         String second = null;
         for (String body : new ArrayList<>(bodies)) if (body.contains("about coffee") && !body.contains("You name chat conversations")) second = body;
         assertNotNull(second);
-        assertFalse("switched off: no tools, no guidance", second.contains("web_search"));
+        assertFalse("Web off: no tools, no guidance", second.contains("web_search"));
     }
 
     @Test public void theRouterStartsSwitchedOff() throws Exception {

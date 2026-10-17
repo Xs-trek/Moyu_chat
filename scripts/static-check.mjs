@@ -129,7 +129,7 @@ if (!focusedSubagent.includes('isolated worker') || !focusedSubagent.includes('r
 if (!promptPolicy.includes('Moyu Smart evidence policy') || !promptPolicy.includes('NEVER FABRICATE') || !promptPolicy.includes('COMPLETION HONESTY')) fail('Smart evidence/completion honesty policy missing');
 if (!promptPolicy.includes('Moyu trusted runtime metadata') || !promptPolicy.includes('Current local date:') || !promptPolicy.includes('Device timezone:') || !promptPolicy.includes('today, yesterday, and tomorrow')) fail('every chat mode must receive trusted device-local date/timezone context for relative-date semantics');
 if (!promptPolicy.includes('compactInstructions(') || !read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('selectWithPolicy(')) fail('weak-context models require deterministic compact Harness fallback instead of an arbitrary occupancy threshold');
-if (!knowledgeStore.includes('searchSessionHistory(') || !knowledgeStore.includes('searchUserMemory(') || !knowledgeStore.includes('the current session is excluded')) fail('session recall + cross-chat retrieval boundary missing');
+if (!knowledgeStore.includes('searchSessionHistory(') || !knowledgeStore.includes('searchOtherConversations(') || knowledgeStore.includes('searchUserMemory(')) fail('session recall + cross-chat search boundary missing (spec C4, C5)');
 
 // Native turn authority: the coordinator (intents, sessions, views) plus the turn pipeline it delegates to.
 const turnFiles = ['ChatCoordinator', 'TurnPipeline', 'ProviderRoundLoop', 'TurnControl', 'TurnRun', 'TurnConfig', 'TurnTrace'];
@@ -219,7 +219,7 @@ if (!continuationGate.includes('mode.providerContinuationEnabled && enabled(sess
     || !contextBuilder.includes('ProviderContinuationPolicy.replayAllowed(mode, session, provider)') || !coordinator.includes('ProviderContinuationPolicy.replayAllowed(r.contextPolicy, session, provider)')) fail('native continuation requires both Harness-mode and frozen deployment-capability gates; reasoning replay comes only from the route dialect');
 if (!coordinator.includes('turnConfig = freezeTurnConfig(sessionId);') || !coordinator.includes('turnConfig.deploymentFingerprint') || !coordinator.includes('turnConfig.reasoningEffort') || !coordinator.includes('calibrationKey(r.config.deploymentFingerprint)') || !coordinator.includes('.put("deploymentFingerprint", turnConfig.deploymentFingerprint)')) fail('provider/model/reasoning capabilities and provider-private identity must be frozen in one TurnConfig before asynchronous preparation');
 if (!terminalSink.includes('onProviderContinuation(JSONObject state)') || !terminalSink.includes('delegate.onProviderContinuation(state)')) fail('TerminalSink must forward provider-private continuation before the terminal callback');
-if (!contextBuilder.includes('requiredProjection') || !contextBuilder.includes('Optional Web/Memory must never turn an otherwise valid current request into a hard failure')) fail('optional Web/Memory requires a deterministic provider-neutral fallback');
+if (!contextBuilder.includes('requiredProjection') || !contextBuilder.includes('An optional suffix must never turn an otherwise valid current request into a hard failure')) fail('an optional prompt suffix requires a deterministic provider-neutral fallback');
 if (!turnOptions.includes('web_search_20260209') || !turnOptions.includes('web_fetch_20250910') || !turnOptions.includes('String wireType(String capability)') || !turnOptions.includes('ANTHROPIC_SEARCH_WIRES.contains(item) || ANTHROPIC_FETCH_WIRES.contains(item)')) fail('third-party Messages hosted-Web capability must require explicit tool wire versions');
 if (contextBuilder.includes('optString("reasoning"')) fail('provider reasoning must never be projected into provider-neutral CanonicalPrompt');
 if (!contextBuilder.includes('Previous assistant response was incomplete')) fail('incomplete assistant history must be disclosed to later model context');
@@ -526,9 +526,9 @@ if (!coordinatorOnly.includes('dropBlankSessions(null); // a new Chat replaces')
 // under the database lock, and the page never gives up on a check before Native does.
 const providerGuard = read('android/app/src/main/java/com/moyu/chat/ProviderGuard.java');
 const helperSwitches = read('android/app/src/main/java/com/moyu/chat/HelperSwitches.java');
-if (/db\.saveSession\(session\)/.test(turnPipeline) || !turnPipeline.includes('db.setTaskProfile(session.id, session.taskProfile)') || !turnPipeline.includes('db.setContextCheckpoint(session.id, result.checkpoint.toJson().toString(), result.coveredItems)'))
+if (/db\.saveSession\(session\)/.test(turnPipeline) || turnPipeline.includes('db.setTaskProfile(') || !turnPipeline.includes('db.setContextCheckpoint(session.id, result.checkpoint.toJson().toString(), result.coveredItems)'))
   fail('turn helper stages must write only their own fields, never the Session read at accept time');
-if (!turnPipeline.includes('if (r.taskProfile == null) session.taskProfile = "";')) fail('a Router that does not run this turn must not shape the prompt through a stored TaskProfile');
+if (!/session\.taskProfile = "";\s*r\.taskProfile = null;/.test(turnPipeline)) fail('no stored TaskProfile shapes the prompt; only this turn\'s Router result does (spec D8)');
 if (!db.includes('addHelperToArchivedTurn(db, turnId, span, delta)')) fail('a helper call finishing after its turn was archived must still be billed to it');
 if (!/synchronized \(db\) \{\s*ChatDatabase\.Route current = db\.getRoute\(route\.id\);/.test(providerGuard) || !/synchronized \(db\) \{\s*ChatDatabase\.ModelProfile current = db\.getModelProfile\(profileId\);/.test(providerGuard))
   fail('account checks must re-check the endpoint and write under the database lock');
@@ -538,15 +538,17 @@ if (!bridge.includes("'model.probe': 80000") || !bridge.includes('timeoutMs = IN
 if (!coordinatorOnly.includes('if (runningChecks.incrementAndGet() > MAX_RUNNING_CHECKS) {') || !coordinatorOnly.includes('Executors.newFixedThreadPool(MAX_RUNNING_CHECKS)')
     || !coordinatorOnly.includes('finally { runningChecks.decrementAndGet(); }'))
   fail('account checks beyond the running limit must be refused at once, not queued past the page timeout');
-// Orchestration semantics: a repair replaces the answer only after its re-check accepts it; Web tools on demand only in
-// Auto (never Off) and only on declared client tool calling; history_recall reads this Chat only; the Router starts off.
+// Orchestration semantics: a repair replaces the answer only after its re-check accepts it; the model's own Web tools
+// whenever Web is not off and the deployment can search (spec D5); history_recall reads this Chat only; the Router starts off.
 if (!turnPipeline.includes('SmartVerifierCalibration.ACTION_ACCEPT.equals(recheckDecision.action)') || !turnPipeline.includes('meta.put("repairRejected", true).put("repairCandidateText", repairCandidate)'))
   fail('a repair must not replace the answer unless the re-check accepts it; a rejected repair is kept for comparison');
 const turnModules = read('android/app/src/main/java/com/moyu/chat/TurnModules.java');
-if (!turnModules.includes('!ChatTurnOptions.WEB_AUTO.equals(ChatTurnOptions.normalizeWebMode(c.webMode)) ? Decision.deny(WEB_NOT_AUTO)')
-    || !/Decision webTools = minimal \? Decision\.deny\(MODE_OFF\) : !clientCalling \? Decision\.deny\(NO_CLIENT_TOOLS\)/.test(turnModules)
-    || !turnPipeline.includes('r.webOnDemand = !webPlan.useWeb && r.modules.webTools.on;'))
-  fail('on-demand Web tools are only for Auto on a deployment that declares client tool calling');
+// Spec M1, M5 Web, C8, D5: the answering model decides; host retrieval only as the fallback and for "on"; no planner model in Minimal.
+if (!turnModules.includes('Decision webTools = webOff ? Decision.deny(WEB_OFF) : !(clientCalling || hostedSearch) ? Decision.deny(NO_WEB_TOOLS) : Decision.allow();')
+    || !turnModules.includes(': minimal ? Decision.deny(MODE_OFF) : switched(c, HelperSwitches.WEB_PLAN);')
+    || !turnPipeline.includes('boolean hostRetrieval = !ChatTurnOptions.WEB_OFF.equals(webMode) && (!r.modelWeb || ChatTurnOptions.WEB_ON.equals(webMode));')
+    || read('android/app/src/main/java/com/moyu/chat/HelperSwitches.java').includes('WEB_TOOLS'))
+  fail('Web is the model\'s own tool whenever Web is not off; host retrieval is only the fallback and the guarantee behind "on" (spec D5)');
 if (!knowledgeStore.includes('List<Hit> searchSessionHistory(') || !/searchSessionHistory[\s\S]*?search\("scope_id=\?", new String\[\]\{chatScope\(sessionId\)\}/.test(knowledgeStore) || !turnPipeline.includes('(sent != null && sent.carries(hit.text))'))
   fail('history_recall must search only this Chat and skip what the prompt already carries');
 // A branch also searches the one snapshot it started from (which holds its whole ancestor chain), never another scope.
@@ -577,7 +579,18 @@ walk(javaRoot, '.java', (file, text) => {
 if ((coordinatorOnly.match(/db\.saveSession\(/g) || []).length !== 4) fail('ChatCoordinator saves whole session rows only for the three setting intents and a new re-answer branch (spec R1)');
 if (!turnPipeline.includes('r.modules = TurnModules.resolve(turnConfig, r.contextPolicy, r.adaptivePolicy, r.clientCalling,') || !turnPipeline.includes('.put("modules", r.modules.toJson())'))
   fail('module decisions are made once at accept and recorded on the accept stage (spec M4)');
-if (!read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('CanonicalPrompt.carries(alreadySelected, text)')) fail('retrieval de-duplication uses the one visibility check (spec T4)');
+// Spec C5, D7: other conversations are a tool, never injected; the current session's branch family is left out (H7).
+if (contextBuilder.includes('searchUserMemory') || contextBuilder.includes('memorySuffix') || !turnPipeline.includes('knowledge.searchOtherConversations(family, q,')
+    || !turnPipeline.includes('if (r.modules.memory.on) r.clientToolNames.add(ClientToolRuntime.CONVERSATION_SEARCH);'))
+  fail('cross-chat memory is the conversation_search tool, excluding the branch family (spec C5, H7, D7)');
+// Spec D8: the Router classifies every turn and stores nothing.
+if (!turnPipeline.includes('r.needsRouter = r.modules.router.on;') || turnPipeline.includes('task_profile_cached')) fail('the Router runs every turn and its result is never stored (spec D8)');
+// Spec T5, D11: stopped while verifying, the answer is complete and its verification reads cancelled.
+if (!turnPipeline.includes('finishVerificationStopped(') || /verify[\s\S]{0,4000}new String\[\]\{"cancelled", "已停止生成"\}\);\s*return;\s*\}\s*TurnTrace\.Span verifySpan/.test(turnPipeline))
+  fail('stopping during verification keeps the complete answer (spec D11)');
+// Spec M6, D12: 90 s of helper stages; past it, repairs and re-checks not yet started are skipped.
+const turnRun = read('android/app/src/main/java/com/moyu/chat/TurnRun.java');
+if (!turnRun.includes('HELPER_BUDGET_MS = 90_000L') || !turnPipeline.includes('r.trace().skip(TurnTrace.REPAIR, HELPER_BUDGET_EXCEEDED);')) fail('the per-turn helper budget skips repairs past 90 s (spec M6, D12)');
 // N3: history_recall is decided on the final prompt, after tool schemas and Web evidence took their room.
 if (!/retrieveWeb\(r\)\) return;\s*settleRecall\(r\);\s*startGeneration\(r\);/.test(turnPipeline) || !turnPipeline.includes('r.recallOffered = r.prompt.truncated || summarized;'))
   fail('history_recall must be decided on the final prompt (spec C4, N3)');

@@ -305,7 +305,7 @@ function handle(type, p) {
     case 'helper.switch.set': {
       const off = new Set(world.ui.helpersOff || []);
       if (p.enabled) off.delete(p.helper); else off.add(p.helper);
-      world.ui.helpersOff = ['router', 'compaction', 'recall', 'webPlan', 'webTools', 'verify', 'subagent'].filter((id) => off.has(id));
+      world.ui.helpersOff = ['router', 'compaction', 'recall', 'webPlan', 'verify', 'subagent'].filter((id) => off.has(id));
       break;
     }
     case 'instruction.global.set': world.ui.customInstruction = String(p.text || '').trim(); break;

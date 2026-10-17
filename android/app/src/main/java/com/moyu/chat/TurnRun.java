@@ -31,8 +31,8 @@ final class TurnRun {
     /** Which modules may run this turn, decided once at accept (spec M4). */
     TurnModules modules;
     boolean needsRouter, mayPrepare, allowProviderContinuation;
-    /** Client web tools offered although the Web plan said no (Auto, on demand); the model decides whether to search. */
-    boolean webOnDemand;
+    /** Spec D5: the answering model has a Web tool this turn (hosted search or client web tools) and decides whether to search. */
+    boolean modelWeb;
     /** history_recall is offered: older turns of this Chat are out of the final prompt (dropped or summarized); see TurnPipeline.settleRecall. */
     boolean recallOffered;
 
@@ -45,6 +45,18 @@ final class TurnRun {
     boolean needsCheckpoint, preparing;
     /** This turn's client tool calls and results, stored on its answer (spec T3). */
     JSONArray toolCalls = new JSONArray();
+    /**
+     * Spec M6, D12: time spent in helper stages (Router, waiting for or running compaction, verify, repair, re-check);
+     * the main call and tool rounds do not count. Past {@link #HELPER_BUDGET_MS}, repairs and re-checks not yet started are skipped.
+     */
+    static final long HELPER_BUDGET_MS = 90_000L;
+    /** The budget in force; tests shorten it. */
+    static volatile long helperBudgetMs = HELPER_BUDGET_MS;
+    private long helperNanos;
+    synchronized void addHelperTime(long startedNanos) { helperNanos += Math.max(0L, System.nanoTime() - startedNanos); }
+    synchronized long helperMs() { return helperNanos / 1_000_000L; }
+    boolean helperBudgetLeft() { return helperMs() < helperBudgetMs; }
+
     /** The last main call's reported input (with cache) and output tokens; 0 when the provider reported none (spec C3). */
     int lastCallInputTokens, lastCallOutputTokens;
 

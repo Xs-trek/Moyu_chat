@@ -66,6 +66,8 @@ final class ProviderRoundLoop {
     private boolean usedClientWeb = false;
     /** history_recall calls answered this turn (bounded by ClientToolRuntime.MAX_RECALLS_PER_TURN). */
     private int recallCalls = 0;
+    /** conversation_search calls answered this turn (bounded by ClientToolRuntime.MAX_CONVERSATION_SEARCHES_PER_TURN). */
+    private int conversationSearches = 0;
     /** Client tool results as verifier evidence, one item per result, each labelled by its tool (spec M7, N5). */
     private final JSONArray toolEvidence = new JSONArray();
     private int toolEvidenceChars = 0;
@@ -201,7 +203,8 @@ final class ProviderRoundLoop {
 
     private JSONObject generateDetail() throws Exception {
         return new JSONObject().put("rounds", clientToolBatchCount.get() + 1).put("clientToolBatches", clientToolBatchCount.get())
-                .put("subagents", subagentCount).put("usedClientWeb", usedClientWeb).put("recalls", recallCalls).put("sources", webSources.size())
+                .put("subagents", subagentCount).put("usedClientWeb", usedClientWeb).put("recalls", recallCalls)
+                .put("conversationSearches", conversationSearches).put("sources", webSources.size())
                 .put("outputChars", textOut.length()).put("reasoningChars", reasoningOut.length())
                 .put("retries", providerRetries).put("retryCodes", retryCodes);
     }
@@ -423,6 +426,7 @@ final class ProviderRoundLoop {
                 return;
             }
             final int recallsLeft = ClientToolRuntime.MAX_RECALLS_PER_TURN - recallCalls; // read on the authority thread
+            final int searchesLeft = ClientToolRuntime.MAX_CONVERSATION_SEARCHES_PER_TURN - conversationSearches;
             // What the model saw when it asked: later rounds carry less history once tool results take budget.
             final CanonicalPrompt roundPrompt = activeRoundPrompt.get();
             try {
@@ -432,7 +436,7 @@ final class ProviderRoundLoop {
                         ClientToolRuntime.BatchResult batch = ClientToolRuntime.executeBatch(batchCalls, batchNumber, r.clientToolCsv,
                                 env.clientTools(), p.webService, p.focusedSubagent, r.subagentTransport, r.provider, r.key, r.config.model,
                                 r.config.reasoningEffort, turnControl, query -> p.recallHistory(id, roundPrompt, query),
-                                recallsLeft);
+                                recallsLeft, query -> p.searchConversations(id, query), searchesLeft);
                         env.authority().execute(() -> applyToolBatch(batch, batchNumber));
                     } finally { turnControl.clearCurrentThread(); }
                 });
@@ -484,6 +488,7 @@ final class ProviderRoundLoop {
                 clientToolHistory.put(new JSONObject(entry.toString()));
                 String toolName = entry.optString("name", "");
                 if (ClientToolRuntime.HISTORY_RECALL.equals(toolName) && !entry.has("error")) recallCalls++;
+                if (ClientToolRuntime.CONVERSATION_SEARCH.equals(toolName) && !entry.has("error")) conversationSearches++;
                 if (ClientToolRuntime.WEB_SEARCH.equals(toolName) || ClientToolRuntime.WEB_FETCH.equals(toolName)) {
                     usedClientWeb = true;
                     if (webBackend[0].isEmpty() || "unavailable".equals(webBackend[0])) webBackend[0] = "Moyu client Web";

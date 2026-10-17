@@ -14,7 +14,7 @@ Moyu Chat 的开发依据。项目事实以当前源码为准，编排应有的�
 1. **可用的 Chat 永远第一。** 观察、实验和编排改动都不能让日常使用变慢、变不稳定或变难用；实验功能默认折叠，不打扰使用。
 2. **评测在使用中进行。** 不做批量评测框架。信号来自真实对话：调用链、用量、耗时、校验与用户反馈、分支对比；长期积累后看按模型、按模式的趋势，不追求统计显著性。
 3. **极简 / 标准 / 智能是功能裁剪档位**，对应“编排帮多少忙”；日常切换使用即可对比同一模型在不同档位下的表现和成本。
-4. **编排要能随模型进步而退场。** 每个辅助模块（Router、压缩、原文回查、联网规划、按需联网、校验修正、子任务）都要能单独关闭，并在调用链里看得到它的投入（token、耗时）和产出（判断、修正），用来决定它是否还值得开。
+4. **编排要能随模型进步而退场。** 每个辅助模块（Router、压缩、原文回查、联网规划、跨会话检索、校验修正、子任务）都要能单独关闭，并在调用链里看得到它的投入（token、耗时）和产出（判断、修正），用来决定它是否还值得开。
 5. **界面偏好不需要论证**；编排调整要有前后对比的依据，哪怕只是使用中的观察数据。
 
 ## 必须保持的约束
@@ -42,7 +42,7 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 账号与能力配置 | `ProviderConfigService`（账号 / 路线 / 模型的保存、校验、视图投影、密钥域名确认、预算）、`ProviderGuard`（检查 Key、端点模型列表、连接测试、余额）、`RouteGate`（路线并发上限）、`ProviderPresets` + `resources/com/moyu/chat/provider-presets.json`（服务商预设与模型目录）、`DeploymentResolver`（默认 < 端点 < 目录 < 实测 < 手动，逐项记录来源）、`ModelPricing`、`ModelProfileValidator`、`ModelPreflight`、`ConfigurationValidator`、`ReasoningPolicy`、`ProviderContinuationPolicy/Identity`；说明见 `docs/provider-config.md` |
 | 上下文 | `ContextMode`（minimal/standard/smart）、`ContextBuilder`、`ContextBudgetManager`、`ContextCheckpoint`（压缩摘要及其覆盖范围的哈希）、`CompactionService`（压缩：回合结束后按实际用量在后台进行，每会话一个）、`ToolHistory`（工具调用和结果作为历史：随回答保存、后续回合重放、旧结果清除）、`CanonicalPrompt`、`PromptPolicy`、`PromptModules`、`LocalKnowledgeStore` + `KnowledgeLexicon`（FTS 记忆/检索）、`SnapshotService`（本地分支快照）、`SessionHistory`（会话历史的唯一读取入口：快照 + 本会话时间线） |
 | Harness | `TurnModules`（每个模块本回合能否运行，接收时一次决定并记原因）、`HarnessProfile`、`HarnessPolicyResolver`、`TaskRouter`、`TaskProfile`、`ReliabilityModules`、`SmartVerifierService`、`SmartVerifierCalibration`、`FocusedSubagentService` |
-| 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask / history_recall：本会话原文回查，每轮 ≤3 次）、`WebOrchestrator`（规划）、`MoyuWebService`（检索/抓取） |
+| 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask / history_recall：本会话原文回查 / conversation_search：其他会话检索，排除同一分支家族；后两者每轮 ≤3 次）、`WebOrchestrator`（主机检索的规划：只用于没有联网工具的部署和“开启”）、`MoyuWebService`（检索/抓取） |
 | 会话标题 | `SessionTitles`（临时标题、模型命名的提示词与清洗；只替换仍是自动的标题），命名调用由 `ChatCoordinator` 在首轮完成后发起，记为该回合的 `title` 阶段 |
 | 观察 | `TurnStats`（统计页：按模型 × 上下文模式汇总延迟、token、辅助占比、各辅助模块实际执行率和评价）、`TurnUsage`（按主调用 / 辅助调用 / 子任务分类，并按发起阶段归属每次模型调用）、`TurnTrace`（每个阶段的状态、耗时、判断摘要，跳过时记录原因）、`WireCapture`（协议检查器：脱敏后的请求 / 响应原文，不含请求头和 API Key，只保留最近 30 回合，可在设置中关闭） |
 | 存储 | `ChatDatabase`（`moyu-beta.db`，schema 2；v1→v2 增加 `turn_archive`，见 `onUpgrade`）、`ChatMediaStore`、`ChatSecretStore` |

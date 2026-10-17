@@ -391,7 +391,7 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.title = title == null || title.trim().isEmpty() ? SessionTitles.DEFAULT_TITLE : title.trim(); s.state = "idle"; s.updatedAt = Instant.now().toString(); s.createdAt = s.updatedAt; s.draft = ""; s.draftMedia = "[]";
         s.originSnapshotId = originSnapshotId; s.parentSessionId = parentSessionId;
         s.contextMode = ContextMode.normalize(source.contextMode);
-        s.taskProfile = source.taskProfile == null ? "" : source.taskProfile;
+        s.taskProfile = ""; // spec D8: Router results are per turn, nothing to inherit
         s.contextCheckpoint = ""; s.checkpointCoveredItems = 0;
         saveSession(s); return s;
     }
