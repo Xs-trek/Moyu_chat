@@ -104,3 +104,7 @@ Call counts refer to logical transport invocations; Anthropic internal `pause_tu
 Image input/output is limited to 12 MiB encoded bytes, 16,777,216 pixels and 8,192 pixels on either side; up to four draft images remain supported. Oversized images are rejected before private media files are written.
 
 `docs/history/` keeps the v0.0.1–v0.0.5 design and review baselines. Use this README, `ARCHITECTURE.md`, `CLAUDE.md` and current source for the active version.
+
+## Git history
+
+Commits up to `v0.0.5` come from the Codex period. Most of them are automatic snapshots taken by a tool around every edit and build (`pre-change checkpoint`, `post-build …`), so their messages say nothing about intent; the tagged releases and `docs/history/` are the useful record of that period. From `v0.0.5` on, each commit is one reviewed phase: `git log v0.0.5..main`.
