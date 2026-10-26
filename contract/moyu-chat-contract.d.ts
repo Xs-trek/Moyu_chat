@@ -118,7 +118,7 @@ export type MoyuChatIntent =
   | UiIntent<'turn.answers.get', { localSessionId: string; turnId: string }>
   /** Read-only; result `data: { days, since, groupBy, includeArchived, rows: StatsRowView[] }`. */
   /** groupBy: 'model,mode' (default) | 'model' | 'protocol' | 'effort' | 'mode' | 'model,effort' | 'helpers' | 'model,helpers'. */
-  /** includeArchived (default true): also count turns since retried, rewound or deleted (turn_archive). */
+  /** includeArchived (default true): also count the turns of deleted Chats (turn_archive). */
   | UiIntent<'stats.get', { days: number; groupBy?: string; includeArchived?: boolean }>;
 
 /**
@@ -274,17 +274,6 @@ export interface ProviderView {
   truncated?: boolean;
 }
 
-export interface TaskProfileView {
-  version: 1;
-  domain: 'general' | 'software' | 'embedded' | 'research' | 'writing' | 'planning' | 'math' | 'creative';
-  taskType: 'answer' | 'explain' | 'debug' | 'review' | 'research' | 'plan' | 'write' | 'compare' | 'analyze';
-  depth: 'concise' | 'standard' | 'expert';
-  responseMode: 'direct' | 'structured' | 'tutorial' | 'diagnostic';
-  contextPolicy: 'recent' | 'checkpoint_recent';
-  modules: string[];
-  confidence: number;
-}
-
 export interface WebSourceView {
   url: string;
   title: string;
@@ -378,12 +367,11 @@ export interface SessionView {
   updatedAt: string;
   preview?: string;
   origin?: OriginView;
-  taskProfile?: TaskProfileView;
   hasContextCheckpoint?: boolean;
 }
 
 export type TimelineItem =
-  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question (its versions and older re-answer branches), when more than one. */ answers?: number; /** Spec G3: position among the message's versions, when it has others. */ version?: { index: number; count: number; prevSeq?: number; nextSeq?: number }; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'compacting' | 'connecting' | 'connected' | 'retrying' | 'queued' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
+  | { localSeq?: number; kind: 'message'; role: 'user' | 'assistant' | 'system'; turnId?: string; /** 1 / -1 when rated. */ rating?: 1 | -1; /** Answers to this question (its versions), when more than one. */ answers?: number; /** Spec G3: position among the message's versions, when it has others. */ version?: { index: number; count: number; prevSeq?: number; nextSeq?: number }; text: string; reasoning?: string; verification?: VerificationView; attachments?: MediaView[]; sources?: WebSourceView[]; webBackend?: string; providerId?: string; providerName?: string; modelProfileId?: string; model?: string; modelName?: string; reasoningAvailable?: boolean; reasoningEffort?: string; contextMode?: ContextMode; effectiveContextMode?: 'minimal' | 'standard' | 'smart'; inherited?: boolean; incomplete?: boolean; terminalCode?: string; streaming?: boolean; streamStage?: 'preparing' | 'compacting' | 'connecting' | 'connected' | 'retrying' | 'queued' | 'reasoning' | 'output' | 'tool' | 'web_planning' | 'web_search' | 'web_fetch' | 'verifying' | 'repairing'; createdAt: string }
   /** Projected from the turn record (not a stored timeline row): placed right after the turn's reply, or after its user row when there is none. */
   | { localSeq?: number; kind: 'usage'; turnId?: string; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; cacheHitBaseTokens?: number; reasoningTokens?: number; childInputTokens?: number; childOutputTokens?: number; subagentCount?: number; subagentCallCount?: number; auxiliaryCallCount?: number; modelCallCount?: number; auxiliaryInputTokens?: number; auxiliaryOutputTokens?: number; usageIncomplete?: boolean; totalInputTokens?: number; totalOutputTokens?: number; /** Input the last main call sent (inputTokens sums every main call of a tool loop). */ lastMainInputTokens?: number; /** Rate-limit / overload retries before output. */ providerRetries?: number; /** Estimated from the profile's prices, all calls of the turn. */ cost?: { currency: 'USD' | 'CNY'; amount: number; partial: boolean; offPeak: boolean }; outputTokensPerSecond?: number; firstOutputLatencyMs?: number; outputDurationMs?: number; requestDurationMs?: number; context?: { truncated?: boolean; estimatedInputTokens?: number; inheritedItemCount?: number; localItemCount?: number; omittedItemCount?: number }; createdAt: string }
   | { localSeq: number; kind: 'error'; code: string; summary: string; createdAt: string };
@@ -436,19 +424,17 @@ export interface TurnPayloadView {
   parts: { part: number; direction: 'request' | 'response'; createdAt: string; body: string }[];
 }
 
-/** Every answer to one question: its versions in this session and older re-answer branches (first answer first). */
+/** Every answer to one question: its versions, first answer first (spec D9). */
 export interface AnswerGroupView {
-  rootTurnId: string;
+  userSeq: number;
   question: string;
-  answers: { turnId: string; localSessionId: string; sessionTitle: string; userSeq: number; status: string; terminalCode: string; config: Record<string, unknown>; usage: Record<string, unknown>; rating?: 1 | -1; original: boolean; startedAt: string; /** A version in this session: `answerSeq` switches to it. */ sameSession: boolean; answerSeq?: number; text?: string; verification?: { verdict: string; action: string; repaired: boolean } }[];
+  answers: { turnId: string; status: string; terminalCode: string; config: Record<string, unknown>; usage: Record<string, unknown>; rating?: 1 | -1; original: boolean; startedAt: string; /** The answer's row: switching to it shows this version. */ answerSeq?: number; text?: string; verification?: { verdict: string; action: string; repaired: boolean } }[];
 }
 
 /** In-use statistics of finished turns in the window, grouped by stats.get's groupBy. */
 export interface StatsRowView {
   /** The grouping values of this row: any of model / protocol / effort / mode / helpers ('all_on' or switched-off ids joined by '+'). */
   group: { model?: string; protocol?: string; effort?: string; mode?: string; helpers?: string };
-  /** Present when the grouping includes them (older field names). */
-  model?: string; contextMode?: string;
   turns: number; ok: number; failed: number; cancelled: number;
   medianFirstOutputMs?: number; medianDurationMs?: number; avgTokens?: number;
   /** cachedInputTokens / cacheHitBaseTokens over the turns that reported both. */

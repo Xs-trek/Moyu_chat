@@ -104,9 +104,6 @@ export function release(node) {
 /** What a fish is showing right now (a reaction or its base). */
 export function showing(node) { return node?.__reaction || node?.dataset.base || ''; }
 
-/** Compatibility name for one-shot reactions. */
-export function flash(node, pose) { return react(node, pose); }
-
 // New fish start playing when they are attached; a changed base (morph or setPose) or a delight / theme switch
 // re-syncs them. MutationObserver is event-driven: no polling.
 function syncAll() {

@@ -38,7 +38,7 @@ public class TurnStatsTest {
         JSONArray rows = stats.toJson();
         assertEquals(2, rows.length());
         JSONObject row = rows.getJSONObject(0);
-        assertEquals("most used first", "smart", row.getString("contextMode"));
+        assertEquals("most used first", "smart", row.getJSONObject("group").getString("mode"));
         assertEquals(2, row.getInt("turns"));
         assertEquals(1, row.getInt("ok"));
         assertEquals(1, row.getInt("failed"));

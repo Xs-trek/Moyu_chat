@@ -137,7 +137,7 @@ export function sessionTitle(session, disguised = false) {
 
 // ---------- Mascot and the boss key ----------
 
-/** Native mascot state (ui.mascot); defaults when an older host omits it. */
+/** Native mascot state (ui.mascot), with defaults before the first view. */
 export function mascotState(view) {
   const m = view?.ui?.mascot || {};
   return { disguise: Boolean(m.disguise), gameBest: Math.max(0, Number(m.gameBest) || 0), koiDay: typeof m.koiDay === 'string' ? m.koiDay : '' };
@@ -342,7 +342,7 @@ export function secs(ms) { return ms === null || ms === undefined ? '—' : `${(
 
 const STAGE_LABELS = { accept: '接收', context: '上下文', route: '路由', checkpoint: '压缩', web_plan: '联网规划', tools: '工具选择', web_retrieve: '联网检索', generate: '生成', verify: '校验', repair: '修正', subagent: '子任务', title: '命名' };
 const STATUS_LABELS = { ok: '完成', skipped: '跳过', failed: '失败', cancelled: '已停止', open: '未结束' };
-const SKIP_REASONS = { mode_off: '当前模式未启用', task_profile_cached: '沿用本会话的路由结果', model_decides: '由回答的模型自己决定', web_off: '联网已关闭', no_web_tools: '模型没有联网工具', no_client_tools: '模型未声明工具调用', setting_off: '全局设置关闭', session_off: '会话设置关闭', helper_budget_exceeded: '辅助开销超过上限', cancelled: '已停止', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验', user_off: '已在设置中关闭' };
+const SKIP_REASONS = { mode_off: '当前模式未启用', model_decides: '由回答的模型自己决定', web_off: '联网已关闭', no_web_tools: '模型没有联网工具', no_client_tools: '模型未声明工具调用', setting_off: '全局设置关闭', session_off: '会话设置关闭', helper_budget_exceeded: '辅助开销超过上限', cancelled: '已停止', within_budget: '上下文未超预算', web_not_needed: '本轮不联网', provider_hosted: '由模型侧联网', client_tools: '由工具调用联网', harness_off: '当前预设未启用', not_needed: '本轮无需校验', user_off: '已在设置中关闭' };
 const WEB_EXECUTION = { host: '本机检索', provider: '模型侧联网', client_tools: '工具调用联网', none: '不联网' };
 const VERDICTS = { pass: '通过', fail: '不通过', partial: '部分通过' };
 const ACTIONS = { accept: '采纳', repair: '需修正', abstain: '存疑' };
@@ -498,25 +498,21 @@ export function payloadParts(data) {
   });
 }
 
-/** Every answer to one question, as comparable cards (original first, then re-answers in order). */
+/** Every answer to one question (its versions, oldest first), as comparable cards. */
 export function answersView(group) {
-  // The first answer, then the later versions and re-answers in the order they were asked.
-  const answers = (Array.isArray(group?.answers) ? group.answers : []).slice().sort((a, b) => Number(Boolean(b.original)) - Number(Boolean(a.original)));
-  let rerun = 0;
+  const answers = Array.isArray(group?.answers) ? group.answers : [];
   return {
     question: String(group?.question || ''),
-    items: answers.map((answer) => {
+    items: answers.map((answer, index) => {
       const config = answer.config || {};
       const u = turnUsage(answer.usage);
       const totals = turnTotals(u);
       const tokens = totals.input !== null || totals.output !== null ? `${compact(totals.input)} → ${compact(totals.output)}` : '';
       const verification = answer.verification || null;
       return {
-        sessionId: answer.localSessionId,
         turnId: answer.turnId,
-        title: answer.original ? '第 1 次回答' : `第 ${++rerun + 1} 次回答`,
-        // A version in this conversation is switched to; a re-answer branch from before versions is opened.
-        versionSeq: answer.sameSession && Number(answer.answerSeq) > 0 ? Number(answer.answerSeq) : null,
+        title: `第 ${index + 1} 次回答`,
+        versionSeq: Number(answer.answerSeq) > 0 ? Number(answer.answerSeq) : null,
         subtitle: [config.modelName || config.model, contextLabel(config.effectiveContextMode || config.contextMode)].filter(Boolean).join(' · '),
         metrics: [u?.firstMs !== null && u?.firstMs !== undefined ? `首字 ${secs(u.firstMs)}` : '', u?.totalMs !== null && u?.totalMs !== undefined ? `总耗 ${secs(u.totalMs)}` : '', tokens].filter(Boolean).join(' · '),
         verdict: verification ? `${VERDICTS[verification.verdict] || verification.verdict || '已校验'}${verification.repaired ? ' · 已修正' : ''}` : '',
@@ -561,7 +557,7 @@ export function statsView(data) {
   const rows = Array.isArray(data?.rows) ? data.rows : [];
   const pct = (part, whole) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—');
   return rows.map((row) => {
-    const group = row.group || { model: row.model, mode: row.contextMode };
+    const group = row.group || {};
     const mode = group.mode ? contextLabel(group.mode) : '';
     const cost = row.cost ? `${costText(row.cost)}${row.partialCostTurns ? ' 起' : ''}` : '—';
     return {
@@ -569,7 +565,7 @@ export function statsView(data) {
       title: groupTitle(group) || mode || '—',
       mode: groupTitle(group) ? mode : '',
       cells: [
-        ['回合', `${row.turns}${row.failed ? ` · 失败 ${row.failed}` : ''}${row.cancelled ? ` · 停止 ${row.cancelled}` : ''}${row.archived ? ` · 已回退 ${row.archived}` : ''}`],
+        ['回合', `${row.turns}${row.failed ? ` · 失败 ${row.failed}` : ''}${row.cancelled ? ` · 停止 ${row.cancelled}` : ''}${row.archived ? ` · 已删除会话 ${row.archived}` : ''}`],
         ['首字中位', row.medianFirstOutputMs !== undefined ? secs(row.medianFirstOutputMs) : '—'],
         ['耗时中位', row.medianDurationMs !== undefined ? secs(row.medianDurationMs) : '—'],
         ['平均 token', row.avgTokens !== undefined ? compact(row.avgTokens) : '—'],

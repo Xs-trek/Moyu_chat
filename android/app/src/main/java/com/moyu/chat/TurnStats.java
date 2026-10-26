@@ -54,9 +54,6 @@ final class TurnStats {
                     .put("routed", routed).put("checkpointed", checkpointed).put("webUsed", webUsed)
                     .put("verified", verified).put("repaired", repaired)
                     .put("ratedUp", ratedUp).put("ratedDown", ratedDown).put("archived", archived);
-            // Old field names stay for the current UI bundle while it switches to `group`.
-            if (group.has(BY_MODEL)) out.put("model", group.optString(BY_MODEL));
-            if (group.has(BY_MODE)) out.put("contextMode", group.optString(BY_MODE));
             Long first = median(firstMs), total = median(totalMs);
             if (first != null) out.put("medianFirstOutputMs", first);
             if (total != null) out.put("medianDurationMs", total);
@@ -106,7 +103,7 @@ final class TurnStats {
         row(config, usage, status, rating, spans);
     }
 
-    /** A turn since removed from its Chat (turn_archive): counted like any other, and also as archived. */
+    /** A turn of a deleted Chat (turn_archive): counted like any other, and also as archived. */
     void addArchived(JSONObject config, JSONObject usage, String status, Integer rating, List<JSONObject> spans) throws org.json.JSONException {
         row(config, usage, status, rating, spans).archived++;
     }

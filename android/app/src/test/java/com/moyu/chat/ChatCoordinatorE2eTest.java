@@ -2597,7 +2597,6 @@ public class ChatCoordinatorE2eTest {
         JSONObject previous = trace.getJSONObject("previousAttempt");
         assertEquals(trace.getJSONObject("config").optString("retryOf"), previous.optString("turnId"));
         assertEquals("failed", previous.optString("status"));
-        assertTrue("the failed version is kept, not archived", previous.optBoolean("kept"));
 
         JSONObject answer = activeSession(latestView()).getJSONArray("messages").getJSONObject(1);
         assertEquals(2, answer.getJSONObject("version").getInt("count"));

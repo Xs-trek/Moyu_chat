@@ -181,8 +181,6 @@ public class SmartContextV002Test {
         String sessionId = createSession();
         ChatDatabase.Session s = app.database().getSession(sessionId);
         s.contextTokens = 2_048; s.maxOutputTokens = 512;
-        s.taskProfile = new TaskProfile("embedded", "debug", "expert", "diagnostic", "checkpoint_recent",
-                new JSONArray().put("technical_precision").put("debugging"), 1d).toJson().toString();
         app.database().saveSession(s);
         for (int i = 0; i < 36; i++) {
             String pad = " padding padding padding padding padding padding padding padding padding padding ";

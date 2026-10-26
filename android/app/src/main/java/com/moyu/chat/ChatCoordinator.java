@@ -55,7 +55,7 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
     /** The question (row key) a session's next turn answers instead of a new message: retry and re-answer (spec T7, H5). */
     private final Map<String, String> pendingAnswers = new ConcurrentHashMap<>();
-    /** Retry link of a session's next accepted turn: {retryOf: archived turn id, attempt: n}. */
+    /** Retry link of a session's next accepted turn: {retryOf: the failed version's turn id, attempt: n}. */
     private final Map<String, JSONObject> pendingRetries = new ConcurrentHashMap<>();
     /** Sessions automatic naming already ran for in this process; a failed attempt is not repeated on its own. */
     private final java.util.Set<String> namedSessions = ConcurrentHashMap.newKeySet();
@@ -196,7 +196,6 @@ final class ChatCoordinator implements AutoCloseable {
                 case "web.mode.default.set": defaultWebMode = ChatTurnOptions.normalizeWebMode(required(p, "mode")); db.putSetting("defaultWebMode", defaultWebMode); break;
                 case "subagent.standard.default.set": standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(required(p, "mode")); db.putSetting("standardSubagentMode", standardSubagentMode); break;
                 case "external.open": host.openExternalUrl(required(p, "url")); break;
-                // v0.0.2 migration compatibility for an older UI bundle: off -> minimal, on -> standard.
                 case "nav.open": route = validRoute(required(p, "route")); db.putSetting("route", route); break;
                 case "chat.session.create": createSession(p); break;
                 case "chat.session.open": openSession(required(p, "localSessionId")); break;
@@ -1205,8 +1204,6 @@ final class ChatCoordinator implements AutoCloseable {
                 .put("effectiveWebBackend", effectiveWebBackend(s, deployment))
                 .put("state", visibleState).put("updatedAt", s.updatedAt);
         if (s.preview != null) o.put("preview", s.preview);
-        TaskProfile taskProfile = TaskProfile.fromStored(s.taskProfile);
-        if (taskProfile != null) o.put("taskProfile", taskProfile.toJson());
         o.put("hasContextCheckpoint", ContextCheckpoint.fromStored(s.contextCheckpoint) != null);
         if (originSnap != null) o.put("origin", new JSONObject().put("snapshotId", originSnap.id).put("sourceSessionId", originSnap.sourceSessionId).put("sourceTitle", originSnap.sourceTitle).put("createdAt", originSnap.createdAt).put("itemCount", originSnap.itemCount).put("sourceItemCount", originSnap.sourceItemCount).put("truncated", originSnap.truncated));
         if (detail) {

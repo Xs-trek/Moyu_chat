@@ -7,7 +7,8 @@ Moyu Chat 的开发依据。项目事实以当前源码为准，编排应有的�
 - Android 多模型聊天客户端：原生 Java 外壳 + WebView 原生 JS 前端（无框架、无依赖）。
 - 自用的**模型实验台**：对比不同模型、不同协议的输出中可利用的部分，以及不同原生编排设计的效果。
 - 原生层的复杂度是有意为之。不要以“简化”为由删减编排、上下文、校验或观察能力。
-- 本仓库是 beta 线：`applicationId` 为 `com.moyu.chat.beta`，可与原版 `com.moyu.chat` 并存安装；Java namespace 仍是 `com.moyu.chat`。
+- 这条线是主线（`main`），Codex 时期的版本不再开发。`applicationId` 仍为 `com.moyu.chat.beta`（可与 Codex 时期的 `com.moyu.chat` 并存安装），Java namespace 是 `com.moyu.chat`。
+- 0.0.x 是单人内测：不做跨版本兼容。不迁移旧数据、不为旧界面或旧字段保留兼容代码，改了就直接改到位。
 
 ## 开发原则
 
@@ -45,7 +46,7 @@ WebView (src/)  <--moyu:view (full/patch)--  ChatRuntime  <--  ChatCoordinator
 | 工具与联网 | `ClientToolRuntime`（web_search / web_fetch / delegate_subtask / history_recall：本会话原文回查 / conversation_search：其他会话检索，排除同一分支家族；后两者每轮 ≤3 次）、`WebOrchestrator`（主机检索的规划：只用于没有联网工具的部署和“开启”）、`MoyuWebService`（检索/抓取） |
 | 会话标题 | `SessionTitles`（临时标题、模型命名的提示词与清洗；只替换仍是自动的标题），命名调用由 `ChatCoordinator` 在首轮完成后发起，记为该回合的 `title` 阶段 |
 | 观察 | `TurnStats`（统计页：按模型 × 上下文模式汇总延迟、token、辅助占比、各辅助模块实际执行率和评价）、`TurnUsage`（按主调用 / 辅助调用 / 子任务分类，并按发起阶段归属每次模型调用）、`TurnTrace`（每个阶段的状态、耗时、判断摘要，跳过时记录原因）、`WireCapture`（协议检查器：脱敏后的请求 / 响应原文，不含请求头和 API Key，只保留最近 30 回合，可在设置中关闭） |
-| 存储 | `ChatDatabase`（`moyu-beta.db`，schema 3；v1→v2 增加 `turn_archive`，v2→v3 会话内消息树：时间线 `parent_key`、会话 `leaf_key`、一个提问可有多个回合，见 `onUpgrade`）、`ChatMediaStore`、`ChatSecretStore` |
+| 存储 | `ChatDatabase`（`moyu-beta.db`，布局版本 `VERSION`；表结构全部在 `onCreate`，版本不同的文件清空重建，不迁移；时间线是消息树：`parent_key`、会话 `leaf_key`、一个提问可有多个回合）、`ChatMediaStore`、`ChatSecretStore` |
 | 前端 | `src/bridge.js`（intent 发送、视图接收、`requestIntent` 等待带数据的结果）、`src/state.js`（full/patch 合并）、**`src/view-model.js`（原生视图 → 界面数据的唯一适配层）**、`src/render.js`（页面与时间线协调、流式补丁）、`src/overlays.js`（抽屉、底部面板、对话框、Back）、`src/markdown.js`（安全 Markdown + 流式增量渲染）、`src/math.js`（公式：按需加载本地 `src/vendor/katex/`，文件按 sha256 锁定在静态检查里）、`src/highlight.js`（本地轻量代码高亮）、`src/mascot.js`（像素小鱼的播放：精灵条 + 逐帧 Web Animation）、`src/mascot-sprite.js`（小鱼的像素数据与姿态帧表）、`src/mascot-director.js`（小鱼反应与轻量彩蛋的调度）、`src/fish-game.js`（等回答时的小游戏）、`src/morph.js`（原地更新 DOM、一次性动效、FLIP、数值淡入）、`src/drawer-gesture.js`（侧边栏跟手拖动）、`src/session-select.js`（会话列表长按多选与批量删除）、`src/editors.js`（Provider / Model Profile 编辑页）、`src/remote.js`（按需读取的数据：调用链、回答对比、统计）、`src/dom.js`、`src/main.js`（事件分发）、`src/render-gate.js`、`src/scroll-anchor.js`、`src/styles.css` |
 | 前后端边界 | 原生视图字段的解释只放在 `src/view-model.js`；渲染器不直接解读原生字段。后端调整编排、用量或校验投影时，同步改 `contract/moyu-chat-contract.d.ts` 和 `view-model.js`。同一页面收到新视图时用 `morph` 原地更新（保留节点、滚动位置、进行中的过渡和展开状态），只有路由或会话变化才重建页面并播放进入动画；新出现的节点用 `fx-*` 类做一次性动效（只用 transform / opacity），要退场动画的节点声明 `data-exit`调用链只通过 `turn.trace.get` 按需读取，不随视图推送；用量存在 `turns` 表，由原生按原有形状投影成 `kind: usage` 条目。Android Back 先调用 `window.moyuHandleBack()` 关闭前端浮层；窗口/系统栏颜色由 `Host.applyAppearance` 按 `--canvas` token 设置 |
 | 契约 | `contract/moyu-chat-contract.d.ts`：intent 与视图模型类型，改动原生视图或 intent 时同步更新 |
@@ -87,13 +88,14 @@ npm run dev
 1. 先读代码再动手；每个阶段开始前先给出计划，等用户确认后再执行。
    - 涉及编排、上下文、会话 / 分支语义、数据归属的改动，先改 `docs/spec/`（规格）：新增或修改条目，取舍列为决策由用户确认；再确认归属组件，然后实现，代码和测试引用条目编号。审查以规格为基线。
    - 机制以 Claude / GPT（官方文档、Claude Code / Codex 等 agent 应用、两家的产品行为）为准；其他项目只参考实现，它们的机制要有证明更优的依据才采用（`docs/spec/README.md`）。
-2. 分支：`claude/beta` 是 beta 主干；每个阶段在 `claude/<阶段>` 分支上开发，验证通过后提交一次，再快进合并回 `claude/beta`。未经要求不推送。
+2. 分支：`main` 是主干；每个阶段在 `claude/<阶段>` 分支上开发，验证通过后提交一次，再快进合并回 `main`。未经要求不推送。
 3. 每个阶段结束时用简短中文汇报：改了什么、为什么改、验证结果、遗留问题。
 
 ## 已移除的功能（不要恢复）
 
 - Moyu Remote 跨 APK 桥接（RemoteDataBridge、Snapshot 导入、Handoff 回传）。
 - ChatGPT / Claude 官方导出文件导入。以后最多考虑导入本应用自身、同协议版本的会话导出。
-- 原版的 v1→v16 迁移链。beta 线 schema 从 1 重新计数，库文件改为 `moyu-beta.db`；原版库文件 `moyu-chat.db` 直接删除，不迁移；版本号比当前构建新的文件删除重建。启动时清掉没有对应 Provider 的密钥和没有引用的图片。阶段 2 结束、装上真机之前，新表直接并入 v1；之后的 schema 变更从 v1 往后写 `onUpgrade` 步骤，并在 `static-check.mjs` 补断言。
+- 数据库迁移。0.0.x 期间表结构的改动直接改 `onCreate`、把 `ChatDatabase.VERSION` 加一，并同步 `static-check.mjs` 的 `SCHEMA_VERSION`；版本不同（更旧或更新）的库文件清空重建。启动时清掉没有对应 Provider 的密钥和没有引用的图片。
+- 以前用重答新建的分支会话、归档里“重试 / 回退”的回合、只存不用的会话列（路由分类）等兼容旧数据的结构。
 - `providers` 表上的 protocol / model / 上下文上限 / base_url 等旧列，以及“只填 Provider 就自动生成模型”的一步式创建；Model Profile 的 `defaultReasoning` 和 `legacy-manual` 配置模式；`context.intelligence.set` intent。
 - 模型配置的“自动 / 高级”二选一（`ModelCatalog`、`configMode`、`model.catalog.preview`）：改为逐项合成并标明来源，手动值单独保存。

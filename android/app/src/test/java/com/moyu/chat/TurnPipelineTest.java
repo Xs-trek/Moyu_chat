@@ -219,7 +219,7 @@ public class TurnPipelineTest {
         assertEquals(2, group.getJSONArray("answers").length());
         assertEquals(originalTurn, group.getJSONArray("answers").getJSONObject(0).optString("turnId"));
         assertTrue(group.getJSONArray("answers").getJSONObject(0).optBoolean("original"));
-        assertTrue(group.getJSONArray("answers").getJSONObject(0).optBoolean("sameSession"));
+        assertTrue(group.getJSONArray("answers").getJSONObject(0).optInt("answerSeq") > 0);
         assertEquals("answer 2", group.getJSONArray("answers").getJSONObject(1).optString("text"));
 
         post("turn.rate", new JSONObject().put("localSessionId", sessionId).put("turnId", rerunTurn).put("rating", 1));

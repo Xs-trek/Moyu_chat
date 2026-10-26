@@ -198,7 +198,7 @@ function rerunSheet(view, state) {
 
 /** Every answer to one question side by side (stacked on phones). */
 export function openAnswers(sessionId, turnId) {
-  const opened = { kind: 'answers', state: 'loading' };
+  const opened = { kind: 'answers', state: 'loading', sessionId };
   sheet = opened;
   paintSheet(null);
   requestIntent('turn.answers.get', { localSessionId: sessionId, turnId })
@@ -224,9 +224,8 @@ function answersSheet(state) {
         item.rating ? h('span', { class: `rate-mark ${item.rating > 0 ? 'up' : 'down'}`, title: item.rating > 0 ? '好答案' : '不好' }, icon(item.rating > 0 ? 'thumbUp' : 'thumbDown', 'ico ico-xs')) : null),
       item.metrics || item.verdict ? h('p', { class: 'answer-metrics', text: [item.metrics, item.verdict].filter(Boolean).join(' · ') }) : null,
       answerText(item.text),
-      h('div', { class: 'answer-foot' }, item.versionSeq
-        ? button('切换到这个版本', 'version-select', { sessionId: item.sessionId, localSeq: item.versionSeq, closeSheet: '1' }, 'btn small ghost')
-        : button('打开会话', 'open-session', { sessionId: item.sessionId, closeSheet: '1' }, 'btn small ghost')))))];
+      item.versionSeq ? h('div', { class: 'answer-foot' },
+        button('切换到这个版本', 'version-select', { sessionId: state.sessionId, localSeq: item.versionSeq, closeSheet: '1' }, 'btn small ghost')) : null)))];
 }
 
 /** Protocol inspector: the redacted request / response text of one recorded model call. */

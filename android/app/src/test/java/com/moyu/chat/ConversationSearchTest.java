@@ -47,6 +47,17 @@ public class ConversationSearchTest {
         assertTrue(pipeline.searchConversations(other.id, "quaternion").startsWith("No other conversation matches"));
     }
 
+    @Test public void onlyAnotherChatsCurrentPathIsSearched() throws Exception {
+        ChatDatabase.Session other = chat("Bird notes", null, "The PELICAN draft I later rewrote.");
+        db.moveLeafBefore(other.id, 1); // the user edited the question: the first version leaves the path (spec D9)
+        db.appendTimeline(other.id, other.id + ":u2", new JSONObject().put("kind", "message").put("role", "user")
+                .put("text", "The PELICAN question as it stands now.").put("createdAt", Instant.now().toString()));
+        ChatDatabase.Session here = chat("Elsewhere", null, "unrelated");
+        String found = new TurnPipeline(null, db, null, null, null).searchConversations(here.id, "PELICAN");
+        assertTrue(found.contains("as it stands now"));
+        assertFalse("an abandoned version is not searched", found.contains("later rewrote"));
+    }
+
     private ChatDatabase.Session chat(String title, String parentId, String text) throws Exception {
         ChatDatabase.Session s = db.createSession(profile, title, null, parentId, ReasoningPolicy.DEFAULT);
         db.appendTimeline(s.id, s.id + ":u", new JSONObject().put("kind", "message").put("role", "user").put("text", text)

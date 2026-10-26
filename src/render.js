@@ -260,7 +260,7 @@ function stats() {
       segmentedSetting('统计周期', 'stats-days', 'days', STATS_PERIODS.map(([d, label]) => [String(d), label]), String(statsDays)),
       h('div', { class: 'chip-set', role: 'radiogroup', 'aria-label': '分组' }, vm.STATS_GROUPINGS.map(([group, label]) => h('button', {
         type: 'button', role: 'radio', 'aria-checked': group === statsGroup ? 'true' : 'false', class: 'chip-toggle', dataset: { action: 'stats-group', group }, text: label }))),
-      settingRow('包含已回退的回合', '重试、编辑、回退或删除会话时被移除的回合。默认计入，它们同样花了时间和费用。', switchControl('包含已回退的回合', statsArchived, 'stats-archived', { enabled: statsArchived ? 'false' : 'true' })),
+      settingRow('包含已删除会话的回合', '删除会话时，它的回合记录仍保留在统计里。默认计入，它们同样花了时间和费用。', switchControl('包含已删除会话的回合', statsArchived, 'stats-archived', { enabled: statsArchived ? 'false' : 'true' })),
       h('p', { class: 'setting-desc', text: '耗时取中位数。费用按模型配置里的价格估算（含辅助调用），没有价格的模型不计；带“起”表示有调用没报用量，实际更高。辅助占比 = 路由、压缩、联网规划、校验、修正、子任务消耗的 token 占比；路由 / 联网 / 校验是实际执行的回合比例。' }),
       content));
 }

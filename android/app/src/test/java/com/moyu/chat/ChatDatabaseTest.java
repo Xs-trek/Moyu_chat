@@ -67,65 +67,26 @@ public class ChatDatabaseTest {
 
     // ---------- baseline ----------
 
-    @Test public void preBetaDatabaseFileIsDeletedNotMigrated() throws Exception {
+    @Test public void aFileOfAnotherLayoutVersionIsRecreatedEmpty() throws Exception {
+        TestDeployments.save(db, provider("p-old"));
+        db.putSetting("knowledgeIndex:old-s", "x");
+        db.getWritableDatabase().setVersion(ChatDatabase.VERSION + 2);
         db.close();
-        context.deleteDatabase(ChatDatabase.FILE_NAME);
-        try (android.database.sqlite.SQLiteDatabase raw = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(ChatDatabase.LEGACY_FILE_NAME), null)) {
-            raw.execSQL("CREATE TABLE providers(provider_id TEXT PRIMARY KEY,display_name TEXT NOT NULL,protocol TEXT NOT NULL,base_url TEXT NOT NULL,model TEXT NOT NULL,updated_at TEXT NOT NULL)");
-            raw.execSQL("CREATE TABLE sessions(local_id TEXT PRIMARY KEY,title TEXT NOT NULL,provider_id TEXT NOT NULL,model TEXT NOT NULL,state TEXT NOT NULL,updated_at TEXT NOT NULL)");
-            raw.execSQL("CREATE TABLE timeline(item_key TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,local_seq INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL)");
-            raw.execSQL("CREATE TABLE handoffs(handoff_id TEXT PRIMARY KEY)");
-            raw.execSQL("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
-            raw.execSQL("INSERT INTO providers VALUES('old-p','Old','openai-responses','https://old.example/v1','m','2025-01-01T00:00:00Z')");
-            raw.execSQL("INSERT INTO sessions VALUES('old-s','Old','old-p','m','idle','2025-01-01T00:00:00Z')");
-            raw.execSQL("INSERT INTO timeline VALUES('u','old-s',1,'{}','2025-01-01T00:00:00Z')");
-            raw.execSQL("INSERT INTO settings VALUES('knowledgeIndex:old-s','x')");
-            raw.setVersion(16);
-        }
-
         db = new ChatDatabase(context);
-        assertTrue("no pre-baseline provider survives", db.listProviders().isEmpty());
-        assertTrue("no pre-baseline session survives", db.listSessions().isEmpty());
+        assertTrue("no migrations during 0.0.x: the file starts over", db.listProviders().isEmpty());
         assertEquals("settings start empty", "", db.setting("knowledgeIndex:old-s", ""));
         assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
-        assertFalse("the pre-beta file is removed", context.getDatabasePath(ChatDatabase.LEGACY_FILE_NAME).exists());
         assertTrue(tableExists("verifier_labels"));
-        assertFalse("removed Remote table must be gone", tableExists("handoffs"));
-        assertTrue("timeline carries kind", columns("timeline").contains("kind"));
+        assertTrue(tableExists("turn_archive"));
+        assertTrue("timeline carries kind and its parent", columns("timeline").containsAll(java.util.Arrays.asList("kind", "parent_key")));
+        assertTrue("sessions carry the path end", columns("sessions").contains("leaf_key"));
         assertFalse("providers no longer persist deployment fields", columns("providers").contains("protocol"));
         assertFalse("accounts no longer own a single Base URL", columns("providers").contains("base_url"));
         assertTrue("routes carry the endpoint", columns("provider_routes").containsAll(java.util.Arrays.asList("protocol", "base_url", "auth_mode", "dialect", "headers", "confirmed_host")));
-    }
-
-    @Test public void olderLayoutOfSchemaOneIsResetNotGuessed() throws Exception {
-        TestDeployments.save(db, provider("p-layout"));
-        db.getWritableDatabase().execSQL("PRAGMA application_id=1");
-        db.close();
-        db = new ChatDatabase(context);
-        assertTrue("a pre-route v1 file starts over", db.listProviders().isEmpty());
-        assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
-        assertTrue(tableExists("provider_routes"));
         TestDeployments.save(db, provider("p-after"));
         db.close();
         db = new ChatDatabase(context);
         assertEquals("the current layout is kept across opens", 1, db.listProviders().size());
-    }
-
-    @Test public void versionOneUpgradesInPlaceAndItsSpendCarryBecomesArchiveRows() throws Exception {
-        TestDeployments.save(db, provider("p-v1"));
-        String today = java.time.LocalDate.now().toString();
-        db.putSetting(ChatDatabase.LEGACY_SPEND_CARRY_KEY, new JSONObject().put("p-v1", new JSONObject().put(today, new JSONObject().put("USD", 0.25))).toString());
-        db.getWritableDatabase().execSQL("DROP TABLE turn_archive");
-        db.getWritableDatabase().setVersion(1);
-        db.close();
-        db = new ChatDatabase(context);
-        assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
-        assertEquals("a v1 file is migrated, not reset", 1, db.listProviders().size());
-        assertTrue(tableExists("turn_archive"));
-        assertEquals("", db.setting(ChatDatabase.LEGACY_SPEND_CARRY_KEY, ""));
-        String startOfToday = java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toString();
-        assertEquals("the carried spend still counts", 0.25, db.spendSince("p-v1", startOfToday).optDouble("USD"), 1e-9);
-        assertEquals("a carry has nothing to show in statistics", 0, db.turnStats("").length());
     }
 
     @Test public void aDeletedSessionsTurnsMoveToTheArchiveWithoutTheirInstructionText() throws Exception {
@@ -138,11 +99,9 @@ public class ChatDatabaseTest {
         db.completeTurn(turnId, "ok", "", new JSONObject().put("cost", new JSONObject().put("amount", 0.5).put("currency", "USD")), new JSONArray());
         db.finalizeTurn(s.id, "live:" + turnId, message("assistant", "answer"), null, null, "completed");
         db.deleteSession(s.id);
-        JSONObject archived = db.archivedTurn(turnId);
-        assertEquals(ChatDatabase.ARCHIVE_DELETED, archived.optString("reason"));
-        assertEquals(1, archived.optInt("attempt"));
-        try (android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT config FROM turn_archive WHERE turn_id=?", new String[]{turnId})) {
+        try (android.database.Cursor c = db.getReadableDatabase().rawQuery("SELECT config,reason FROM turn_archive WHERE turn_id=?", new String[]{turnId})) {
             assertTrue(c.moveToFirst());
+            assertEquals(ChatDatabase.ARCHIVE_DELETED, c.getString(1));
             assertFalse(c.getString(0).contains("secret style"));
             assertEquals("secret style".length(), new JSONObject(c.getString(0)).optInt("customInstructionChars"));
         }
@@ -187,23 +146,12 @@ public class ChatDatabaseTest {
         TestDeployments.save(db, provider("p-narrow"));
         ChatDatabase.Session s = TestDeployments.session(db, "p-narrow", "model", null, null);
         s.title = "renamed"; s.draft = "typed meanwhile"; db.saveSession(s);
-        db.setTaskProfile(s.id, "{\"domain\":\"software\"}");
         db.setContextCheckpoint(s.id, "{\"summary\":\"s\"}", 4);
         ChatDatabase.Session stored = db.getSession(s.id);
         assertEquals("renamed", stored.title);
         assertEquals("typed meanwhile", stored.draft);
-        assertEquals("{\"domain\":\"software\"}", stored.taskProfile);
         assertEquals("{\"summary\":\"s\"}", stored.contextCheckpoint);
         assertEquals(4, stored.checkpointCoveredItems);
-    }
-
-    @Test public void newerDatabaseIsResetInsteadOfGuessed() throws Exception {
-        TestDeployments.save(db, provider("p-new"));
-        db.getWritableDatabase().setVersion(99);
-        db.close();
-        db = new ChatDatabase(context);
-        assertTrue(db.listProviders().isEmpty());
-        assertEquals(ChatDatabase.VERSION, db.getReadableDatabase().getVersion());
     }
 
     // ---------- per-entity state ----------
@@ -358,49 +306,6 @@ public class ChatDatabaseTest {
         assertEquals("answer", path.getJSONObject(1).optString("text"));
         assertEquals("both turns answer question 1", 2, db.attemptsAt(s.id, 1));
         assertEquals(2, db.turns(s.id).getJSONObject(1).getInt("answers"));
-    }
-
-    @Test public void versionTwoUpgradesToAMessageTreeAndSeveralTurnsPerQuestion() throws Exception {
-        TestDeployments.save(db, provider("p-v2"));
-        ChatDatabase.Session s = TestDeployments.session(db, "p-v2", "model", null, null);
-        String turn = startTurn(s, "old question");
-        db.finalizeTurn(s.id, "live:" + turn, message("assistant", "old answer"), null, null, "completed");
-        db.completeTurn(turn, "ok", "", null, new JSONArray().put(new JSONObject().put("stage", "generate").put("status", "ok").put("durationMs", 5)));
-        android.database.sqlite.SQLiteDatabase raw = db.getWritableDatabase();
-        // Back to the v2 shape: a linear timeline without tree data, and turns unique per question.
-        raw.execSQL("UPDATE timeline SET parent_key=NULL");
-        raw.execSQL("UPDATE sessions SET leaf_key=NULL");
-        raw.setForeignKeyConstraintsEnabled(false);
-        raw.execSQL("CREATE TABLE turns_old AS SELECT * FROM turns");
-        raw.execSQL("CREATE TABLE spans_old AS SELECT * FROM turn_spans");
-        raw.execSQL("DROP TABLE turn_payloads"); raw.execSQL("DROP TABLE turn_spans"); raw.execSQL("DROP TABLE turns");
-        raw.execSQL("CREATE TABLE turns(turn_id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(local_id) ON DELETE CASCADE,"
-                + "user_seq INTEGER NOT NULL,assistant_key TEXT NOT NULL,started_at TEXT NOT NULL,ended_at TEXT,status TEXT NOT NULL,"
-                + "terminal_code TEXT NOT NULL DEFAULT '',config TEXT NOT NULL,usage TEXT NOT NULL DEFAULT '{}',rating INTEGER CHECK(rating IN (-1,1)),rerun_of TEXT,"
-                + "UNIQUE(session_id,user_seq))");
-        raw.execSQL("CREATE TABLE turn_spans(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,ordinal INTEGER NOT NULL,stage TEXT NOT NULL,"
-                + "status TEXT NOT NULL,started_at_ms INTEGER NOT NULL,duration_ms INTEGER NOT NULL,reason TEXT NOT NULL DEFAULT '',calls INTEGER NOT NULL DEFAULT 0,"
-                + "input_tokens INTEGER,output_tokens INTEGER,detail TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(turn_id,ordinal))");
-        raw.execSQL("CREATE TABLE turn_payloads(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,call_index INTEGER NOT NULL,part INTEGER NOT NULL,"
-                + "stage TEXT NOT NULL,direction TEXT NOT NULL,created_at TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(turn_id,call_index,part))");
-        raw.execSQL("INSERT INTO turns SELECT * FROM turns_old"); raw.execSQL("INSERT INTO turn_spans SELECT * FROM spans_old");
-        raw.execSQL("DROP TABLE turns_old"); raw.execSQL("DROP TABLE spans_old");
-        raw.execSQL("DROP INDEX IF EXISTS timeline_parent");
-        raw.setForeignKeyConstraintsEnabled(true);
-        raw.setVersion(2);
-        db.close();
-
-        db = new ChatDatabase(context);
-        assertEquals(3, db.getReadableDatabase().getVersion());
-        JSONArray path = db.timeline(s.id);
-        assertEquals("the old Chat reads as before", 2, path.length());
-        assertEquals("old answer", path.getJSONObject(1).optString("text"));
-        assertEquals("its turn and spans survived", 1, db.turnTrace(s.id, turn).getJSONArray("spans").length());
-        String questionKey = db.itemKeyAt(s.id, 1);
-        String again = java.util.UUID.randomUUID().toString();
-        JSONObject live = new JSONObject().put("kind", "message").put("role", "assistant").put("text", "").put("streaming", true).put("createdAt", Instant.now().toString());
-        db.beginTurn(s.id, "unused", message("user", "ignored"), "live:" + again, live, again, new JSONObject(), "", questionKey);
-        assertEquals("a second turn on the same question is allowed now", 2, db.attemptsAt(s.id, 1));
     }
 
     @Test public void credentialEpochLivesOnTheProviderRow() {

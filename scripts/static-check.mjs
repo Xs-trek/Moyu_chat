@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const VERSION_NAME = '0.0.6';
 const VERSION_CODE = 6;
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 1;
 const uiRoot = join(projectRoot, 'src');
 const javaRoot = join(projectRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'moyu', 'chat');
 let failed = false;
@@ -68,29 +68,23 @@ if (!db.includes('recoverInterruptedSessions()')) fail('process-death recovery h
 if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapshot truncation provenance missing');
 if (!db.includes(`static final int VERSION = ${SCHEMA_VERSION};`)) fail(`SQLite schema must be v${SCHEMA_VERSION}`);
 if (/CREATE TABLE handoffs/.test(db)) fail('the removed Remote handoff table must never be recreated');
-// Beta line: schema numbering restarts at 1 in its own file; the pre-beta file is deleted, newer files reset.
-if (!db.includes('static final String FILE_NAME = "moyu-beta.db";') || !db.includes('context.deleteDatabase(LEGACY_FILE_NAME);') || !db.includes('public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }')) fail('beta database must live in its own file, delete the pre-beta file and reset newer files');
-// Migrations: ALTER TABLE only inside a reviewed onUpgrade step (v3: migrateMessageTree), each with an assertion here.
-const migrationV3 = (db.match(/private static void migrateMessageTree\(SQLiteDatabase db\) \{[\s\S]*?\n    \}\n/) || [''])[0];
-if (/ALTER TABLE/.test(db.replace(migrationV3, ''))) fail('baseline schema must be created whole; post-baseline migrations need a reviewed onUpgrade step and a matching assertion here');
-// v2: turn_archive keeps removed turns for statistics and budgets. Created by onCreate and by the v1→v2 step (which
-// also turns the v1 spend carry into archive rows); it must never hold message text or the custom instruction.
-if (!/public void onUpgrade\(SQLiteDatabase db, int oldVersion, int newVersion\) \{\s*if \(oldVersion < 2\) \{ createTurnArchive\(db\); migrateSpendCarry\(db\); \}\s*if \(oldVersion < 3\) migrateMessageTree\(db\);\s*\}/.test(db)
-    || !/settings\(key TEXT PRIMARY KEY,value TEXT NOT NULL\)"\);\s*createTurnArchive\(db\);/.test(db)
-    || !db.includes('new String[]{"turn_archive", "knowledge_fts",')) fail('schema v2 must add turn_archive in onCreate and in a reviewed v1 to v2 onUpgrade step, and drop it on reset');
+// 0.0.x: no migrations. A layout change edits onCreate and bumps VERSION; a file of any other version is recreated.
+if (!db.includes('static final String FILE_NAME = "moyu-beta.db";')
+    || !db.includes('public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }')
+    || !db.includes('public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }')) fail('a database file of another layout version must be recreated, not migrated');
+if (/ALTER TABLE/.test(db)) fail('the schema is created whole in onCreate; no migrations during 0.0.x');
+// turn_archive keeps a deleted Chat's turns for statistics and budgets; it must never hold message text or the custom instruction.
+if (!db.includes('CREATE TABLE turn_archive(') || !db.includes('new String[]{"turn_archive", "knowledge_fts",')) fail('turn_archive must be created with the schema and dropped on reset');
 if (!db.includes('out.remove("customInstruction");') || /CREATE TABLE turn_archive\([^)]*\b(text|body|instruction)\b/.test(db)
     || !/archiveTurns\(db, "session_id=\?", new String\[\]\{id\}, ARCHIVE_DELETED\);[\s\S]{0,200}db\.delete\("sessions"/.test(db)) fail('a deleted session\'s turns must be archived before deletion, without message text or the custom instruction');
-// v3, spec G2, G3, H5, D9: the timeline is a tree (parent_key) shown along sessions.leaf_key; a question can have several
-// turns; edit, "回到这里", retry and re-answer remove nothing. The migration chains existing rows and rebuilds turns.
-if (!migrationV3.includes('ALTER TABLE timeline ADD COLUMN parent_key TEXT') || !migrationV3.includes('ALTER TABLE sessions ADD COLUMN leaf_key TEXT')
-    || !migrationV3.includes('ALTER TABLE turns_v3 RENAME TO turns') || !migrationV3.includes('db.execSQL("DROP TABLE turn_spans");')
-    || /UNIQUE\(session_id,user_seq\)/.test((db.match(/private static void createTurnTables\([\s\S]*?\n    \}\n/) || [''])[0]) || !db.includes('"parent_key TEXT,UNIQUE(session_id,local_seq))"') || !db.includes('+ "leaf_key TEXT)");'))
-  fail('schema v3 must make the timeline a tree with a per-session leaf, allow several turns per question, and migrate v2 files in place (spec D9)');
-if (/db\.delete\("timeline", "session_id=\? AND local_seq>=\?"/.test(db) || db.includes('truncateTimelineFrom(')) fail('since v3 nothing rewinds by deleting rows: versions are kept (spec H5, D9)');
+// Spec G2, G3, H5, D9: the timeline is a tree (parent_key) shown along sessions.leaf_key; a question can have several
+// turns; edit, "回到这里", retry and re-answer remove nothing.
+if (/UNIQUE\(session_id,user_seq\)/.test(db) || !db.includes('"parent_key TEXT,UNIQUE(session_id,local_seq))"') || !db.includes('+ "leaf_key TEXT)");'))
+  fail('the timeline must be a tree with a per-session leaf, and a question may have several turns (spec D9)');
+if (/db\.delete\("timeline", "session_id=\? AND local_seq>=\?"/.test(db) || db.includes('truncateTimelineFrom(')) fail('nothing rewinds by deleting rows: versions are kept (spec H5, D9)');
 // Accounts persist only identity, preset, key status and budget; endpoints live on routes; capabilities on Model Profile (frozen into Session).
 if (/CREATE TABLE providers\([^)]*(protocol|auth_mode|base_url|reasoning_wire|\bmodel\b|context_tokens)/.test(db)) fail('accounts must not persist endpoint or deployment fields (routes own endpoints, Model Profiles own capabilities)');
 if (!db.includes('CREATE TABLE provider_routes(') || !db.includes('confirmed_host TEXT NOT NULL') || !db.includes('route_id TEXT NOT NULL REFERENCES provider_routes(route_id) ON DELETE CASCADE')) fail('accounts need routes (protocol + Base URL + auth + dialect) with a confirmed key host');
-if (!db.includes('static final int LAYOUT_REVISION = 2;') || !db.includes('PRAGMA application_id=" + LAYOUT_REVISION') || !/public void onOpen\(SQLiteDatabase db\)[\s\S]{0,400}dropAll\(db\); onCreate\(db\);/.test(db)) fail('an older pre-release layout of schema 1 must be reset, not guessed at');
 if (db.includes('legacyProfile(') || /createSession\(String providerId, String model/.test(db)) fail('legacy one-step provider/model creation must stay removed');
 // Per-entity state lives on its own rows, not in the preferences table.
 if (!db.includes('credential_epoch INTEGER NOT NULL') || !db.includes('knowledge_indexed_at TEXT NOT NULL') || !db.includes('CREATE TABLE verifier_labels(')) fail('credential epoch, knowledge index marker and verifier labels need their own columns/table');
@@ -100,11 +94,10 @@ for (const file of ['ProviderContinuationIdentity', 'LocalKnowledgeStore', 'Smar
 // timeline.kind mirrors body.kind so queries never pattern-match JSON text.
 if (!db.includes('local_seq INTEGER NOT NULL,kind TEXT NOT NULL') || db.includes("instr(t.body,'\\\"kind")) fail('timeline queries must use the kind column');
 // Turn records: usage and stage traces live beside the timeline, owned by the session and rewound with it.
-if (!db.includes('db.execSQL("CREATE TABLE " + turns + "(turn_id TEXT PRIMARY KEY,"') || !db.includes('db.execSQL("CREATE TABLE " + spans + "(turn_id TEXT NOT NULL REFERENCES " + turns + "(turn_id) ON DELETE CASCADE,"')
-    || !db.includes('createTurnTables(db, "turns", "turn_spans", "turn_payloads");')) fail('turn records and stage spans need their own tables');
+if (!db.includes('db.execSQL("CREATE TABLE turns(turn_id TEXT PRIMARY KEY,"') || !db.includes('db.execSQL("CREATE TABLE turn_spans(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"')) fail('turn records and stage spans need their own tables');
 if (!db.includes('SELECT usage FROM turns WHERE started_at>=?') || !db.includes("terminal_code='process_died'")) fail('usage queries and cold-start recovery must cover turn records');
 for (const marker of ['tool_capabilities', 'web_mode']) if (!db.includes(marker)) fail(`v0.0.2 Web persistence missing: ${marker}`);
-for (const marker of ['context_mode', 'task_profile', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
+for (const marker of ['context_mode', 'context_checkpoint', 'checkpoint_covered_items']) if (!db.includes(marker)) fail(`v0.0.2 context persistence missing: ${marker}`);
 for (const marker of ['protocol', 'auth_mode', 'reasoning_wire', 'thinking_mode', 'thinking_budget_tokens', 'continuation_mode', 'send_output_cap', 'service_tier']) if (!db.includes(marker)) fail(`deployment-scoped route/model/session persistence missing: ${marker}`);
 for (const marker of ['overrides TEXT', 'sources TEXT', 'discovered TEXT', 'probe TEXT', 'pricing TEXT', 'catalog_key', 'catalog_version', 'harness_preset', 'client_tool_calling', 'subagent_mode']) if (!db.includes(marker)) fail(`resolution bookkeeping / harness / tool persistence missing: ${marker}`);
 if (!db.includes('static Provider deploymentProvider(Provider shared, Route route, ModelProfile profile)') || !db.includes('static Provider deploymentProvider(Provider shared, Route route, Session session)')) fail('account + route data must resolve through one model/session deployment snapshot before transport use');
@@ -164,9 +157,9 @@ if (/header/i.test(wireCapture.replace(/\/\*[\s\S]*?\*\//g, '')) || !wireCapture
 if (!wireOpenAi.includes('WireCapture.request(url, body, apiKey)') || !wireMessages.includes('WireCapture.request(endpoint, body, apiKey)')) fail('both transports must record the redacted request body, never the built request (which carries the auth header)');
 if (!wireTerminal.includes('@Override public void onWire(String direction, String text) { delegate.onWire(direction, text); }')) fail('wire records must pass the terminal guard (responses are recorded after the terminal callback)');
 // Comparison and feedback: answers are linked turn to turn, rated on the turn record, summarised from turn records.
-if (!db.includes('rating INTEGER CHECK(rating IN (-1,1))') || !db.includes('rerun_of TEXT') || !db.includes('public synchronized JSONObject answerGroup(') || !db.includes('public synchronized JSONArray turnStats(')) fail('ratings, re-answer links, answer groups and statistics must live on turn records');
-if (!coordinatorOnly.includes('case "turn.rerun"') || !db.includes('OR (t.session_id=? AND t.user_seq=?) ORDER BY t.started_at')) fail('a re-answer is a version of the answer to the same question, grouped with the others (spec H5, D9)');
-if (!db.includes('createTurnTables(db, "turns", "turn_spans", "turn_payloads");') || !db.includes('db.execSQL("CREATE TABLE " + payloads + "(turn_id TEXT NOT NULL REFERENCES " + turns + "(turn_id) ON DELETE CASCADE,"') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
+if (!db.includes('rating INTEGER CHECK(rating IN (-1,1))') || !db.includes('public synchronized JSONObject answerGroup(') || !db.includes('public synchronized JSONArray turnStats(')) fail('ratings, answer groups and statistics must live on turn records');
+if (!coordinatorOnly.includes('case "turn.rerun"') || !db.includes('" FROM turns WHERE session_id=? AND user_seq=? ORDER BY started_at"')) fail('a re-answer is a version of the answer to the same question, grouped with the others (spec H5, D9)');
+if (!db.includes('db.execSQL("CREATE TABLE turn_payloads(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
 if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
 if (!coordinator.includes('r.prompt = committedPrompt(r, r.session);') || !coordinator.includes('contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "", r.modules)')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
@@ -595,7 +588,7 @@ if (contextBuilder.includes('searchUserMemory') || contextBuilder.includes('memo
     || !turnPipeline.includes('if (r.modules.memory.on) r.clientToolNames.add(ClientToolRuntime.CONVERSATION_SEARCH);'))
   fail('cross-chat memory is the conversation_search tool, excluding the branch family (spec C5, H7, D7)');
 // Spec D8: the Router classifies every turn and stores nothing.
-if (!turnPipeline.includes('r.needsRouter = r.modules.router.on;') || turnPipeline.includes('task_profile_cached')) fail('the Router runs every turn and its result is never stored (spec D8)');
+if (!turnPipeline.includes('r.needsRouter = r.modules.router.on;') || turnPipeline.includes('task_profile_cached') || db.includes('task_profile')) fail('the Router runs every turn and its result is never stored (spec D8)');
 // Spec T5, D11: stopped while verifying, the answer is complete and its verification reads cancelled.
 if (!turnPipeline.includes('finishVerificationStopped(') || /verify[\s\S]{0,4000}new String\[\]\{"cancelled", "已停止生成"\}\);\s*return;\s*\}\s*TurnTrace\.Span verifySpan/.test(turnPipeline))
   fail('stopping during verification keeps the complete answer (spec D11)');

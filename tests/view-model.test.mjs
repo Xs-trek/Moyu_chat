@@ -59,8 +59,6 @@ test('statistics rows title by their grouping and show medians, cache rate and c
   assert.equal(cells['耗时中位'], '2.50s');
   assert.equal(cells['缓存命中'], '50%');
   assert.equal(cells['费用（估算）'], '$0.012 + ¥2.00 起');
-  const [legacy] = vm.statsView({ rows: [{ model: 'M', contextMode: 'smart', turns: 1 }] });
-  assert.deepEqual([legacy.title, legacy.mode], ['M', '智能']);
 });
 
 test('money keeps small amounts visible', () => {
@@ -143,7 +141,7 @@ test('statistics show archived turns and helper-switch groups', () => {
     { group: { model: 'M', helpers: 'router+webPlan' }, turns: 1, ok: 1, failed: 0, cancelled: 0, archived: 0 },
   ] });
   assert.equal(all.title, '辅助全开');
-  assert.equal(all.cells[0][1], '3 · 失败 1 · 已回退 1');
+  assert.equal(all.cells[0][1], '3 · 失败 1 · 已删除会话 1');
   assert.equal(off.title, 'M · 已关闭：路由、联网规划');
   assert.equal(off.cells[0][1], '1');
 });
@@ -186,10 +184,8 @@ test('versions: "i/n" with the seqs to switch to, the resume target, and version
   assert.equal(vm.resumeSeq({ canSend: true, resumeLocalSeq: 12 }), 12);
   assert.equal(vm.resumeSeq({ canSend: false, resumeLocalSeq: 12 }), null);
   const view = vm.answersView({ question: 'q', answers: [
-    { turnId: 't1', localSessionId: 's', original: true, sameSession: true, answerSeq: 2, config: {}, usage: {} },
-    { turnId: 't2', localSessionId: 'old-branch', original: false, sameSession: false, config: {}, usage: {} },
+    { turnId: 't1', original: true, answerSeq: 2, config: {}, usage: {} },
+    { turnId: 't2', original: false, answerSeq: 6, config: {}, usage: {} },
   ] });
-  assert.equal(view.items[0].title, '第 1 次回答');
-  assert.equal(view.items[0].versionSeq, 2);
-  assert.equal(view.items[1].versionSeq, null, 'an old re-answer branch is opened, not switched to');
+  assert.deepEqual(view.items.map((item) => [item.title, item.versionSeq]), [['第 1 次回答', 2], ['第 2 次回答', 6]]);
 });

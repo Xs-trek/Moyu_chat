@@ -93,12 +93,9 @@ public class ModuleMatrixTest {
         assertNotRun(standard, mark, ROUTER, "router", TurnModules.MODE_OFF, TurnTrace.ROUTE);
 
         setSwitch(HelperSwitches.ROUTER, false);
-        // A profile routed earlier stays stored, but a switched-off Router's result is not used.
-        app.database().setTaskProfile(smart, new TaskProfile("software", "debug", "expert", "diagnostic", "recent",
-                new JSONArray().put("debugging"), 0.9d).toJson().toString());
         mark = send(smart, "And how is it dried?");
         assertNotRun(smart, mark, ROUTER, "router", HelperSwitches.USER_OFF, TurnTrace.ROUTE);
-        assertFalse("no task prompt from the stored profile", mainBody(mark, "how is it dried").contains("Task-adaptation policy"));
+        assertFalse("no task prompt without the Router", mainBody(mark, "how is it dried").contains("Task-adaptation policy"));
     }
 
     @Test public void compaction() throws Exception {
