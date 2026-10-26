@@ -111,6 +111,10 @@ export type MoyuChatIntent =
   | UiIntent<'helper.switch.set', { helper: HelperId; enabled: boolean }>
   /** Spec D15: the helper model ('' = the session's model); must be an enabled Model Profile. */
   | UiIntent<'helper.model.set', { modelProfileId: string }>
+  /** Spec D16–D18: the composer's question (and draft images) answered at once by 2–3 model × mode variants, as versions of one question. */
+  | UiIntent<'chat.session.compare.send', { localSessionId: string; text: string; variants: { modelProfileId: string; contextMode: ContextMode }[]; blind?: boolean; budgetConfirmed?: boolean }>
+  /** Spec D16, D17: pick an answer of the open side-by-side group (its turnId) or call it a 'tie'. */
+  | UiIntent<'chat.compare.decide', { localSessionId: string; group: string; choice: string }>
   /** Spec D19: a few minimal requests (image input, client tools, hosted search); result data: CapabilityProbeView. Conclusive results feed the probe layer. */
   | UiIntent<'model.capabilities.probe', { modelProfileId: string }>
   /** Spec D15: whether one helper uses the helper model (defaults: title, router, web_plan). */
@@ -605,3 +609,9 @@ export interface HelperModelView { modelProfileId: string; modelName?: string; m
 
 /** Spec D19: the last capability probe of a model (ModelProfileView.capabilityProbe). */
 export interface CapabilityProbeView { checkedAt: string; host: string; checks: { field: 'inputModalities' | 'clientToolCalling' | 'toolCapabilities'; verdict: 'yes' | 'no' | 'unknown'; code?: string; summary?: string }[] }
+
+/** Spec D16, D17: the open side-by-side group of the conversation shown (ActiveSessionView.compare). Blind: no modelName, contextMode or usage until decided; shuffled, labelled A/B/C. */
+export interface CompareView {
+  group: string; questionSeq: number; blind: boolean; running: boolean;
+  answers: { turnId: string; label: string; status: string; localSeq?: number; text: string; streaming?: boolean; streamStage?: string; incomplete?: boolean; failed?: boolean; terminalCode?: string; modelName?: string; contextMode?: string; usage?: Record<string, unknown> }[];
+}

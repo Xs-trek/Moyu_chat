@@ -169,7 +169,7 @@ if (/\bput\("text",\s*trimmed\b/.test(coordinator)) fail('send must store the ra
 if (!coordinator.includes('db.recoverInterruptedSessions()')) fail('coordinator must recover stale running sessions at startup');
 if (!coordinator.includes('"assistant:live:" + id + ":" + UUID.randomUUID()')) fail('every provider turn must use a unique live assistant key');
 if (!coordinator.includes('db.beginTurn(') || !coordinator.includes('db.finalizeTurn(')) fail('turn start/finalization must use durable transactional state helpers');
-if (!coordinator.includes('if (activeTurns.containsKey(id)) return "请先停止当前回合再删除会话";') || !coordinator.includes('if (busy != null) throw new IllegalStateException(busy);')) fail('running provider turns must not be deleted underneath asynchronous callbacks');
+if (!coordinator.includes('if (anyRun(activeTurns.keySet(), id)) return "请先停止当前回合再删除会话";') || !coordinator.includes('if (busy != null) throw new IllegalStateException(busy);')) fail('running provider turns must not be deleted underneath asynchronous callbacks');
 if (!db.includes('public synchronized void beginTurn(') || !db.includes('public synchronized void finalizeTurn(')) fail('database turn transaction helpers missing');
 if (!coordinator.includes('context.mode.default.set') || !coordinator.includes('defaultContextMode')) fail('v0.0.2 default context-mode authority missing');
 if (!coordinator.includes('web.mode.default.set') || !coordinator.includes('defaultWebMode') || !coordinator.includes('MoyuWebService')) fail('v0.0.2 Web-mode authority/orchestration missing');
@@ -298,7 +298,7 @@ if (!turnService.includes('static boolean start(Context context)') || !turnServi
 if (!coordinator.includes('preparationWorker = Executors.newFixedThreadPool(2)') || !coordinator.includes('preparationWorker.execute(')) fail('blocking Router/Checkpoint/Web preparation must not occupy the UI intent queue');
 if (!coordinator.includes('emitStreamingPatch(String sessionId, JSONObject liveItem)') || !coordinator.includes('"conversation.stream"') || !coordinator.includes('STREAM_PROJECTION_INTERVAL_MS = 50L')) fail('streaming data plane must use a bounded visible-session patch instead of rebuilding full application snapshots per delta');
 if (!coordinator.includes('if ("conversation".equals(route)) view.put("activeSession", sessionJson(active, true, lookups))')) fail('non-conversation routes must not serialize/bridge the active conversation timeline');
-if (!coordinator.includes('if (!streamTerminal.get()) {') || !coordinator.includes('env.putActiveTurn(id, turn)')) fail('a terminal callback that wins the stream-start race must not be resurrected as an active turn');
+if (!coordinator.includes('if (!streamTerminal.get()) {') || !coordinator.includes('env.putActiveTurn(runKey, turn)')) fail('a terminal callback that wins the stream-start race must not be resurrected as an active turn');
 if (!mainActivity.includes('setOverScrollMode(View.OVER_SCROLL_NEVER)')) fail('WebView overscroll chrome must remain disabled');
 if (!mainActivity.includes('openExternalUrl(String url)') || !mainActivity.includes('Intent.ACTION_VIEW') || !mainActivity.includes('"https".equalsIgnoreCase(uri.getScheme())')) fail('external.open must leave the WebView through an HTTPS-only Android VIEW intent');
 if (!mainActivity.includes('STATE_PENDING_IMAGE_SESSION') || !mainActivity.includes('onSaveInstanceState(Bundle outState)') || !mainActivity.includes('无法打开系统文件选择器')) fail('image picker session state must survive Activity recreation and picker launch failures must be visible');
@@ -645,7 +645,7 @@ if (!snapshotService.includes('ToolHistory.stored(ToolHistory.of(item))') || sna
   fail('a new-session branch copies tool calls, sources and a summary that lies before the branch point (spec H3, D13)');
 // Spec H5, T7, D9: edit moves the path end, retry and re-answer answer the existing question as a new version.
 if (!coordinatorOnly.includes('db.moveLeafBefore(sessionId, localSeq);') || !coordinatorOnly.includes('case "chat.message.version": selectVersion(')
-    || !coordinatorOnly.includes('pendingAnswers.put(sessionId, questionKey);') || !turnPipeline.includes('db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(id), answerTo);')
+    || !coordinatorOnly.includes('pendingAnswers.put(sessionId, questionKey);') || !turnPipeline.includes('db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(run), answerTo);')
     || coordinatorOnly.includes('db.branchSession(source, "重答 · "'))
   fail('edit, retry and re-answer create versions in the same session (spec H5, T7, D9)');
 // Spec T3, D14: an answer whose web blocks or tool results are not replayed keeps its sources as a data note.
@@ -655,5 +655,11 @@ const guardSource = read('android/app/src/main/java/com/moyu/chat/ProviderGuard.
 if (!coordinatorOnly.includes('case "model.capabilities.probe"') || !guardSource.includes('if (!UNKNOWN.equals(searchVerdict)) values.put("toolCapabilities"')
     || !guardSource.includes('DeploymentResolver.apply(db.getRoute(route.id), current);') || !guardSource.includes('config.requireConfirmedHost(route);'))
   fail('the capability probe must be user-started, keep inconclusive fields and re-resolve through the probe layer (spec D19)');
+// Spec D16–D18: side-by-side answers are ordinary turns run at once under "session#k" runtime keys, answering one
+// question; only the first takes the path end; a session is busy while any of its runs is.
+if (!coordinatorOnly.includes('String run = sessionId + "#" + k;') || !coordinatorOnly.includes('db.appendQuestion(sessionId, "user:" + UUID.randomUUID(), user)')
+    || !coordinatorOnly.includes('anyRun(turnControls.keySet(), id) || anyRun(activeTurns.keySet(), id)') || !db.includes('if (config == null || config.optInt("compareIndex", 0) <= 1) setLeaf(db, sessionId, streamKey);')
+    || !db.includes('boolean holdsPath = streamKey.equals(leafOf(db, sessionId));') || !turnPipeline.includes('ChatDatabase.Session variant = env.takeSessionView(run);'))
+  fail('side-by-side answers must run as parallel turns of one question without moving each other\'s path end (spec D16-D18)');
 if (failed) process.exit(1); // the checks above run after the first exit and must fail the build too
 console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);

@@ -42,8 +42,10 @@ final class TurnStats {
         final Map<String, Double> cost = new LinkedHashMap<>();
         int costedTurns, partialCostTurns;
         int routed, checkpointed, webUsed, verified, repaired;
-        /** Turns counted here that have since been retried, rewound or deleted from their Chat. */
+        /** Turns counted here whose Chat has since been deleted. */
         int archived;
+        /** Decided side-by-side answers (spec D17): win / tie / loss, blind and open apart. */
+        final int[] blind = new int[3], open = new int[3];
         Row(JSONObject group) { this.group = group; }
 
         JSONObject toJson() throws org.json.JSONException {
@@ -58,6 +60,8 @@ final class TurnStats {
             if (first != null) out.put("medianFirstOutputMs", first);
             if (total != null) out.put("medianDurationMs", total);
             if (turns > 0) out.put("avgTokens", tokens / turns);
+            if (blind[0] + blind[1] + blind[2] > 0) out.put("compareBlind", new JSONObject().put("wins", blind[0]).put("ties", blind[1]).put("losses", blind[2]));
+            if (open[0] + open[1] + open[2] > 0) out.put("compareOpen", new JSONObject().put("wins", open[0]).put("ties", open[1]).put("losses", open[2]));
             if (tokens > 0) out.put("helperShare", (double) helperTokens / tokens);
             if (cacheBase > 0) out.put("cacheHitRate", Math.min(1d, (double) cachedInput / cacheBase));
             if (!cost.isEmpty()) {
@@ -120,6 +124,9 @@ final class TurnStats {
         else if (!"running".equals(status)) row.failed++;
         if (rating != null && rating > 0) row.ratedUp++;
         if (rating != null && rating < 0) row.ratedDown++;
+        String outcome = usage == null ? "" : usage.optString("compareOutcome", "");
+        int slot = "win".equals(outcome) ? 0 : "tie".equals(outcome) ? 1 : "loss".equals(outcome) ? 2 : -1;
+        if (slot >= 0 && config != null && config.has("compareGroup")) (config.optBoolean("compareBlind", false) ? row.blind : row.open)[slot]++;
         if (usage != null) {
             if (usage.has("firstOutputLatencyMs")) row.firstMs.add(usage.optLong("firstOutputLatencyMs"));
             if (usage.has("requestDurationMs")) row.totalMs.add(usage.optLong("requestDurationMs"));

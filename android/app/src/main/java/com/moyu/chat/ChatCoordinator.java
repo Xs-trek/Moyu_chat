@@ -7,7 +7,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -55,6 +57,11 @@ final class ChatCoordinator implements AutoCloseable {
     private final Map<String, Long> lastStreamViewNanos = new ConcurrentHashMap<>();
     /** The question (row key) a session's next turn answers instead of a new message: retry and re-answer (spec T7, H5). */
     private final Map<String, String> pendingAnswers = new ConcurrentHashMap<>();
+    /** Side by side (spec D16): each answer's copy of the session (its model and mode) and its turn tags, by runtime key; consumed at accept. */
+    private final Map<String, ChatDatabase.Session> pendingSessionViews = new ConcurrentHashMap<>();
+    private final Map<String, JSONObject> pendingTurnTags = new ConcurrentHashMap<>();
+    /** Most answers one side-by-side send asks for (spec D16). */
+    static final int COMPARE_MAX = 3;
     /** Retry link of a session's next accepted turn: {retryOf: the failed version's turn id, attempt: n}. */
     private final Map<String, JSONObject> pendingRetries = new ConcurrentHashMap<>();
     /** Sessions automatic naming already ran for in this process; a failed attempt is not repeated on its own. */
@@ -243,6 +250,8 @@ final class ChatCoordinator implements AutoCloseable {
                     break;
                 }
                 case "chat.session.interrupt": interrupt(required(p, "localSessionId")); break;
+                case "chat.session.compare.send": compareSend(requestId, required(p, "localSessionId"), p); return;
+                case "chat.compare.decide": decideCompare(required(p, "localSessionId"), required(p, "group"), required(p, "choice")); break;
                 case "chat.session.delete": {
                     JSONArray many = p.optJSONArray("localSessionIds");
                     if (many == null) { deleteSession(required(p, "localSessionId")); break; }
@@ -493,7 +502,7 @@ final class ChatCoordinator implements AutoCloseable {
 
     /** Model selection changes the configuration for future turns only; prior assistant rows keep per-turn metadata. */
     private void setSessionModel(String sessionId, String modelProfileId) {
-        if (activeTurns.containsKey(sessionId) || startingSessions.contains(sessionId) || preparingSessions.contains(sessionId) || webPreparingStages.containsKey(sessionId) || postProcessingStages.containsKey(sessionId)) {
+        if (sessionBusy(sessionId)) {
             throw new IllegalStateException("请等当前回合结束再切换模型");
         }
         ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
@@ -553,6 +562,11 @@ final class ChatCoordinator implements AutoCloseable {
     private TurnConfig freezeTurnConfig(String sessionId) {
         ChatDatabase.Session session = db.getSession(sessionId);
         if (session == null) throw new IllegalArgumentException("会话不存在");
+        return freezeTurnConfig(session);
+    }
+
+    /** {@code session} may be a side-by-side answer's copy of the session with another model and mode (spec D16). */
+    private TurnConfig freezeTurnConfig(ChatDatabase.Session session) {
         ChatDatabase.Provider sharedProvider = db.getProvider(session.providerId);
         String key = secrets.get(session.providerId);
         if (sharedProvider == null || key == null) throw new IllegalStateException("这个账号还没有填写 API Key");
@@ -614,8 +628,23 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private boolean sessionBusy(String id) {
-        return turnControls.containsKey(id) || activeTurns.containsKey(id) || startingSessions.contains(id)
-                || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id);
+        return anyRun(turnControls.keySet(), id) || anyRun(activeTurns.keySet(), id) || anyRun(startingSessions, id)
+                || anyRun(preparingSessions, id) || anyRun(webPreparingStages.keySet(), id) || anyRun(postProcessingStages.keySet(), id);
+    }
+
+    /** Runtime keys are the session id, or "session#k" for the k-th side-by-side answer (spec D18): a session's state is all of its runs. */
+    private static boolean anyRun(java.util.Collection<String> keys, String sessionId) {
+        if (sessionId == null) return false;
+        for (String key : keys) if (key.equals(sessionId) || key.startsWith(sessionId + "#")) return true;
+        return false;
+    }
+
+    /** The stage one of the session's runs shows (an ordinary turn first), or null. */
+    private static String stageOf(Map<String, String> stages, String sessionId) {
+        String own = stages.get(sessionId);
+        if (own != null || sessionId == null) return own;
+        for (Map.Entry<String, String> e : stages.entrySet()) if (e.getKey().startsWith(sessionId + "#")) return e.getValue();
+        return null;
     }
 
     /**
@@ -669,8 +698,8 @@ final class ChatCoordinator implements AutoCloseable {
     }
 
     private String deleteBlocker(String id) {
-        if (startingSessions.contains(id) || preparingSessions.contains(id) || webPreparingStages.containsKey(id) || postProcessingStages.containsKey(id)) return "回合正在准备，请稍后再删除";
-        if (activeTurns.containsKey(id)) return "请先停止当前回合再删除会话";
+        if (anyRun(startingSessions, id) || anyRun(preparingSessions, id) || anyRun(webPreparingStages.keySet(), id) || anyRun(postProcessingStages.keySet(), id)) return "回合正在准备，请稍后再删除";
+        if (anyRun(activeTurns.keySet(), id)) return "请先停止当前回合再删除会话";
         return null;
     }
 
@@ -688,8 +717,10 @@ final class ChatCoordinator implements AutoCloseable {
         @Override public boolean isClosed() { return closed; }
         @Override public void showMessage(String text) { host.showMessage(text); }
         @Override public void emitView() { ChatCoordinator.this.emitView(); }
-        @Override public void emitStreamingView(String sessionId) { ChatCoordinator.this.emitStreamingView(sessionId); }
-        @Override public void emitStreamingPatch(String sessionId, JSONObject liveItem) { ChatCoordinator.this.emitStreamingPatch(sessionId, liveItem); }
+        @Override public void emitStreamingView(String run) { ChatCoordinator.this.emitStreamingView(TurnRun.sessionOf(run)); }
+        @Override public void emitStreamingPatch(String run, JSONObject liveItem) {
+            if (run.indexOf('#') >= 0) emitComparePatch(TurnRun.sessionOf(run), liveItem); else ChatCoordinator.this.emitStreamingPatch(run, liveItem);
+        }
         @Override public void setStarting(String sessionId, boolean starting) { if (starting) startingSessions.add(sessionId); else startingSessions.remove(sessionId); }
         @Override public void setPreparing(String sessionId, boolean preparing) { if (preparing) preparingSessions.add(sessionId); else preparingSessions.remove(sessionId); }
         @Override public void setWebStage(String sessionId, String stage) { webPreparingStages.put(sessionId, stage); }
@@ -703,17 +734,23 @@ final class ChatCoordinator implements AutoCloseable {
         @Override public JSONObject takeRetryOf(String sessionId) { return pendingRetries.remove(sessionId); }
         @Override public String takeAnswerTo(String sessionId) { return pendingAnswers.remove(sessionId); }
         @Override public String takeKeptDraft(String sessionId) { String kept = pendingKeptDrafts.remove(sessionId); return kept == null ? "" : kept; }
-        @Override public void releaseTurn(String id) {
-            activeTurns.remove(id);
-            TurnControl control = turnControls.remove(id);
-            startingSessions.remove(id);
-            preparingSessions.remove(id);
-            webPreparingStages.remove(id);
-            postProcessingStages.remove(id);
-            lastStreamViewNanos.remove(id);
-            host.setTurnRuntimeActive(id, false);
-            notifySettled(id, control);
-            if (control != null && !control.isCancelled()) worker.execute(() -> autoTitle(id));
+        @Override public ChatDatabase.Session takeSessionView(String run) { return pendingSessionViews.remove(run); }
+        @Override public JSONObject takeTurnTags(String run) { return pendingTurnTags.remove(run); }
+        @Override public void releaseTurn(String run) {
+            activeTurns.remove(run);
+            TurnControl control = turnControls.remove(run);
+            startingSessions.remove(run);
+            preparingSessions.remove(run);
+            webPreparingStages.remove(run);
+            postProcessingStages.remove(run);
+            String id = TurnRun.sessionOf(run);
+            // A side-by-side group settles when its last answer does (spec D18).
+            if (!sessionBusy(id)) {
+                lastStreamViewNanos.remove(id);
+                host.setTurnRuntimeActive(id, false);
+                notifySettled(id, control);
+                if (control != null && !control.isCancelled()) worker.execute(() -> autoTitle(id));
+            }
             ChatCoordinator.this.emitView();
         }
     }
@@ -827,11 +864,207 @@ final class ChatCoordinator implements AutoCloseable {
         });
     }
 
+    /**
+     * Side by side (spec D16–D18): the composer's question once, answered at the same time by 2–3 "model × mode"
+     * combinations as versions of it. Each answer is an ordinary turn with its own copy of the session (model, mode),
+     * pipeline and trace; the first becomes the path end until the user picks one (or calls it a tie).
+     */
+    private void compareSend(String requestId, String sessionId, JSONObject p) {
+        String message = p.optString("text", "");
+        JSONArray variants = p.optJSONArray("variants");
+        boolean blind = p.optBoolean("blind", false);
+        java.util.List<ChatDatabase.Session> views = new ArrayList<>();
+        java.util.List<TurnConfig> configs = new ArrayList<>();
+        JSONArray media;
+        try {
+            ChatDatabase.Session session = db.getSession(sessionId);
+            if (session == null) throw new IllegalArgumentException("会话不存在");
+            if (sessionBusy(sessionId)) throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
+            if (variants == null || variants.length() < 2 || variants.length() > COMPARE_MAX) throw new IllegalArgumentException("并排回答需要 2–" + COMPARE_MAX + " 路");
+            media = db.draftMedia(sessionId);
+            if (message.trim().isEmpty() && media.length() == 0) throw new IllegalArgumentException("先写下要问的内容");
+            for (int i = 0; i < variants.length(); i++) {
+                JSONObject v = variants.getJSONObject(i);
+                ChatDatabase.ModelProfile profile = db.getModelProfile(v.optString("modelProfileId", session.modelProfileId == null ? "" : session.modelProfileId));
+                if (profile == null || !profile.enabled) throw new IllegalArgumentException("第 " + (i + 1) + " 路的模型不存在或已停用");
+                ChatDatabase.Session view = variantSession(session, profile, v.optString("contextMode", session.contextMode));
+                TurnConfig c = freezeTurnConfig(view);
+                if (media.length() > 0 && !ChatDatabase.supportsModality(c.inputModalities, "image")) throw new IllegalStateException("「" + c.modelName + "」没有声明图片输入能力");
+                if (!p.optBoolean("budgetConfirmed", false)) {
+                    JSONObject reached = config.budgetReached(c.providerId);
+                    if (reached != null) throw new BudgetReached(reached);
+                }
+                views.add(view); configs.add(c);
+            }
+            if (!host.setTurnRuntimeActive(sessionId, true)) throw new IllegalStateException("系统没有允许启动后台生成服务，请稍后再试");
+        } catch (Exception rejected) { sendRejected(requestId, sessionId, message, rejected); return; }
+        String questionKey;
+        try {
+            JSONObject user = new JSONObject().put("kind", "message").put("role", "user").put("text", message).put("createdAt", java.time.Instant.now().toString());
+            if (media.length() > 0) user.put("attachments", media);
+            questionKey = db.appendQuestion(sessionId, "user:" + UUID.randomUUID(), user);
+        } catch (Exception failed) { host.setTurnRuntimeActive(sessionId, false); sendRejected(requestId, sessionId, message, failed); return; }
+        String placeholder = SessionTitles.placeholder(message);
+        if (placeholder != null) db.replaceTitleIf(sessionId, SessionTitles.DEFAULT_TITLE, placeholder);
+        String group = UUID.randomUUID().toString();
+        java.util.List<String> runs = new ArrayList<>();
+        java.util.List<TurnControl> controls = new ArrayList<>();
+        for (int k = 1; k <= views.size(); k++) {
+            String run = sessionId + "#" + k;
+            TurnControl control = new TurnControl();
+            try {
+                pendingAnswers.put(run, questionKey);
+                pendingSessionViews.put(run, views.get(k - 1));
+                pendingTurnTags.put(run, new JSONObject().put("compareGroup", group).put("compareIndex", k).put("compareSize", views.size()).put("compareBlind", blind));
+            } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+            turnControls.put(run, control);
+            startingSessions.add(run);
+            runs.add(run); controls.add(control);
+        }
+        if (notifyInBackground) host.requestNotificationPermission(true);
+        emitView();
+        result(requestId, true, null);
+        for (int i = 0; i < runs.size(); i++) {
+            String run = runs.get(i);
+            TurnControl control = controls.get(i);
+            TurnConfig c = configs.get(i);
+            try {
+                preparationWorker.execute(() -> {
+                    control.bindCurrentThread();
+                    try {
+                        pipeline.run(run, message, c, control);
+                    } catch (Exception error) {
+                        pipeline.abandon(sessionId, control, control.isCancelled() ? "cancelled" : "turn_internal_error");
+                        dropRun(run);
+                        if (!sessionBusy(sessionId)) {
+                            try { db.failUnhandledTurn(sessionId, control.isCancelled() ? "cancelled" : "turn_internal_error", safe(error)); } catch (Exception ignored) { }
+                            host.setTurnRuntimeActive(sessionId, false);
+                        }
+                    } finally {
+                        control.clearCurrentThread();
+                        emitView();
+                    }
+                });
+            } catch (Exception schedulingError) {
+                dropRun(run);
+                if (!sessionBusy(sessionId)) host.setTurnRuntimeActive(sessionId, false);
+            }
+        }
+    }
+
+    private void dropRun(String run) {
+        turnControls.remove(run); activeTurns.remove(run); startingSessions.remove(run); preparingSessions.remove(run);
+        webPreparingStages.remove(run); postProcessingStages.remove(run);
+        pendingAnswers.remove(run); pendingSessionViews.remove(run); pendingTurnTags.remove(run);
+    }
+
+    /** A copy of the session answering with {@code profile} in {@code contextMode}: never saved (spec D16). */
+    private ChatDatabase.Session variantSession(ChatDatabase.Session session, ChatDatabase.ModelProfile profile, String contextMode) {
+        String effort = ReasoningPolicy.allows(ReasoningPolicy.normalizeLevels(profile.reasoningLevels), session.reasoningEffort) ? session.reasoningEffort : ReasoningPolicy.DEFAULT;
+        ChatDatabase.Session v = ChatDatabase.deploymentSession(profile, effort);
+        v.id = session.id; v.title = session.title; v.state = session.state; v.createdAt = session.createdAt; v.updatedAt = session.updatedAt;
+        v.draft = ""; v.draftMedia = "[]"; v.preview = session.preview;
+        v.originSnapshotId = session.originSnapshotId; v.parentSessionId = session.parentSessionId;
+        v.webMode = session.webMode;
+        v.contextMode = ContextMode.normalize(contextMode);
+        v.subagentMode = ContextMode.MINIMAL.equals(v.contextMode) ? HarnessPolicyResolver.SUBAGENT_OFF
+                : ContextMode.SMART.equals(v.contextMode) ? HarnessPolicyResolver.SUBAGENT_AUTO
+                : ContextMode.normalize(session.contextMode).equals(v.contextMode) ? session.subagentMode : standardSubagentMode;
+        v.contextCheckpoint = session.contextCheckpoint; v.checkpointCoveredItems = session.checkpointCoveredItems;
+        return v;
+    }
+
+    /**
+     * Picks one side-by-side answer (spec D16, D17): it becomes the path end and a good answer, and the session takes
+     * its model and mode; "tie" picks none. Either way the group is decided and, when blind, revealed.
+     */
+    private void decideCompare(String sessionId, String group, String choice) throws Exception {
+        if (sessionBusy(sessionId)) throw new IllegalStateException("请等并排回答全部结束");
+        ChatDatabase.Session session = db.getSession(sessionId); if (session == null) throw new IllegalArgumentException("会话不存在");
+        java.util.List<JSONObject> turns = null;
+        for (int seq : questionSeqsOnPath(sessionId)) {
+            java.util.List<JSONObject> found = db.compareGroupAt(sessionId, seq);
+            if (!found.isEmpty() && group.equals(found.get(0).getJSONObject("config").optString("compareGroup"))) { turns = found; break; }
+        }
+        if (turns == null) throw new IllegalArgumentException("找不到这组并排回答");
+        for (JSONObject t : turns) if (t.getJSONObject("usage").has("compareOutcome")) throw new IllegalStateException("这组并排回答已经选过了");
+        boolean tie = "tie".equals(choice);
+        JSONObject chosen = null;
+        for (JSONObject t : turns) if (t.optString("turnId").equals(choice)) chosen = t;
+        if (!tie && (chosen == null || chosen.optJSONObject("answer") == null)) throw new IllegalArgumentException("只能选有回答的一路");
+        for (JSONObject t : turns) db.setCompareOutcome(t.optString("turnId"), tie ? "tie" : t == chosen ? "win" : "loss");
+        if (tie) return;
+        db.rateTurn(sessionId, chosen.optString("turnId"), 1);
+        db.selectVersion(sessionId, chosen.getJSONObject("answer").optInt("localSeq"));
+        JSONObject c = chosen.getJSONObject("config");
+        String profileId = c.optString("modelProfileId", "");
+        if (!profileId.isEmpty() && !profileId.equals(session.modelProfileId) && db.getModelProfile(profileId) != null) setSessionModel(sessionId, profileId);
+        String mode = ContextMode.normalize(c.optString("contextMode", session.contextMode));
+        ChatDatabase.Session now = db.getSession(sessionId);
+        if (now != null && !mode.equals(ContextMode.normalize(now.contextMode))) {
+            String subagent = ContextMode.MINIMAL.equals(mode) ? HarnessPolicyResolver.SUBAGENT_OFF : ContextMode.SMART.equals(mode) ? HarnessPolicyResolver.SUBAGENT_AUTO : standardSubagentMode;
+            db.setContextMode(sessionId, mode, subagent);
+        }
+    }
+
+    /** Sequence numbers of the user messages on the session's current path, newest first. */
+    private java.util.List<Integer> questionSeqsOnPath(String sessionId) {
+        java.util.List<Integer> out = new ArrayList<>();
+        JSONArray path = db.timeline(sessionId);
+        for (int i = path.length() - 1; i >= 0; i--) {
+            JSONObject row = path.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "user".equals(row.optString("role"))) out.add(row.optInt("localSeq"));
+        }
+        return out;
+    }
+
+    /**
+     * The open side-by-side group of the conversation shown (spec D16, D17): the newest question on the path has one
+     * and it is not decided. Blind and undecided: shuffled (stable per group), labelled A/B/C, no model names or usage.
+     */
+    private JSONObject compareView(String sessionId, JSONArray shown) throws org.json.JSONException {
+        int questionSeq = -1;
+        for (int i = shown.length() - 1; i >= 0 && questionSeq < 0; i--) {
+            JSONObject row = shown.optJSONObject(i);
+            if (row != null && "message".equals(row.optString("kind")) && "user".equals(row.optString("role")) && !row.optBoolean("inherited", false)) questionSeq = row.optInt("localSeq", -1);
+        }
+        if (questionSeq < 0) return null;
+        java.util.List<JSONObject> turns = db.compareGroupAt(sessionId, questionSeq);
+        if (turns.isEmpty()) return null;
+        for (JSONObject t : turns) if (t.getJSONObject("usage").has("compareOutcome")) return null;
+        JSONObject first = turns.get(0).getJSONObject("config");
+        String group = first.optString("compareGroup");
+        boolean blind = first.optBoolean("compareBlind", false);
+        java.util.List<JSONObject> ordered = new ArrayList<>(turns);
+        if (blind) ordered.sort((a, b) -> Integer.compare((group + a.optString("turnId")).hashCode(), (group + b.optString("turnId")).hashCode()));
+        JSONArray answers = new JSONArray();
+        boolean running = sessionBusy(sessionId);
+        for (int i = 0; i < ordered.size(); i++) {
+            JSONObject t = ordered.get(i), c = t.getJSONObject("config"), answer = t.optJSONObject("answer");
+            JSONObject a = new JSONObject().put("turnId", t.optString("turnId")).put("label", String.valueOf((char) ('A' + i))).put("status", t.optString("status"));
+            if (!blind) {
+                a.put("modelName", c.optString("modelName", c.optString("model"))).put("contextMode", c.optString("effectiveContextMode", c.optString("contextMode")));
+                a.put("usage", t.getJSONObject("usage"));
+            }
+            if (answer != null) {
+                a.put("localSeq", answer.optInt("localSeq")).put("text", answer.optString("text", "")).put("streaming", answer.optBoolean("streaming", false));
+                if (answer.has("streamStage")) a.put("streamStage", answer.optString("streamStage"));
+                if (answer.optBoolean("incomplete", false)) a.put("incomplete", true).put("terminalCode", answer.optString("terminalCode", ""));
+            } else a.put("text", "").put("failed", true).put("terminalCode", t.optString("terminalCode", ""));
+            answers.put(a);
+        }
+        return new JSONObject().put("group", group).put("questionSeq", questionSeq).put("blind", blind).put("running", running).put("answers", answers);
+    }
+
+    /** A side-by-side answer streamed: the conversation is re-projected (its compare card), at most 20 times a second. */
+    private void emitComparePatch(String sessionId, JSONObject liveItem) { emitStreamingView(sessionId); }
+
+    /** Stops every run of the session: the turn, or all answers of a side-by-side group (spec D18). */
     private void interrupt(String id) {
-        TurnControl control = turnControls.get(id);
-        if (control != null) control.cancel();
-        ChatTransport.Turn turn = activeTurns.get(id);
-        if (turn != null) try { turn.cancel(); } catch (Exception ignored) { }
+        for (Map.Entry<String, TurnControl> e : turnControls.entrySet()) if (anyRun(java.util.Collections.singleton(e.getKey()), id)) e.getValue().cancel();
+        for (Map.Entry<String, ChatTransport.Turn> e : activeTurns.entrySet()) {
+            if (anyRun(java.util.Collections.singleton(e.getKey()), id)) try { e.getValue().cancel(); } catch (Exception ignored) { }
+        }
         emitStreamingView(id);
     }
 
@@ -1044,12 +1277,12 @@ final class ChatCoordinator implements AutoCloseable {
             JSONObject sessionPatch = new JSONObject()
                     .put("state", active ? "running" : nonEmpty(db.getSession(sessionId) == null ? null : db.getSession(sessionId).state, "failed"))
                     .put("canSend", !active)
-                    .put("canInterrupt", turnControls.containsKey(sessionId))
+                    .put("canInterrupt", anyRun(turnControls.keySet(), sessionId))
                     .put("canConfigureTurn", !active)
-                    .put("contextPreparing", preparingSessions.contains(sessionId));
-            String webStage = webPreparingStages.get(sessionId);
+                    .put("contextPreparing", anyRun(preparingSessions, sessionId));
+            String webStage = stageOf(webPreparingStages, sessionId);
             if (webStage != null) sessionPatch.put("webPreparingStage", webStage); else sessionPatch.put("webPreparingStage", JSONObject.NULL);
-            String postStage = postProcessingStages.get(sessionId);
+            String postStage = stageOf(postProcessingStages, sessionId);
             if (postStage != null) sessionPatch.put("postProcessingStage", postStage); else sessionPatch.put("postProcessingStage", JSONObject.NULL);
             JSONObject item = new JSONObject(liveItem.toString());
             item.remove("providerContinuation");
@@ -1242,13 +1475,13 @@ final class ChatCoordinator implements AutoCloseable {
         ChatDatabase.ModelProfile modelProfile = lookups.profile(s.modelProfileId);
         ChatDatabase.Provider deployment = p == null ? null : lookups.deployment(s);
         ChatDatabase.Snapshot originSnap = lookups.snapshot(s.originSnapshotId);
-        boolean starting = startingSessions.contains(s.id);
-        boolean preparing = preparingSessions.contains(s.id);
-        String webPreparingStage = webPreparingStages.get(s.id);
+        boolean starting = anyRun(startingSessions, s.id);
+        boolean preparing = anyRun(preparingSessions, s.id);
+        String webPreparingStage = stageOf(webPreparingStages, s.id);
         boolean webPreparing = webPreparingStage != null;
-        String postProcessingStage = postProcessingStages.get(s.id);
+        String postProcessingStage = stageOf(postProcessingStages, s.id);
         boolean postProcessing = postProcessingStage != null;
-        boolean active = turnControls.containsKey(s.id) || activeTurns.containsKey(s.id) || starting || preparing || webPreparing || postProcessing;
+        boolean active = anyRun(turnControls.keySet(), s.id) || anyRun(activeTurns.keySet(), s.id) || starting || preparing || webPreparing || postProcessing;
         String visibleState = active ? "running" : ("running".equals(s.state) ? "failed" : s.state);
         JSONObject o = new JSONObject().put("localSessionId", s.id).put("title", s.title).put("providerId", s.providerId).put("providerName", p == null ? s.providerId : p.displayName)
                 .put("modelProfileId", s.modelProfileId == null ? JSONObject.NULL : s.modelProfileId).put("model", s.model)
@@ -1273,8 +1506,10 @@ final class ChatCoordinator implements AutoCloseable {
             DisplayTimeline display = displayTimeline(s);
             o.put("messages", display.items).put("composerDraft", s.draft == null ? "" : s.draft)
                     .put("draftMedia", db.draftMedia(s.id)).put("canAttachImage", ChatDatabase.supportsModality(s.inputModalities, "image") && !active)
-                    .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", turnControls.containsKey(s.id))
+                    .put("canSend", p != null && secrets.has(s.providerId) && !active).put("canInterrupt", anyRun(turnControls.keySet(), s.id))
                     .put("canConfigureTurn", !active).put("contextPreparing", preparing);
+            JSONObject compare = compareView(s.id, display.items);
+            if (compare != null) o.put("compare", compare);
             if (display.omittedInheritedItems > 0) o.put("displayOmittedInheritedItems", display.omittedInheritedItems);
             Integer resume = db.resumeSeq(s.id);
             if (resume != null && !active) o.put("resumeLocalSeq", resume);

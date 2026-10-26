@@ -207,3 +207,19 @@ test('capability probe line: each check with its verdict, warn when something co
   assert.ok(line.text.startsWith('实测 · 图片输入 不支持 · 工具调用 无法判断'));
   assert.equal(line.tone, 'warn');
 });
+
+test('side by side: cards with labels, hidden models when blind, picking only after every answer settled (spec D16, D17)', () => {
+  assert.equal(vm.compareView({}), null);
+  const open = vm.compareView({ compare: { group: 'g', questionSeq: 3, blind: false, running: false, answers: [
+    { turnId: 'a', label: 'A', status: 'ok', modelName: 'M1', contextMode: 'standard', text: 'one', usage: { requestDurationMs: 1200, outputTokens: 40 } },
+    { turnId: 'b', label: 'B', status: 'failed', failed: true, terminalCode: 'http_500', text: '' },
+  ] } });
+  assert.equal(open.cards[0].subtitle, 'M1 · 标准');
+  assert.equal(open.cards[0].canPick, true);
+  assert.equal(open.cards[1].canPick, false, 'an answer that failed cannot be picked');
+  const blind = vm.compareView({ compare: { group: 'g', questionSeq: 3, blind: true, running: true, answers: [{ turnId: 'a', label: 'A', status: 'running', streaming: true, streamStage: 'output', text: 'par' }] } });
+  assert.equal(blind.title, '并排回答 · 盲评');
+  assert.equal(blind.cards[0].subtitle, '');
+  assert.equal(blind.cards[0].canPick, false, 'nothing is picked while answers still run');
+  assert.equal(blind.cards[0].status, '回答中…');
+});

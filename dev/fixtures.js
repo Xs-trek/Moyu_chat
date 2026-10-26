@@ -193,6 +193,16 @@ function mainSessions() {
           : item.role === 'user' ? { ...item, version: { index: 2, count: 2, prevSeq: 3 } }
           : { ...item, answers: 3, version: { index: 1, count: 3, nextSeq: 7 } }),
     }),
+    session('s-compare', '同一个问题，两种编排', 'm-gpt', {
+      updatedAt: at(2), preview: '并排回答',
+      messages: timeline([{ user: '解释一下为什么天空是蓝色的，给一个能讲给孩子听的版本。', assistant: '阳光里有各种颜色……' }]),
+      compare: { group: 'g-demo', questionSeq: 1, blind: false, running: false, answers: [
+        { turnId: 't-a', label: 'A', status: 'ok', localSeq: 2, modelName: 'GPT-5.5', contextMode: 'standard', usage: { requestDurationMs: 3200, outputTokens: 180 },
+          text: '阳光看起来是白色的，其实混着很多颜色。光穿过空气时，蓝色的光最容易被空气里的小颗粒“弹”向四面八方，所以抬头看哪里都是蓝的。' },
+        { turnId: 't-b', label: 'B', status: 'ok', localSeq: 3, modelName: 'GPT-5.5', contextMode: 'smart', usage: { requestDurationMs: 7400, outputTokens: 260 },
+          text: '**一句话**：蓝光最容易被空气“打散”。\n\n1. 太阳光是七种颜色混在一起的。\n2. 空气分子很小，最爱弹开波长短的蓝光（瑞利散射）。\n3. 被弹开的蓝光从天空各处进入眼睛，天就是蓝的。\n\n傍晚阳光要穿过更厚的空气，蓝光在路上被弹光了，剩下红橙色。' },
+      ] },
+    }),
     session('s-branch', '长文阅读排版怎么调 · 分支', 'm-gpt', {
       updatedAt: at(5), preview: '（分支）', origin: { snapshotId: 'snap-1', sourceSessionId: 's-reading', sourceTitle: '长文阅读排版怎么调', createdAt: at(5), itemCount: 3 },
       messages: timeline([{ user: '这个聊天界面看长回答很累，排版上该怎么调？', assistant: '（继承自原会话）先看行高和段间距。' }]).map((item) => ({ ...item, inherited: true })),
@@ -215,6 +225,7 @@ export const fixtures = {
   streaming: { label: '流式回复（自动开始）', autoplay: 'stream', build: () => ({ route: 'conversation', activeSessionId: 's-reading', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   errors: { label: '错误与中断', build: () => ({ route: 'conversation', activeSessionId: 's-errors', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   versions: { label: '消息版本（‹ 1/2 ›）', build: () => ({ route: 'conversation', activeSessionId: 's-versions', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
+  compare: { label: '并排回答', build: () => ({ route: 'conversation', activeSessionId: 's-compare', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   branch: { label: '分支会话', build: () => ({ route: 'conversation', activeSessionId: 's-branch', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   providers: { label: 'Provider 页', build: () => ({ route: 'providers', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },
   settings: { label: '设置页', build: () => ({ route: 'settings', accounts: structuredClone(accounts), sessions: mainSessions(), ui: { ...baseUi } }) },

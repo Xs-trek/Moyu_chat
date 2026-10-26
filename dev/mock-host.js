@@ -400,6 +400,36 @@ window.MoyuHost = {
       setTimeout(() => { s.title = `模拟标题 ${Math.floor(Math.random() * 90 + 10)}`; emitView(); result(message.requestId, true, ''); }, 700);
       return;
     }
+    if (message.type === 'chat.session.compare.send') {
+      // Spec D16: the mock answers every variant at once, as a decided-later group shown in place of the answer.
+      const s = findSession(message.payload?.localSessionId);
+      const variants = message.payload?.variants || [];
+      if (!s || variants.length < 2 || variants.length > 3) { result(message.requestId, false, '并排回答需要 2–3 路'); return; }
+      const user = { localSeq: nextSeq(s), kind: 'message', role: 'user', text: message.payload.text, createdAt: now() };
+      s.messages.push(user);
+      const models = world.providers.flatMap((x) => x.models);
+      const answers = variants.map((v, i) => {
+        const model = models.find((m) => m.modelProfileId === v.modelProfileId);
+        return { turnId: `t-cmp-${Date.now()}-${i}`, label: String.fromCharCode(65 + i), status: 'ok', localSeq: user.localSeq + 1 + i,
+          ...(message.payload.blind ? {} : { modelName: model?.displayName || model?.modelId, contextMode: v.contextMode, usage: { requestDurationMs: 2000 + i * 1500, outputTokens: 120 + i * 60 } }),
+          text: `（模拟）第 ${i + 1} 路的回答：${vmMode(v.contextMode)}档位。` };
+      });
+      s.messages.push({ localSeq: user.localSeq + 1, kind: 'message', role: 'assistant', text: answers[0].text, createdAt: now() });
+      s.compare = { group: `g-${Date.now()}`, questionSeq: user.localSeq, blind: Boolean(message.payload.blind), running: false, answers };
+      s.composerDraft = '';
+      emitView();
+      result(message.requestId, true, '');
+      return;
+    }
+    if (message.type === 'chat.compare.decide') {
+      const s = findSession(message.payload?.localSessionId);
+      const picked = s?.compare?.answers.find((a) => a.turnId === message.payload.choice);
+      if (picked) { const last = s.messages.findLast((m) => m.role === 'assistant'); if (last) last.text = picked.text; }
+      if (s) delete s.compare;
+      emitView();
+      result(message.requestId, true, '');
+      return;
+    }
     if (message.type === 'turn.rerun') {
       try {
         // A re-answer is a new version of the answer in the same session (spec D9); the session takes the chosen model
@@ -493,3 +523,5 @@ function devPanel() {
   document.body.append(panel);
 }
 devPanel();
+
+function vmMode(mode) { return { minimal: '极简', standard: '标准', smart: '智能' }[mode] || mode; }

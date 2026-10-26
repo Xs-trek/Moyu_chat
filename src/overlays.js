@@ -196,6 +196,55 @@ function rerunSheet(view, state) {
     h('div', { class: 'sheet-foot' }, button('重答', 'rerun-confirm', {}, 'btn primary'))];
 }
 
+/**
+ * Spec D16: send the composer's question to 2–3 "model × mode" combinations at once. The second starts as the same
+ * model in another mode: comparing what the orchestration adds is the main use.
+ */
+export function openCompare(sessionId) {
+  const session = getState().view?.activeSession;
+  if (!session || session.localSessionId !== sessionId) return;
+  const mode = session.contextMode || 'standard';
+  const other = mode === 'smart' ? 'standard' : mode === 'minimal' ? 'standard' : 'smart';
+  sheet = { kind: 'compare', sessionId, editing: 1, blind: false,
+    variants: [{ modelProfileId: session.modelProfileId, contextMode: mode }, { modelProfileId: session.modelProfileId, contextMode: other }] };
+  paintSheet(getState().view);
+}
+
+export function setCompareChoice(change) {
+  if (sheet?.kind !== 'compare') return;
+  const variants = sheet.variants.map((v) => ({ ...v }));
+  let editing = sheet.editing;
+  if (change.edit !== undefined) editing = editing === change.edit ? -1 : change.edit;
+  if (change.modelProfileId !== undefined && variants[editing]) variants[editing].modelProfileId = change.modelProfileId;
+  if (change.contextMode !== undefined && variants[change.index]) variants[change.index].contextMode = change.contextMode;
+  if (change.add && variants.length < 3) { variants.push({ ...variants[variants.length - 1] }); editing = variants.length - 1; }
+  if (change.remove !== undefined && variants.length > 2) { variants.splice(change.remove, 1); editing = -1; }
+  sheet = { ...sheet, variants, editing, blind: change.blind !== undefined ? change.blind : sheet.blind };
+  paintSheet(getState().view);
+}
+
+/** The pending side-by-side choice, or null when the sheet is not open. */
+export function compareChoice() { return sheet?.kind === 'compare' ? { ...sheet } : null; }
+
+function compareSheet(view, state) {
+  const models = vm.modelGroups(view).flatMap((g) => g.models);
+  const nameOf = (id) => { const m = models.find((x) => x.modelProfileId === id); return m ? (m.displayName || m.modelId) : '（未选模型）'; };
+  return [h('h2', { class: 'sheet-title', text: '并排回答' }),
+    h('p', { class: 'sheet-note', text: '把输入框里的问题同时发给下面几路，回答是这条提问的几个版本。同一个模型换档位，比的是编排多做的那些事；推理深度沿用会话的设置。' }),
+    state.variants.map((v, i) => h('div', { class: 'compare-variant', dataset: { key: `variant:${i}` } },
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'grow compare-variant-head', 'aria-expanded': state.editing === i ? 'true' : 'false', dataset: { action: 'compare-edit', index: String(i) } },
+          h('strong', { text: `第 ${i + 1} 路` }), h('span', { class: 'truncate', text: ` ${nameOf(v.modelProfileId)} · ${vm.contextLabel(v.contextMode)}` })),
+        state.variants.length > 2 ? button('移除', 'compare-remove', { index: String(i) }, 'btn small ghost') : null),
+      segmented(`第 ${i + 1} 路的档位`, ['minimal', 'standard', 'smart'], v.contextMode, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '',
+        dataset: { action: 'compare-mode', index: String(i), contextMode: value }, text: vm.contextLabel(value) })),
+      state.editing === i ? modelChoiceList(view, v.modelProfileId, (model) => ({ action: 'compare-model', modelProfileId: model.modelProfileId })) : null)),
+    state.variants.length < 3 ? button('再加一路', 'compare-add', {}, 'btn small ghost') : null,
+    h('label', { class: 'row compare-blind' }, h('span', { class: 'grow', text: '盲评：隐藏模型名和用量，选完再揭晓' }),
+      h('button', { type: 'button', role: 'switch', class: `switch${state.blind ? ' on' : ''}`, 'aria-checked': state.blind ? 'true' : 'false', 'aria-label': '盲评', dataset: { action: 'compare-blind' } }, h('span', { class: 'knob' }))),
+    h('div', { class: 'sheet-foot' }, button('发送', 'compare-send', {}, 'btn primary'))];
+}
+
 /** Spec D15: pick the helper model, or the session's model. */
 export function openHelperModel() {
   sheet = { kind: 'helpermodel' };
@@ -318,6 +367,8 @@ function paintSheet(view) {
     body = payloadSheet(sheet);
   } else if (sheet.kind === 'answers') {
     body = answersSheet(sheet);
+  } else if (sheet.kind === 'compare') {
+    body = compareSheet(view || getState().view, sheet);
   } else if (sheet.kind === 'helpermodel') {
     body = helperModelSheet(view || getState().view);
   } else if (sheet.kind === 'rerun') {
@@ -375,6 +426,7 @@ function turnSettings(view, session) {
     segmented('联网', ['off', 'auto', 'on'], web, (value, on) => h('button', { type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '', disabled: locked,
       dataset: { action: 'session-web-set', sessionId: session.localSessionId, webMode: value }, text: vm.WEB_LABELS[value] })),
     backend ? h('p', { class: 'sheet-note', text: `联网后端：${backend}` }) : null,
+    h('div', { class: 'sheet-foot' }, h('button', { type: 'button', class: 'btn ghost', disabled: locked, dataset: { action: 'open-compare', sessionId: session.localSessionId, closeSheet: '' } }, '并排回答…')),
   ];
 }
 

@@ -48,6 +48,10 @@ final class TurnPipeline {
         default String takeAnswerTo(String sessionId) { return null; }
         /** What the composer keeps once this turn starts (a retry keeps text typed meanwhile), or ""; consumed on read. */
         default String takeKeptDraft(String sessionId) { return ""; }
+        /** A side-by-side answer's copy of the session with its own model and mode (spec D16), or null; consumed on read. */
+        default ChatDatabase.Session takeSessionView(String run) { return null; }
+        /** Turn config fields of a side-by-side answer (compareGroup, compareIndex, compareSize, compareBlind), or null; consumed on read. */
+        default JSONObject takeTurnTags(String run) { return null; }
         /** Whether redacted request / response text is recorded for the protocol inspector. */
         boolean wireCaptureEnabled();
         /** Clears every busy flag for the session, releases the runtime lease and emits a full view. */
@@ -74,8 +78,8 @@ final class TurnPipeline {
     }
 
     /** Runs the preparation stages and starts generation; terminal states are written through {@link #finish}. */
-    void run(String id, String text, TurnConfig turnConfig, TurnControl turnControl) throws Exception {
-        TurnRun r = accept(id, text, turnConfig, turnControl);
+    void run(String run, String text, TurnConfig turnConfig, TurnControl turnControl) throws Exception {
+        TurnRun r = accept(run, text, turnConfig, turnControl);
         if (r == null) return;
         if (!buildContext(r) || !prepareContext(r) || !planWeb(r) || !selectTools(r) || !retrieveWeb(r)) return;
         settleRecall(r);
@@ -99,7 +103,7 @@ final class TurnPipeline {
 
     /** Runs on the authority thread only. */
     private void enterRoute(TurnRun r, String routeId, int limit) {
-        if (r.control.isCancelled() || !env.ownsTurn(r.id, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
+        if (r.control.isCancelled() || !env.ownsTurn(r.run, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
         java.util.concurrent.atomic.AtomicBoolean settled = new java.util.concurrent.atomic.AtomicBoolean(false);
         ChatTransport.Turn[] waiting = new ChatTransport.Turn[1];
         Runnable resume = () -> env.authority().execute(() -> {
@@ -123,15 +127,15 @@ final class TurnPipeline {
             r.live.put("streamStage", "queued");
             db.replaceTimelineBody(r.streamKey, r.live);
         } catch (Exception ignored) { }
-        env.putActiveTurn(r.id, waiting[0]);
-        env.setStarting(r.id, false);
-        env.emitStreamingView(r.id);
+        env.putActiveTurn(r.run, waiting[0]);
+        env.setStarting(r.run, false);
+        env.emitStreamingView(r.run);
         r.control.bindTransport(waiting[0]); // cancels at once when the user stopped meanwhile
     }
 
     /** Authority thread: starts the provider loop, or settles a turn that was stopped while it waited. */
     private void launchGeneration(TurnRun r) {
-        if (r.control.isCancelled() || !env.ownsTurn(r.id, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
+        if (r.control.isCancelled() || !env.ownsTurn(r.run, r.control)) { finish(r, "", "", null, null, "", new String[]{"cancelled", "已停止生成"}); return; }
         try { new ProviderRoundLoop(this, r).start(); }
         catch (Exception error) { finish(r, "", "", null, null, "", new String[]{"transport_start_failed", safe(error)}); }
     }
@@ -143,12 +147,16 @@ final class TurnPipeline {
 
     // ---------- accept ----------
 
-    private TurnRun accept(String id, String text, TurnConfig turnConfig, TurnControl turnControl) throws Exception {
+    private TurnRun accept(String run, String text, TurnConfig turnConfig, TurnControl turnControl) throws Exception {
+        String id = TurnRun.sessionOf(run);
         // trim is an emptiness check only; the stored/prompted/sent text stays byte-for-byte original.
         String input = text == null ? "" : text;
         ChatDatabase.Session session = db.getSession(id); if (session == null) throw new IllegalArgumentException("会话不存在");
+        // A side-by-side answer runs with its own model and mode on a copy of the session (spec D16); nothing is saved from it.
+        ChatDatabase.Session variant = env.takeSessionView(run);
+        if (variant != null) session = variant;
         // A retry or re-answer answers its question again: its text and images, no new message (spec T1, T7, H5).
-        String answerTo = env.takeAnswerTo(id);
+        String answerTo = env.takeAnswerTo(run);
         JSONObject question = answerTo == null ? null : db.timelineItem(id, answerTo);
         if (answerTo != null && question == null) throw new IllegalArgumentException("找不到要回答的提问");
         JSONArray pendingMedia = question != null
@@ -157,8 +165,8 @@ final class TurnPipeline {
         if (input.trim().isEmpty() && pendingMedia.length() == 0) return null;
         if (turnConfig == null || turnConfig.provider == null || turnConfig.apiKey == null) throw new IllegalStateException("turn configuration missing");
         if (pendingMedia.length() > 0 && !ChatDatabase.supportsModality(turnConfig.inputModalities, "image")) throw new IllegalStateException("当前模型没有声明图片输入能力");
-        if (env.hasActiveTurn(id)) throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
-        TurnRun r = new TurnRun(id, input, turnConfig, turnControl, session, pendingMedia);
+        if (env.hasActiveTurn(run)) throw new IllegalStateException("这个会话正在生成，请等当前回合结束");
+        TurnRun r = new TurnRun(run, input, turnConfig, turnControl, session, pendingMedia);
         TurnTrace.Span span = r.trace().begin(TurnTrace.ACCEPT);
         ChatDatabase.Provider provider = r.provider;
         ChatTransport rawTransport = transports.forProtocol(provider.protocol); if (rawTransport == null) throw new IllegalStateException("不支持这个账号的协议");
@@ -213,11 +221,13 @@ final class TurnPipeline {
         if (env.wireCaptureEnabled()) usage.setWireRecorder((stage, callIndex, direction, wireText) -> db.addTurnPayload(turnId, callIndex, stage, direction, wireText));
         r.live.put("turnId", turnId);
         JSONObject config = turnConfigJson(r);
-        JSONObject retry = env.takeRetryOf(id);
+        JSONObject retry = env.takeRetryOf(run);
+        JSONObject tags = env.takeTurnTags(run); // side-by-side group, index and blindness (spec D16, D17)
+        if (tags != null) for (java.util.Iterator<String> k = tags.keys(); k.hasNext(); ) { String key = k.next(); config.put(key, tags.get(key)); r.live.put(key, tags.get(key)); }
         if (retry != null) config.put("retryOf", retry.optString("retryOf")).put("attempt", retry.optInt("attempt", 2));
-        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(id), answerTo);
+        db.beginTurn(id, "user:" + UUID.randomUUID(), user, r.streamKey, r.live, turnId, config, env.takeKeptDraft(run), answerTo);
         turnControl.usageState = new JSONObject().put("createdAt", Instant.now().toString());
-        env.setStarting(id, true);
+        env.setStarting(run, true);
         r.requestStartedNanos = System.nanoTime();
         turnControl.requestStartedNanos = r.requestStartedNanos;
         r.trace().end(span, TurnTrace.OK, new JSONObject().put("contextMode", turnConfig.contextMode)
@@ -291,9 +301,9 @@ final class TurnPipeline {
         if (!r.preparing && r.mayPrepare) {
             r.live.put("streamStage", "connecting");
             db.replaceTimelineBody(r.streamKey, r.live);
-            env.emitStreamingView(r.id);
+            env.emitStreamingView(r.run);
         }
-        if (r.preparing) { env.setPreparing(r.id, true); env.emitView(); }
+        if (r.preparing) { env.setPreparing(r.run, true); env.emitView(); }
         return true;
     }
 
@@ -335,7 +345,7 @@ final class TurnPipeline {
             finishEarly(r, "context_prepare_failed", safe(preparationError));
             return false;
         } finally {
-            if (r.preparing) { env.setPreparing(r.id, false); env.emitStreamingView(r.id); }
+            if (r.preparing) { env.setPreparing(r.run, false); env.emitStreamingView(r.run); }
         }
         return !cancelled(r);
     }
@@ -382,7 +392,7 @@ final class TurnPipeline {
 
     private void setPreparationStage(TurnRun r, String stage) {
         try { r.live.put("streamStage", stage); db.replaceTimelineBody(r.streamKey, r.live); } catch (Exception ignored) { }
-        env.emitStreamingView(r.id);
+        env.emitStreamingView(r.run);
     }
 
     /**
@@ -487,16 +497,16 @@ final class TurnPipeline {
         boolean plannerOn = r.modules.webPlanner.on;
         r.webPlanning = plannerOn && webOrchestrator.shouldRunPlanner(c.webMode, r.input, r.webFollowUp);
         if (r.webPlanning) {
-            env.setWebStage(r.id, "web_planning");
+            env.setWebStage(r.run, "web_planning");
             try { r.live.put("streamStage", "web_planning"); db.replaceTimelineBody(r.streamKey, r.live); } catch (Exception ignored) { }
-            env.emitStreamingView(r.id);
+            env.emitStreamingView(r.run);
         }
         TurnTrace.Span span = r.trace().begin(TurnTrace.WEB_PLAN);
         try {
             r.webPlan = webOrchestrator.plan(c.webMode, r.input, r.prompt, r.webPlanCall.transport, r.webPlanCall.provider, r.webPlanCall.key,
                     r.webPlanCall.model, r.control, r.webFollowUp, plannerOn);
         } finally {
-            if (r.webPlanning && env.clearWebStage(r.id)) env.emitStreamingView(r.id);
+            if (r.webPlanning && env.clearWebStage(r.run)) env.emitStreamingView(r.run);
         }
         WebOrchestrator.Plan plan = r.webPlan;
         r.trace().end(span, TurnTrace.OK, withCallFailure(r, TurnTrace.WEB_PLAN, new JSONObject().put("webMode", c.webMode).put("useWeb", plan.useWeb)
@@ -723,14 +733,14 @@ final class TurnPipeline {
         }
         TurnTrace.Span span = r.trace().begin(TurnTrace.WEB_RETRIEVE);
         TurnConfig c = r.config;
-        String id = r.id;
+        String run = r.run;
         MoyuWebService.Prepared preparedWeb;
         try {
             preparedWeb = webService.prepare(r.webPlan, stage -> {
                 String webStage = stage == null || stage.trim().isEmpty() ? "web_search" : stage.trim();
-                env.setWebStage(id, webStage);
+                env.setWebStage(run, webStage);
                 try { r.live.put("streamStage", webStage); db.replaceTimelineBody(r.streamKey, r.live); } catch (Exception ignored) { }
-                env.emitStreamingView(id);
+                env.emitStreamingView(run);
             }, r.control, r.webFollowUp);
         } catch (Exception webError) {
             boolean cancelled = r.control.isCancelled();
@@ -738,7 +748,7 @@ final class TurnPipeline {
             finishEarly(r, cancelled ? "cancelled" : "web_prepare_failed", cancelled ? "已停止生成" : safe(webError));
             return false;
         } finally {
-            if (env.clearWebStage(id)) env.emitStreamingView(id);
+            if (env.clearWebStage(run)) env.emitStreamingView(run);
         }
         if (cancelled(r)) return false;
 
@@ -958,9 +968,9 @@ final class TurnPipeline {
     }
 
     void setPostProcessingStage(TurnRun r, String stage) {
-        env.setPostStage(r.id, stage);
+        env.setPostStage(r.run, stage);
         try { r.live.put("streamStage", stage); db.replaceTimelineBody(r.streamKey, r.live); } catch (Exception ignored) { }
-        env.emitStreamingView(r.id);
+        env.emitStreamingView(r.run);
     }
 
     private static JSONObject verificationAttemptJson(SmartVerifierService.Result result,
@@ -995,7 +1005,7 @@ final class TurnPipeline {
         TurnControl control = r.control;
         JSONObject usageState = control.usageState;
         try {
-            if (env.ownsTurn(r.id, control)) control.usage.project(usageState);
+            if (env.ownsTurn(r.run, control)) control.usage.project(usageState);
             long finished = control.durationNow();
             usageState.put("requestDurationMs", Math.max(0L, (finished - r.requestStartedNanos) / 1_000_000L));
             if (firstOutputNanos > 0L) {
@@ -1028,7 +1038,7 @@ final class TurnPipeline {
                 Map<String, JSONObject> webSources, String webBackend, String[] error) {
         String id = r.id;
         // Preparation or verification can be the last (or only) billed request of a turn.
-        persistFinalUsage(id, env.ownsTurn(id, r.control) ? r.control : null);
+        persistFinalUsage(id, env.ownsTurn(r.run, r.control) ? r.control : null);
         boolean hasVisibleOutput = !text.isEmpty() || (outputMedia != null && outputMedia.length() > 0);
         boolean hasProjection = hasVisibleOutput || (reasoning != null && !reasoning.isEmpty());
         String[] terminalError = error;
@@ -1068,7 +1078,7 @@ final class TurnPipeline {
             releaseRouteSlot(r);
             // After the record, so the compaction's helper span lands on a settled turn (spec T1 step 6).
             if (finalized && "completed".equals(finalState) && hasVisibleOutput) compactAfterTurn(r, text);
-            env.releaseTurn(id);
+            env.releaseTurn(r.run);
         }
     }
 

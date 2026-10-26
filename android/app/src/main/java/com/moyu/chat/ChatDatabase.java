@@ -938,7 +938,8 @@ public final class ChatDatabase extends SQLiteOpenHelper {
             live.put("kind", kindOf(liveBody)); live.put("body", liveBody.toString()); live.put("created_at", liveBody.optString("createdAt", Instant.now().toString()));
             live.put("parent_key", questionKey);
             db.insertWithOnConflict("timeline", null, live, SQLiteDatabase.CONFLICT_ABORT);
-            setLeaf(db, sessionId, streamKey);
+            // Side by side (spec D16): only the first answer of the group becomes the path end; the others are versions.
+            if (config == null || config.optInt("compareIndex", 0) <= 1) setLeaf(db, sessionId, streamKey);
 
             ContentValues turn = new ContentValues(); turn.put("turn_id", turnId); turn.put("session_id", sessionId); turn.put("user_seq", questionSeq);
             turn.put("assistant_key", streamKey); turn.put("started_at", Instant.now().toString()); turn.put("status", "running");
@@ -953,6 +954,79 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         } catch (org.json.JSONException error) {
             throw new IllegalStateException(error);
         } finally { db.endTransaction(); }
+    }
+
+    /**
+     * Side by side (spec D16): the question as its own row under the path end, with the draft images it carries; the
+     * composer is cleared and the session runs. Every answer of the group then answers this row (beginTurn answerToKey).
+     */
+    public synchronized String appendQuestion(String sessionId, String userKey, JSONObject userBody) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            int seq;
+            try (Cursor c = db.rawQuery("SELECT COALESCE(MAX(local_seq),0)+1 FROM timeline WHERE session_id=?", new String[]{sessionId})) {
+                if (!c.moveToFirst()) throw new IllegalStateException("cannot allocate user timeline sequence");
+                seq = c.getInt(0);
+            }
+            String parent = leafOf(db, sessionId);
+            if (parent == null) { java.util.List<Row> path = pathOf(db, sessionId); parent = path.isEmpty() ? "" : path.get(path.size() - 1).key; }
+            userBody.put("localSeq", seq);
+            ContentValues user = new ContentValues(); user.put("item_key", userKey); user.put("session_id", sessionId); user.put("local_seq", seq);
+            user.put("kind", kindOf(userBody)); user.put("body", userBody.toString()); user.put("created_at", userBody.optString("createdAt", Instant.now().toString()));
+            if (!parent.isEmpty()) user.put("parent_key", parent);
+            db.insertWithOnConflict("timeline", null, user, SQLiteDatabase.CONFLICT_ABORT);
+            updatePreviewFromBody(db, sessionId, userBody);
+            setLeaf(db, sessionId, userKey);
+            ContentValues state = new ContentValues(); state.put("state", "running"); state.put("updated_at", Instant.now().toString());
+            state.put("draft", ""); state.put("draft_media", "[]");
+            if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalStateException("session missing while asking");
+            db.setTransactionSuccessful();
+            return userKey;
+        } catch (org.json.JSONException error) {
+            throw new IllegalStateException(error);
+        } finally { db.endTransaction(); }
+    }
+
+    /**
+     * The newest side-by-side group answering the question at {@code questionSeq} (spec D16): its turns in answer order
+     * with config, usage, rating and the answer row (null when the answer was removed), or an empty list.
+     */
+    public synchronized List<JSONObject> compareGroupAt(String sessionId, int questionSeq) {
+        ArrayList<JSONObject> out = new ArrayList<>();
+        String group = null;
+        SQLiteDatabase db = getReadableDatabase();
+        try (Cursor c = db.rawQuery("SELECT turn_id,assistant_key,status,terminal_code,config,usage,rating FROM turns WHERE session_id=? AND user_seq=? AND instr(config,'compareGroup')>0 ORDER BY started_at DESC",
+                new String[]{sessionId, String.valueOf(questionSeq)})) {
+            while (c.moveToNext()) {
+                try {
+                    JSONObject config = new JSONObject(c.getString(4));
+                    String g = config.optString("compareGroup", "");
+                    if (g.isEmpty()) continue;
+                    if (group == null) group = g; else if (!group.equals(g)) continue;
+                    JSONObject turn = new JSONObject().put("turnId", c.getString(0)).put("status", c.getString(2)).put("terminalCode", c.getString(3))
+                            .put("config", config).put("usage", new JSONObject(c.getString(5)));
+                    if (!c.isNull(6)) turn.put("rating", c.getInt(6));
+                    try (Cursor body = db.rawQuery("SELECT body FROM timeline WHERE item_key=?", new String[]{c.getString(1)})) {
+                        if (body.moveToFirst()) turn.put("answer", new JSONObject(body.getString(0)));
+                    }
+                    out.add(turn);
+                } catch (org.json.JSONException skipped) { }
+            }
+        }
+        out.sort((a, b) -> Integer.compare(a.optJSONObject("config").optInt("compareIndex"), b.optJSONObject("config").optInt("compareIndex")));
+        return out;
+    }
+
+    /** Records a side-by-side outcome on a turn ("win", "loss" or "tie"; spec D17), kept with its usage summary. */
+    public synchronized void setCompareOutcome(String turnId, String outcome) {
+        SQLiteDatabase db = getWritableDatabase();
+        try (Cursor c = db.rawQuery("SELECT usage FROM turns WHERE turn_id=?", new String[]{turnId})) {
+            if (!c.moveToFirst()) return;
+            JSONObject usage = new JSONObject(c.isNull(0) ? "{}" : c.getString(0)).put("compareOutcome", outcome);
+            ContentValues v = new ContentValues(); v.put("usage", usage.toString());
+            db.update("turns", v, "turn_id=?", new String[]{turnId});
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
     }
 
     public synchronized int appendTimeline(String sessionId, String itemKey, JSONObject body) {
@@ -991,10 +1065,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         try {
             String question = parentOf(db, streamKey);
             String end = streamKey;
+            // A side-by-side answer that is not on the path (spec D16) never moves the path end.
+            boolean holdsPath = streamKey.equals(leafOf(db, sessionId));
             if (finalBody == null) {
                 db.delete("timeline", "session_id=? AND item_key=?", new String[]{sessionId, streamKey});
                 end = question; // no answer: the error (if any) and the path end go under the question
-                setLeaf(db, sessionId, end);
+                if (holdsPath) setLeaf(db, sessionId, end);
             } else {
                 ContentValues row = new ContentValues(); row.put("body", finalBody.toString());
                 if (db.update("timeline", row, "session_id=? AND item_key=?", new String[]{sessionId, streamKey}) != 1) {
@@ -1017,9 +1093,12 @@ public final class ChatDatabase extends SQLiteOpenHelper {
                 row.put("local_seq", seq); row.put("kind", "error"); row.put("body", error.toString()); row.put("created_at", error.optString("createdAt"));
                 if (end != null) row.put("parent_key", end);
                 db.insertWithOnConflict("timeline", null, row, SQLiteDatabase.CONFLICT_ABORT);
-                setLeaf(db, sessionId, errorKey); // spec G2: the error belongs to its turn's answer (or question)
+                if (holdsPath) setLeaf(db, sessionId, errorKey); // spec G2: the error belongs to its turn's answer (or question)
             }
-            ContentValues state = new ContentValues(); state.put("state", finalState); state.put("updated_at", Instant.now().toString());
+            boolean othersStreaming;
+            try (Cursor c = db.rawQuery("SELECT COUNT(*) FROM timeline WHERE session_id=? AND item_key<>? AND kind='message' AND instr(body,'\"streaming\":true')>0",
+                    new String[]{sessionId, streamKey})) { othersStreaming = c.moveToFirst() && c.getInt(0) > 0; }
+            ContentValues state = new ContentValues(); state.put("state", othersStreaming ? "running" : finalState); state.put("updated_at", Instant.now().toString());
             if (db.update("sessions", state, "local_id=?", new String[]{sessionId}) != 1) throw new IllegalStateException("session missing during turn finalization");
             db.setTransactionSuccessful();
         } catch (org.json.JSONException error) {

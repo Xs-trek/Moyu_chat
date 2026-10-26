@@ -34,6 +34,8 @@ final class ProviderRoundLoop {
     private final TurnPipeline.Env env;
     private final TurnRun r;
     private final String id;
+    /** The runtime key (TurnRun.run): busy flags and the stop handle; {@link #id} is the session. */
+    private final String runKey;
     private final TurnControl turnControl;
     private final TurnTrace.Span span;
 
@@ -88,6 +90,7 @@ final class ProviderRoundLoop {
         this.env = pipeline.env;
         this.r = run;
         this.id = run.id;
+        this.runKey = run.run;
         this.turnControl = run.control;
         this.mainPrompt = run.prompt;
         this.webPrepared = run.preparedWeb;
@@ -109,7 +112,7 @@ final class ProviderRoundLoop {
         if (!webSources.isEmpty()) r.live.put("sources", TurnPipeline.sourceArray(webSources));
         if (!webBackend[0].isEmpty()) r.live.put("webBackend", webBackend[0]);
         p.db.replaceTimelineBody(r.streamKey, r.live);
-        env.emitStreamingView(id);
+        env.emitStreamingView(runKey);
         startRound(r.webOptions);
     }
 
@@ -183,7 +186,7 @@ final class ProviderRoundLoop {
                         if (!streamTerminal.get()) {
                             JSONObject projection = liveProjection();
                             p.db.replaceTimelineBody(r.streamKey, projection);
-                            env.emitStreamingPatch(id, projection);
+                            env.emitStreamingPatch(runKey, projection);
                         }
                     } catch (Exception ignored) { }
                     finally {
@@ -198,7 +201,7 @@ final class ProviderRoundLoop {
     }
 
     private void projectNow() throws Exception {
-        JSONObject projection = liveProjection(); p.db.replaceTimelineBody(r.streamKey, projection); env.emitStreamingPatch(id, projection);
+        JSONObject projection = liveProjection(); p.db.replaceTimelineBody(r.streamKey, projection); env.emitStreamingPatch(runKey, projection);
     }
 
     private JSONObject generateDetail() throws Exception {
@@ -225,7 +228,7 @@ final class ProviderRoundLoop {
         long asked = retryAfterMs;
         retryAfterMs = 0L;
         boolean produced = textOut.length() > roundTextStart || reasoningOut.length() > roundReasoningStart || outputMedia.length() > roundMediaStart;
-        if (!retryable || produced || providerRetries >= MAX_PROVIDER_RETRIES || turnControl.isCancelled() || !env.ownsTurn(id, turnControl)) return false;
+        if (!retryable || produced || providerRetries >= MAX_PROVIDER_RETRIES || turnControl.isCancelled() || !env.ownsTurn(runKey, turnControl)) return false;
         long delay = retryDelayMs(providerRetries, asked);
         if (delay < 0L) return false;
         providerRetries++;
@@ -240,12 +243,12 @@ final class ProviderRoundLoop {
             if (timer[0] != null) timer[0].cancel(false);
             env.authority().execute(() -> { settle(); finish(new String[]{"cancelled", "已停止生成"}); });
         };
-        env.putActiveTurn(id, waiting);
+        env.putActiveTurn(runKey, waiting);
         turnControl.bindTransport(waiting);
         timer[0] = RETRY_TIMER.schedule(() -> env.authority().execute(() -> {
             if (!done.compareAndSet(false, true)) return;
             turnControl.clearTransport(waiting);
-            if (turnControl.isCancelled() || !env.ownsTurn(id, turnControl)) { settle(); finish(new String[]{"cancelled", "已停止生成"}); return; }
+            if (turnControl.isCancelled() || !env.ownsTurn(runKey, turnControl)) { settle(); finish(new String[]{"cancelled", "已停止生成"}); return; }
             streamTerminal.set(false);
             startRound(activeRoundOptions.get());
         }), delay, TimeUnit.MILLISECONDS);
@@ -390,7 +393,7 @@ final class ProviderRoundLoop {
         // A tool batch is terminal for this provider round, not for the user turn. Invalidate
         // the just-finished round immediately so a very fast callback cannot re-bind its old Call.
         providerRoundGeneration.incrementAndGet();
-        ChatTransport.Turn completedRound = env.removeActiveTurn(id);
+        ChatTransport.Turn completedRound = env.removeActiveTurn(runKey);
         turnControl.clearTransport(completedRound);
         int batchNumber = (int) clientToolBatchCount.incrementAndGet();
         if (batchNumber > MAX_CLIENT_TOOL_ROUNDS) {
@@ -557,11 +560,11 @@ final class ProviderRoundLoop {
             finish(null);
             return;
         }
-        ChatTransport.Turn completedTurn = env.removeActiveTurn(id);
+        ChatTransport.Turn completedTurn = env.removeActiveTurn(runKey);
         turnControl.clearTransport(completedTurn);
-        env.setPostStage(id, "verifying");
+        env.setPostStage(runKey, "verifying");
         try { r.live.put("streamStage", "verifying"); p.db.replaceTimelineBody(r.streamKey, r.live); } catch (Exception ignored) { }
-        env.emitStreamingView(id);
+        env.emitStreamingView(runKey);
         final String candidate = textOut.toString();
         final String candidateReasoning = reasoningOut.toString();
         final JSONArray candidateMedia = TurnPipeline.copyArray(outputMedia);
@@ -584,7 +587,7 @@ final class ProviderRoundLoop {
 
     /** Starts one provider round; a terminal/tool callback that wins the start race must not resurrect it. */
     private void startRound(ChatTurnOptions options) {
-        if (streamTerminal.get() || !env.ownsTurn(id, turnControl)) return;
+        if (streamTerminal.get() || !env.ownsTurn(runKey, turnControl)) return;
         ChatTurnOptions roundOptions = options == null ? ChatTurnOptions.NONE : options;
         activeRoundOptions.set(roundOptions);
         roundTextStart = textOut.length();
@@ -593,7 +596,7 @@ final class ProviderRoundLoop {
         roundInput = 0; roundOutput = 0; roundCached = 0;
         roundCacheWrite = 0; roundCacheBase = 0; roundReasoning = 0;
         long generation = providerRoundGeneration.incrementAndGet();
-        env.setStarting(id, true);
+        env.setStarting(runKey, true);
         streamStage.set("connecting");
         ChatTransport.Turn turn;
         try {
@@ -609,7 +612,7 @@ final class ProviderRoundLoop {
         }
         // A terminal/tool callback can win before stream() returns. Generation protects against
         // resurrecting the just-finished provider round into activeTurns/TurnControl.
-        if (streamTerminal.get() || !env.ownsTurn(id, turnControl) || providerRoundGeneration.get() != generation) {
+        if (streamTerminal.get() || !env.ownsTurn(runKey, turnControl) || providerRoundGeneration.get() != generation) {
             try { turn.cancel(); } catch (Exception ignored) { }
             return;
         }
@@ -618,8 +621,8 @@ final class ProviderRoundLoop {
             try { turn.cancel(); } catch (Exception ignored) { }
             return;
         }
-        env.putActiveTurn(id, turn);
-        env.setStarting(id, false);
-        env.emitStreamingView(id);
+        env.putActiveTurn(runKey, turn);
+        env.setStarting(runKey, false);
+        env.emitStreamingView(runKey);
     }
 }

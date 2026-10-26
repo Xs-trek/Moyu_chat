@@ -10,7 +10,13 @@ import java.util.LinkedHashSet;
  * order on the preparation pool; the provider round loop and verification read the settled values.
  */
 final class TurnRun {
+    /** The session (every database read and write). */
     final String id;
+    /**
+     * The runtime key (busy flags, stop handle, pending choices): the session id for an ordinary turn, "session#k" for
+     * the k-th answer of a side-by-side group (spec D16, D18), so several turns of one session can run at once.
+     */
+    final String run;
     final String input;
     final TurnConfig config;
     final TurnControl control;
@@ -75,8 +81,9 @@ final class TurnRun {
     ChatTurnOptions webOptions;
     MoyuWebService.Prepared preparedWeb = MoyuWebService.Prepared.none();
 
-    TurnRun(String id, String input, TurnConfig config, TurnControl control, ChatDatabase.Session session, JSONArray pendingMedia) {
-        this.id = id;
+    TurnRun(String run, String input, TurnConfig config, TurnControl control, ChatDatabase.Session session, JSONArray pendingMedia) {
+        this.run = run;
+        this.id = sessionOf(run);
         this.input = input;
         this.config = config;
         this.control = control;
@@ -87,4 +94,10 @@ final class TurnRun {
     }
 
     TurnTrace trace() { return control.trace; }
+
+    /** The session of a runtime key ("session" or "session#k"). */
+    static String sessionOf(String run) {
+        int hash = run == null ? -1 : run.indexOf('#');
+        return hash < 0 ? run : run.substring(0, hash);
+    }
 }

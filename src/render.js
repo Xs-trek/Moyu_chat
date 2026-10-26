@@ -657,6 +657,23 @@ function replaceBySignature(node, selector, desired, key, before) {
   else if (current && !desired) current.remove();
 }
 
+/** Spec D16, D17: the answers of an open side-by-side group, side by side (swiped on phones), each one pickable. */
+function compareCard(compare, ctx) {
+  return h('section', { class: 'compare-card', dataset: { group: compare.group } },
+    h('header', { class: 'compare-head' }, h('strong', { text: compare.title }), h('small', { class: 'grow', text: compare.note })),
+    h('div', { class: 'compare-answers' }, compare.cards.map((card) => {
+      const body = h('div', { class: 'answer-text markdown-body' });
+      if (card.text) renderMarkdownInto(body, card.text); else body.textContent = card.status || '…';
+      return h('article', { class: `compare-answer${card.streaming ? ' streaming' : ''}`, dataset: { key: card.turnId } },
+        h('header', { class: 'answer-head' }, h('strong', { text: card.label }), h('small', { class: 'grow truncate', text: card.subtitle })),
+        card.status && card.text ? h('p', { class: 'answer-metrics', text: card.status }) : null,
+        card.metrics ? h('p', { class: 'answer-metrics', text: card.metrics }) : null,
+        body,
+        h('div', { class: 'answer-foot' }, h('button', { type: 'button', class: 'btn small', disabled: !card.canPick, dataset: { action: 'compare-pick', sessionId: ctx.sessionId, group: compare.group, choice: card.turnId } }, '选这个')));
+    })),
+    h('div', { class: 'compare-foot' }, h('button', { type: 'button', class: 'btn small ghost', disabled: compare.running, dataset: { action: 'compare-pick', sessionId: ctx.sessionId, group: compare.group, choice: 'tie' } }, '差不多')));
+}
+
 function patchItem(node, item, ctx) {
   if (item.kind === 'message' && item.role === 'assistant' && node.classList.contains('assistant')) { patchAssistant(node, item, ctx); return node; }
   if (item.kind === 'message' && item.role === 'user' && node.classList.contains('user')) {
@@ -670,7 +687,9 @@ function patchItem(node, item, ctx) {
 }
 
 function reconcileTimeline(timeline, items, ctx, animate = false) {
-  const desiredItems = vm.timelineProjection(items);
+  const compare = vm.compareView(ctx.session);
+  // Spec D16: while a side-by-side group is open, its card stands in for the answers after the question.
+  const desiredItems = vm.timelineProjection(compare ? items.filter((item) => Number(item?.localSeq) <= compare.questionSeq || !(Number(item?.localSeq) > 0)) : items);
   const existing = new Map([...timeline.children].map((node) => [node.dataset.itemKey, node]));
   const used = new Set();
   let reference = timeline.firstElementChild;
@@ -691,7 +710,8 @@ function reconcileTimeline(timeline, items, ctx, animate = false) {
   for (const item of desiredItems) {
     place(vm.timelineKey(item), () => timelineItem(item, ctx), item.kind === 'message' ? (node) => patchItem(node, item, ctx) : null);
   }
-  const retry = vm.retrySeq(ctx.session);
+  if (compare) place(`compare:${compare.group}`, () => compareCard(compare, ctx), (node) => morph(node, compareCard(compare, ctx)));
+  const retry = compare ? null : vm.retrySeq(ctx.session);
   if (retry) place(`retry:${retry}`, () => retryRow(ctx), null);
   const resume = vm.resumeSeq(ctx.session);
   if (resume) place(`resume:${resume}`, () => resumeRow(ctx, resume), null);

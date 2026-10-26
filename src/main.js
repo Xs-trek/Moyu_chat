@@ -2,7 +2,7 @@ import { bindHost, postIntent, requestIntent } from './bridge.js';
 import { react } from './mascot.js';
 import * as director from './mascot-director.js';
 import { createGame } from './fish-game.js';
-import { closeImageViewer, closeSheet, handleBack, openCustomSheet, openHelperModel, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTextSheet, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
+import { closeImageViewer, closeSheet, handleBack, openCustomSheet, openCompare, compareChoice, setCompareChoice, openHelperModel, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTextSheet, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
 import { openModelEditor, openProviderEditor } from './editors.js';
 import { syncSegment } from './dom.js';
 import { reducedMotion } from './morph.js';
@@ -449,6 +449,15 @@ document.addEventListener('click', (event) => {
       onConfirm: (text) => postIntent('instruction.global.set', { text }) });
   }
   else if (action === 'open-helper-model') openHelperModel();
+  else if (action === 'open-compare') openCompare(target.dataset.sessionId);
+  else if (action === 'compare-edit') setCompareChoice({ edit: Number(target.dataset.index) });
+  else if (action === 'compare-model') { optimisticChoice(target); setCompareChoice({ modelProfileId: target.dataset.modelProfileId }); }
+  else if (action === 'compare-mode') { optimisticSegment(target); setCompareChoice({ index: Number(target.dataset.index), contextMode: target.dataset.contextMode }); }
+  else if (action === 'compare-add') setCompareChoice({ add: true });
+  else if (action === 'compare-remove') setCompareChoice({ remove: Number(target.dataset.index) });
+  else if (action === 'compare-blind') setCompareChoice({ blind: target.getAttribute('aria-checked') !== 'true' });
+  else if (action === 'compare-send') sendCompare();
+  else if (action === 'compare-pick') postIntent('chat.compare.decide', { localSessionId: target.dataset.sessionId, group: target.dataset.group, choice: target.dataset.choice });
   else if (action === 'helper-model-set') postIntent('helper.model.set', { modelProfileId: target.dataset.modelProfileId || '' });
   else if (action === 'toggle-helper-model-use') { postIntent('helper.model.use.set', { helper: target.dataset.helper, enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'toggle-helper') { postIntent('helper.switch.set', { helper: target.dataset.helper, enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
@@ -604,6 +613,31 @@ function sendTurn(sessionId, text, activeSession, budgetConfirmed) {
       setNotice({ level: 'error', text: error?.message || '发送失败' });
     },
   });
+}
+
+/** Spec D16: the composer's question to every variant of the side-by-side sheet. */
+function sendCompare(budgetConfirmed = false, retryText = null) {
+  const choice = compareChoice();
+  const sessionId = choice?.sessionId;
+  if (!sessionId) return;
+  const form = document.querySelector('form[data-form="composer"]');
+  const input = form?.dataset.sessionId === sessionId ? form.elements.namedItem('message') : null;
+  const text = retryText ?? String(input?.value || '');
+  if (!text.trim() && !currentView()?.activeSession?.draftMedia?.length) { setNotice({ level: 'info', text: '先在输入框里写下要问的问题' }); return; }
+  const variants = choice.variants.map((v) => ({ modelProfileId: v.modelProfileId, contextMode: v.contextMode }));
+  clearTimeout(draftTimer);
+  draftTimer = 0;
+  advanceDraftGeneration(sessionId);
+  postIntent('chat.session.compare.send', { localSessionId: sessionId, text, variants, blind: Boolean(choice.blind), ...(budgetConfirmed ? { budgetConfirmed: true } : {}) }, {
+    resolve() { closeSheet(); },
+    reject(error) {
+      if (error?.data?.draftRestored) restoreComposerText(sessionId, text);
+      if (error?.data?.budget && !budgetConfirmed) { confirmOverBudget(error.message, () => sendCompare(true, text)); return; }
+      setNotice({ level: 'error', text: error?.message || '并排回答没有发出' });
+    },
+  });
+  if (input) { input.value = ''; resizeComposerTextarea(input); }
+  director.sent();
 }
 
 function confirmOverBudget(message, onConfirm) {

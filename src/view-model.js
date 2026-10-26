@@ -567,6 +567,44 @@ export function answersView(group) {
   };
 }
 
+const STREAM_STAGES = { preparing: '准备中…', compacting: '整理上下文…', connecting: '连接中…', connected: '等待回答…', queued: '排队中…', retrying: '重试中…', reasoning: '思考中…', output: '回答中…', tool: '调用工具…', web_planning: '规划联网…', web_search: '检索中…', web_fetch: '读取网页…', verifying: '校验中…', repairing: '修正中…' };
+
+/** Spec D17: a model's side-by-side record, "胜 2 · 平 1 · 负 0". */
+function compareRecord(r) { return `胜 ${Number(r.wins) || 0} · 平 ${Number(r.ties) || 0} · 负 ${Number(r.losses) || 0}`; }
+
+/**
+ * Spec D16, D17: the open side-by-side group of the conversation (native session.compare), as cards. Blind: only the
+ * labels until the user decides. A card can be picked once every answer has settled and it has text.
+ */
+export function compareView(session) {
+  const c = session?.compare;
+  if (!c || !Array.isArray(c.answers) || !c.answers.length) return null;
+  const running = Boolean(c.running);
+  return {
+    group: String(c.group || ''),
+    questionSeq: Number(c.questionSeq) || 0,
+    blind: Boolean(c.blind),
+    running,
+    title: c.blind ? '并排回答 · 盲评' : '并排回答',
+    note: running ? '几路同时在回答，全部结束后再选。' : c.blind ? '选出更好的一个，或者“差不多”；选完揭晓各是哪个模型。' : '选一个继续对话：会话的模型和档位会改成它的。',
+    cards: c.answers.map((a) => {
+      const u = a.usage ? turnUsage(a.usage) : null;
+      const totals = u ? turnTotals(u) : null;
+      const failed = Boolean(a.failed) || a.status === 'failed';
+      return {
+        turnId: String(a.turnId || ''),
+        label: `回答 ${a.label || ''}`,
+        subtitle: c.blind ? '' : [a.modelName, contextLabel(a.contextMode)].filter(Boolean).join(' · '),
+        status: a.streaming ? (STREAM_STAGES[a.streamStage] || '回答中…') : failed ? `没有回答${a.terminalCode ? `（${failureCodeLabel(a.terminalCode)}）` : ''}` : a.incomplete ? '未完成' : '',
+        metrics: !c.blind && u ? [u.totalMs !== null && u.totalMs !== undefined ? `总耗 ${secs(u.totalMs)}` : '', totals && totals.output !== null ? `输出 ${compact(totals.output)}` : ''].filter(Boolean).join(' · ') : '',
+        text: String(a.text || ''),
+        streaming: Boolean(a.streaming),
+        canPick: !running && !failed && Boolean(String(a.text || '').trim()),
+      };
+    }),
+  };
+}
+
 /** Statistics rows as cards: one per model × context mode. */
 export const PROTOCOL_LABELS = { 'openai-chat-completions': 'Chat Completions', 'openai-responses': 'Responses', 'anthropic-messages': 'Messages' };
 
@@ -619,6 +657,8 @@ export function statsView(data) {
         ['联网', pct(row.webUsed, row.turns)],
         ['校验 / 修正', row.verified ? `${pct(row.verified, row.turns)} / ${row.repaired} 次` : '—'],
         ['评价', row.ratedUp || row.ratedDown ? `好 ${row.ratedUp} · 差 ${row.ratedDown}` : '—'],
+        ...(row.compareBlind ? [['并排（盲评）', compareRecord(row.compareBlind)]] : []),
+        ...(row.compareOpen ? [['并排', compareRecord(row.compareOpen)]] : []),
       ],
     };
   });
