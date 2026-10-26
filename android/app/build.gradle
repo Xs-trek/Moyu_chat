@@ -1,5 +1,11 @@
 plugins { id 'com.android.application' }
 
+// Release signing comes from keystore.properties next to this file (Git-ignored; storeFile, storePassword, keyAlias,
+// keyPassword). Without it, assembleRelease builds an unsigned APK.
+def signingProps = new Properties()
+def signingFile = file('keystore.properties')
+if (signingFile.exists()) signingFile.withInputStream { signingProps.load(it) }
+
 android {
     namespace 'com.moyu.chat'
     compileSdkVersion 34
@@ -10,9 +16,20 @@ android {
         versionCode 6
         versionName '0.0.6'
     }
+    signingConfigs {
+        if (signingFile.exists()) {
+            release {
+                storeFile file(signingProps['storeFile'])
+                storePassword signingProps['storePassword']
+                keyAlias signingProps['keyAlias']
+                keyPassword signingProps['keyPassword']
+            }
+        }
+    }
     buildTypes {
         debug { debuggable true }
         release {
+            if (signingFile.exists()) signingConfig signingConfigs.release
             debuggable false
             minifyEnabled true
             shrinkResources true

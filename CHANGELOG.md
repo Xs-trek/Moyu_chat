@@ -1,8 +1,8 @@
 # 更新记录
 
-## v0.0.6 — 2026-10-12
+## v0.0.6 — 2026-10-26
 
-Claude 接手后的 beta 线，基于 v0.0.5（`32479203`）。applicationId 改为 `com.moyu.chat.beta`，可与原版并存安装；versionCode 6，SQLite schema 2（beta 线重新计数，库文件 `moyu-beta.db`）。
+Claude 接手后的版本，基于 v0.0.5（`32479203`），成为主线。applicationId `com.moyu.chat`，versionCode 6，库文件 `moyu-chat.db`（布局版本 1，0.0.x 期间不迁移）。release 包用本机签名（见 README）。
 
 ### 定版前的功能（2026-10-26，D14–D19）
 

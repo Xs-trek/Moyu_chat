@@ -16,3 +16,8 @@ android/local.properties
 
 # Node
 node_modules/
+
+# Release signing (local only)
+android/app/keystore.properties
+*.jks
+*.keystore

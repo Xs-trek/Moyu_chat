@@ -14,6 +14,25 @@ npm run verify
 
 This runs the frontend static checks (`npm run build`) and then `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` with the bundled JDK 17 and Gradle 8.5 under `.tools/`. The Android SDK comes from `ANDROID_HOME`. Frontend sources live in `src/` and `index.html`; `android/app/src/main/assets/ui/` is a generated copy synced at build time.
 
+### Release APK
+
+The release build is minified (R8) and signed with a local key that never enters the repository. Create the key once, outside the repository:
+
+```bash
+keytool -genkeypair -v -keystore ~/moyu-release.jks -alias moyu -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Then write `android/app/keystore.properties` (Git-ignored):
+
+```properties
+storeFile=C:/Users/you/moyu-release.jks
+storePassword=...
+keyAlias=moyu
+keyPassword=...
+```
+
+`bash scripts/verify.sh :app:assembleRelease` then also writes `android/app/build/outputs/apk/release/app-release.apk`. Without the properties file the release APK is built unsigned. A release-signed APK cannot update a debug-signed install: uninstall once (local data is lost).
+
 ## Product boundary
 
 - Chat sessions and durable visible history are owned by Moyu Chat and stored in its own database.
