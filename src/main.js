@@ -414,6 +414,8 @@ document.addEventListener('click', (event) => {
   else if (action === 'provider-balance') guardCheck(`balance:${target.dataset.providerId}`, 'provider.balance.get', { providerId: target.dataset.providerId });
   else if (action === 'model-probe') guardCheck(`probe:${target.dataset.modelProfileId}`, 'model.probe', { modelProfileId: target.dataset.modelProfileId },
     (data) => ({ level: data.ok ? 'info' : 'error', text: `${data.ok ? `连接正常${data.reply ? `：${data.reply}` : ''}` : `测试失败：${data.summary || data.code || ''}`}${data.host ? `（${data.host}）` : ''}` }));
+  else if (action === 'model-capabilities-probe') guardCheck(`capabilities:${target.dataset.modelProfileId}`, 'model.capabilities.probe', { modelProfileId: target.dataset.modelProfileId },
+    (data) => ({ level: 'info', text: `实测完成${data.host ? `（${data.host}）` : ''}：结论已写入模型的“实测”来源，手动设置的项不受影响` }));
   else if (action === 'route-host-confirm') {
     const routeId = target.dataset.routeId;
     openConfirmDialog({ title: '确认新的域名', confirmText: '确认发送',

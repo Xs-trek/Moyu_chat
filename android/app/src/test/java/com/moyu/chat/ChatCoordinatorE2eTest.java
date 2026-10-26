@@ -2330,6 +2330,48 @@ public class ChatCoordinatorE2eTest {
         await("probe in the view", () -> latestView().optJSONArray("providers").optJSONObject(0).optJSONArray("models").optJSONObject(0).optJSONObject("probe") != null);
     }
 
+    @Test public void aCapabilityProbeWritesConclusiveResultsToTheProbeLayerAndManualValuesStillWin() throws Exception {
+        configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
+        java.util.concurrent.atomic.AtomicBoolean toolsFail = new java.util.concurrent.atomic.AtomicBoolean(false);
+        server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                String body = request.getBody().readUtf8();
+                if (body.contains("image_url")) return new MockResponse().setResponseCode(400).setBody("{\"error\":{\"message\":\"image input is not supported\"}}");
+                if (body.contains("\"tools\"")) {
+                    if (toolsFail.get()) return new MockResponse().setResponseCode(503).setBody("{\"error\":{\"message\":\"busy\"}}");
+                    return sse("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_probe\",\"type\":\"function\",\"function\":{\"name\":\"web_fetch\",\"arguments\":\"{\\\"url\\\":\\\"https://example.com\\\"}\"}}]}}]}\n\n"
+                            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n");
+                }
+                return sse(SSE_OK);
+            }
+        });
+        ChatDatabase.ModelProfile before = app.database().firstModelProfile("mock-provider");
+        JSONObject result = awaitResult(post("model.capabilities.probe", new JSONObject().put("modelProfileId", before.id))).getJSONObject("data");
+        JSONArray checks = result.getJSONArray("checks");
+        assertEquals("Chat Completions has no hosted search to probe", 2, checks.length());
+        assertEquals("no", checks.getJSONObject(0).optString("verdict"));
+        assertEquals("yes", checks.getJSONObject(1).optString("verdict"));
+        ChatDatabase.ModelProfile after = app.database().getModelProfile(before.id);
+        assertEquals("text", after.inputModalities);
+        assertEquals(ClientToolRuntime.OPENAI_CHAT, after.clientToolCalling);
+        JSONObject sources = DeploymentResolver.json(after.sources);
+        assertEquals(DeploymentResolver.SRC_PROBE, sources.optString("inputModalities"));
+        assertEquals(DeploymentResolver.SRC_PROBE, sources.optString("clientToolCalling"));
+        await("in the view", () -> latestView().optJSONArray("providers").optJSONObject(0).optJSONArray("models").optJSONObject(0).optJSONObject("capabilityProbe") != null);
+
+        // A manual value outranks the probe; an inconclusive check (503) leaves the earlier conclusion.
+        after.overrides = new JSONObject().put("inputModalities", "text,image").toString();
+        DeploymentResolver.apply(app.database().getRoute(after.routeId), after);
+        app.database().saveModelProfile(after);
+        toolsFail.set(true);
+        JSONObject again = awaitResult(post("model.capabilities.probe", new JSONObject().put("modelProfileId", before.id))).getJSONObject("data");
+        assertEquals("unknown", again.getJSONArray("checks").getJSONObject(1).optString("verdict"));
+        ChatDatabase.ModelProfile last = app.database().getModelProfile(before.id);
+        assertEquals("text,image", last.inputModalities);
+        assertEquals(DeploymentResolver.SRC_MANUAL, DeploymentResolver.json(last.sources).optString("inputModalities"));
+        assertEquals(ClientToolRuntime.OPENAI_CHAT, last.clientToolCalling);
+    }
+
     @Test public void aReachedBudgetAsksBeforeEachTurnAndConfirmationGoesAhead() throws Exception {
         configureProvider(OpenAiCompatibleTransport.CHAT_COMPLETIONS);
         ChatDatabase.ModelProfile profile = app.database().firstModelProfile("mock-provider");

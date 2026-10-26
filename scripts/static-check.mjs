@@ -650,5 +650,10 @@ if (!coordinatorOnly.includes('db.moveLeafBefore(sessionId, localSeq);') || !coo
   fail('edit, retry and re-answer create versions in the same session (spec H5, T7, D9)');
 // Spec T3, D14: an answer whose web blocks or tool results are not replayed keeps its sources as a data note.
 if (!read('android/app/src/main/java/com/moyu/chat/ContextBuilder.java').includes('String sources = sourcesNote(item.optJSONArray("sources"));')) fail('an answer without replayed web evidence must keep its sources in history (spec D14)');
+// Spec D19: the capability probe runs only on request and writes only conclusive results into the probe layer.
+const guardSource = read('android/app/src/main/java/com/moyu/chat/ProviderGuard.java');
+if (!coordinatorOnly.includes('case "model.capabilities.probe"') || !guardSource.includes('if (!UNKNOWN.equals(searchVerdict)) values.put("toolCapabilities"')
+    || !guardSource.includes('DeploymentResolver.apply(db.getRoute(route.id), current);') || !guardSource.includes('config.requireConfirmedHost(route);'))
+  fail('the capability probe must be user-started, keep inconclusive fields and re-resolve through the probe layer (spec D19)');
 if (failed) process.exit(1); // the checks above run after the first exit and must fail the build too
 console.log(`moyu-chat v${VERSION_NAME} static architecture checks passed`);

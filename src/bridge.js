@@ -37,6 +37,7 @@ export const INTENT_TIMEOUTS = Object.freeze({
   'route.models.list': 45000,
   'provider.balance.get': 45000,
   'model.probe': 80000,
+  'model.capabilities.probe': 180000,
 });
 
 /** Read-style intent: resolves with the result's data, rejects with its error. Failures are the caller's to show. */

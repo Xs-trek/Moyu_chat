@@ -233,6 +233,7 @@ final class ChatCoordinator implements AutoCloseable {
                 case "route.models.list": { String id = required(p, "routeId"); checkAsync(requestId, () -> guard.listModels(id)); return; }
                 case "provider.balance.get": { String id = required(p, "providerId"); checkAsync(requestId, () -> guard.balance(id)); return; }
                 case "model.probe": { String id = required(p, "modelProfileId"); checkAsync(requestId, () -> guard.probe(id)); return; }
+                case "model.capabilities.probe": { String id = required(p, "modelProfileId"); checkAsync(requestId, () -> guard.probeCapabilities(id)); return; }
                 // The composer already shows what was typed: saving it changes nothing on screen, so no view push.
                 case "chat.session.saveDraft": saveDraft(required(p, "localSessionId"), p.optString("text", "")); result(requestId, true, null); return;
                 case "chat.attachment.pick": requestImagePicker(required(p, "localSessionId")); break;

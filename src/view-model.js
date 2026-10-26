@@ -270,6 +270,17 @@ export function probeLine(model) {
   return { text: parts.join(' · '), tone: 'good' };
 }
 
+const CAPABILITY_NAMES = { inputModalities: '图片输入', clientToolCalling: '工具调用', toolCapabilities: '服务商联网' };
+const CAPABILITY_VERDICTS = { yes: '支持', no: '不支持', unknown: '无法判断' };
+
+/** Spec D19: the last capability probe of a model, as one line ("实测 · 图片输入 支持 · 工具调用 无法判断 · …"); null when never run. */
+export function capabilityProbeLine(model) {
+  const p = model?.capabilityProbe;
+  if (!p || !p.checkedAt || !Array.isArray(p.checks)) return null;
+  const parts = p.checks.map((c) => `${CAPABILITY_NAMES[c.field] || c.field} ${CAPABILITY_VERDICTS[c.verdict] || c.verdict}`);
+  return { text: `实测 · ${parts.join(' · ')} · ${messageTime(p.checkedAt)}`, tone: p.checks.some((c) => c.verdict === 'unknown') ? 'warn' : 'good' };
+}
+
 /** Balance result of provider.balance.get as one line. */
 export function balanceText(data) {
   if (!data) return '';

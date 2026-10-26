@@ -111,6 +111,8 @@ export type MoyuChatIntent =
   | UiIntent<'helper.switch.set', { helper: HelperId; enabled: boolean }>
   /** Spec D15: the helper model ('' = the session's model); must be an enabled Model Profile. */
   | UiIntent<'helper.model.set', { modelProfileId: string }>
+  /** Spec D19: a few minimal requests (image input, client tools, hosted search); result data: CapabilityProbeView. Conclusive results feed the probe layer. */
+  | UiIntent<'model.capabilities.probe', { modelProfileId: string }>
   /** Spec D15: whether one helper uses the helper model (defaults: title, router, web_plan). */
   | UiIntent<'helper.model.use.set', { helper: HelperModelUse; enabled: boolean }>
   /** 1 = good answer, -1 = bad answer, 0 clears. */
@@ -193,6 +195,8 @@ export interface ModelProfileView {
   catalogVerified: boolean;
   /** Last connection test (model.probe), or null. It records what happened; it changes no capability. */
   probe: ProbeResultView | null;
+  /** Last capability probe (model.capabilities.probe, spec D19), or null. Its conclusive results are the probe layer of the resolved values. */
+  capabilityProbe: CapabilityProbeView | null;
   /** Whether the route's model list (last read) contains this Model ID; null when never read. */
   listed: boolean | null;
 }
@@ -598,3 +602,6 @@ export type HelperModelUse = 'title' | 'router' | 'web_plan' | 'compaction' | 'v
 
 /** Spec D15: the helper model setting. modelName is absent when none is chosen; missing when the chosen profile is gone or disabled. */
 export interface HelperModelView { modelProfileId: string; modelName?: string; missing?: boolean; use: HelperModelUse[] }
+
+/** Spec D19: the last capability probe of a model (ModelProfileView.capabilityProbe). */
+export interface CapabilityProbeView { checkedAt: string; host: string; checks: { field: 'inputModalities' | 'clientToolCalling' | 'toolCapabilities'; verdict: 'yes' | 'no' | 'unknown'; code?: string; summary?: string }[] }

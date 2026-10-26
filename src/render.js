@@ -125,6 +125,15 @@ function probeRow(model) {
     button(running ? '测试中…' : '测试', 'model-probe', { modelProfileId: model.modelProfileId }, 'btn small ghost'));
 }
 
+/** Spec D19: the capability probe (a few minimal requests the user starts) and what it concluded. */
+function capabilityRow(model) {
+  const running = peekRemote(`capabilities:${model.modelProfileId}`)?.state === 'loading';
+  const line = vm.capabilityProbeLine(model);
+  return h('div', { class: 'row probe-row', dataset: { probeSignature: JSON.stringify([model.capabilityProbe || null, running]) } },
+    h('small', { class: `grow probe-text${line?.tone === 'warn' ? ' warn' : ''}`, text: running ? '实测中，约需一分钟…' : line ? line.text : '能力还没有实测过：图片输入、工具调用、服务商联网' }),
+    button(running ? '实测中…' : '实测能力', 'model-capabilities-probe', { modelProfileId: model.modelProfileId }, 'btn small ghost'));
+}
+
 function modelCard(provider, model) {
   const retention = RETENTION[model.retention];
   const source = model.catalogKey ? (model.catalogVerified ? ['目录', 'good'] : ['目录 · 未实测', 'quiet']) : ['手动声明', 'quiet'];
@@ -138,6 +147,7 @@ function modelCard(provider, model) {
     model.listed === false ? h('div', { class: 'notice-row warn' }, h('span', { class: 'grow', text: '端点的模型列表里没有这个 Model ID，请检查拼写或路线。' })) : null,
     h('details', { class: 'facts-wrap' }, h('summary', { text: '部署参数' }), modelFacts(model)),
     provider.hasCredential ? probeRow(model) : null,
+    provider.hasCredential ? capabilityRow(model) : null,
     h('div', { class: 'row model-actions' },
       h('span', { class: 'grow' }), button('编辑', 'configure-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small ghost'),
       enabled ? button('新会话', 'new-chat-model', { providerId: provider.providerId, modelProfileId: model.modelProfileId }, 'btn small primary') : null));

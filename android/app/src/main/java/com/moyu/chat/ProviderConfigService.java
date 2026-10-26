@@ -502,6 +502,7 @@ final class ProviderConfigService {
                         .put("sources", DeploymentResolver.json(m.sources)).put("overrides", DeploymentResolver.json(m.overrides))
                         .put("catalogKey", m.catalogKey).put("catalogVerified", catalog != null && catalog.verified)
                         .put("probe", DeploymentResolver.json(m.probe).optJSONObject("result") == null ? JSONObject.NULL : DeploymentResolver.json(m.probe).optJSONObject("result"))
+                        .put("capabilityProbe", DeploymentResolver.json(m.probe).optJSONObject("capabilities") == null ? JSONObject.NULL : DeploymentResolver.json(m.probe).optJSONObject("capabilities"))
                         .put("listed", DeploymentResolver.json(m.discovered).has("listed") ? DeploymentResolver.json(m.discovered).optBoolean("listed") : JSONObject.NULL));
             }
             providers.put(new JSONObject().put("providerId", account.id).put("displayName", account.displayName)

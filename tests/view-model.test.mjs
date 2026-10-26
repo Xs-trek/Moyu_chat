@@ -200,3 +200,10 @@ test('helper model: the setting rows and the trace note, including why it was no
   assert.equal(vm.helperModelNote({ helperModel: { profileId: 'm1', modelName: 'Flash', use: ['title', 'router'] } }), '辅助模型：Flash（会话命名、路由）');
   assert.equal(vm.helperModelNote({ helperModel: { profileId: 'm1', fallback: 'helper_model_no_key' } }), '辅助模型没用上（它的账号没有 API Key），辅助调用用了会话的模型');
 });
+
+test('capability probe line: each check with its verdict, warn when something could not be judged (spec D19)', () => {
+  assert.equal(vm.capabilityProbeLine({}), null);
+  const line = vm.capabilityProbeLine({ capabilityProbe: { checkedAt: new Date().toISOString(), checks: [{ field: 'inputModalities', verdict: 'no' }, { field: 'clientToolCalling', verdict: 'unknown' }] } });
+  assert.ok(line.text.startsWith('实测 · 图片输入 不支持 · 工具调用 无法判断'));
+  assert.equal(line.tone, 'warn');
+});

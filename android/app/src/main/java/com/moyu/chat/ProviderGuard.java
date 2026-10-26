@@ -292,6 +292,134 @@ final class ProviderGuard {
         return result;
     }
 
+    // ---------- Capability probe (spec D19) ----------
+
+    /** Smallest valid PNG (1×1). */
+    static final String PROBE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    /** The Messages search wire the probe offers: the oldest, the one compatible gateways most often accept. */
+    static final String PROBE_MESSAGES_SEARCH = "web_search_20250305";
+    static final long CAPABILITY_CHECK_TIMEOUT_MS = 45_000L;
+    /** What a check concluded: the deployment accepted it, refused it (a request error), or nothing can be said. */
+    static final String YES = "yes", NO = "no", UNKNOWN = "unknown";
+
+    /**
+     * Spec D19: a few minimal requests on the model's deployment, run only when the user asks (each costs a little).
+     * Image input, client tool calling and, on Responses / Messages, provider-hosted search. A conclusive result is
+     * written to the profile's probe layer (default < endpoint < catalog < probe < manual); an inconclusive one leaves
+     * the field as it was. Nothing is inferred from the model's name.
+     */
+    JSONObject probeCapabilities(String profileId) throws Exception {
+        ChatDatabase.ModelProfile profile = db.getModelProfile(profileId);
+        if (profile == null) throw new IllegalArgumentException("模型不存在");
+        ChatDatabase.Route route = db.getRoute(profile.routeId);
+        ChatDatabase.Provider account = db.getProvider(profile.providerId);
+        if (route == null || account == null) throw new IllegalStateException("模型使用的路线已删除");
+        String key = secrets.get(account.id);
+        if (key == null) throw new IllegalStateException("这个账号还没有填写 API Key");
+        config.requireConfirmedHost(route);
+        String protocol = ChatDatabase.normalizeProtocol(route.protocol);
+        ChatTransport transport = transports.forProtocol(protocol);
+        if (transport == null) throw new IllegalStateException("不支持这个账号的协议");
+        ChatDatabase.Provider provider = ChatDatabase.deploymentProvider(account, route, profile);
+        provider.maxOutputTokens = Math.max(64, Math.min(256, provider.maxOutputTokens > 0 ? provider.maxOutputTokens : 256));
+        provider.sendOutputCap = true;
+
+        JSONArray checks = new JSONArray();
+        JSONObject values = new JSONObject();
+        // Image input: a 1×1 picture with a one-word question.
+        JSONArray imageMessages = new JSONArray().put(new JSONObject().put("role", "user").put("text", "Reply with the single word OK.")
+                .put("attachments", new JSONArray().put(new JSONObject().put("kind", "image").put("mimeType", "image/png").put("dataUrl", PROBE_IMAGE))));
+        Outcome image = runCheck(transport, provider, key, profile.modelId, probePrompt(imageMessages), ChatTurnOptions.NONE);
+        String imageVerdict = image.ok ? YES : image.refused() ? NO : UNKNOWN;
+        if (YES.equals(imageVerdict)) values.put("inputModalities", "text,image");
+        else if (NO.equals(imageVerdict)) values.put("inputModalities", "text");
+        checks.put(check("inputModalities", imageVerdict, image));
+        // Client tool calling: one harmless tool the model is asked to call; the call is never executed.
+        String calling = OpenAiCompatibleTransport.CHAT_COMPLETIONS.equals(protocol) ? ClientToolRuntime.OPENAI_CHAT
+                : OpenAiCompatibleTransport.RESPONSES.equals(protocol) ? ClientToolRuntime.OPENAI_RESPONSES : ClientToolRuntime.ANTHROPIC_TOOLS;
+        JSONArray toolMessages = new JSONArray().put(new JSONObject().put("role", "user")
+                .put("text", "Call the web_fetch tool with url https://example.com. Do not answer in text."));
+        Outcome tools = runCheck(transport, provider, key, profile.modelId, probePrompt(toolMessages),
+                new ChatTurnOptions("", ChatTurnOptions.WEB_OFF, calling, ClientToolRuntime.WEB_FETCH, new JSONArray()));
+        String toolVerdict = tools.toolCall ? YES : tools.refused() ? NO : UNKNOWN;
+        if (YES.equals(toolVerdict)) values.put("clientToolCalling", calling);
+        else if (NO.equals(toolVerdict)) values.put("clientToolCalling", ClientToolRuntime.NONE);
+        checks.put(check("clientToolCalling", toolVerdict, tools));
+        // Provider-hosted search: only Responses and Messages have it; accepting the tool is the evidence.
+        String searchWire = OpenAiCompatibleTransport.RESPONSES.equals(protocol) ? ChatTurnOptions.WEB_SEARCH
+                : AnthropicMessagesTransport.PROTOCOL.equals(protocol) ? PROBE_MESSAGES_SEARCH : "";
+        if (!searchWire.isEmpty()) {
+            JSONArray searchMessages = new JSONArray().put(new JSONObject().put("role", "user").put("text", "Reply with the single word OK. Do not search."));
+            Outcome search = runCheck(transport, provider, key, profile.modelId, probePrompt(searchMessages), new ChatTurnOptions(searchWire, ChatTurnOptions.WEB_ON));
+            String searchVerdict = search.ok || search.toolCall ? YES : search.refused() ? NO : UNKNOWN;
+            java.util.LinkedHashSet<String> caps = new java.util.LinkedHashSet<>();
+            for (String item : ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities).split(",")) {
+                if (!item.isEmpty() && !(ChatTurnOptions.WEB_SEARCH.equals(item) || item.startsWith("web_search_"))) caps.add(item);
+            }
+            if (YES.equals(searchVerdict)) caps.add(searchWire);
+            if (!UNKNOWN.equals(searchVerdict)) values.put("toolCapabilities", String.join(",", caps));
+            checks.put(check("toolCapabilities", searchVerdict, search));
+        }
+        String checkedAt = Instant.now().toString();
+        JSONObject result = new JSONObject().put("checkedAt", checkedAt).put("host", ProviderEndpoint.host(route.baseUrl)).put("checks", checks);
+        // Written only while the model still points at the endpoint and model id that were tested (see probe).
+        synchronized (db) {
+            ChatDatabase.ModelProfile current = db.getModelProfile(profileId);
+            if (current != null && route.id.equals(current.routeId) && profile.modelId.equals(current.modelId)
+                    && ProviderConfigService.endpointKey(route).equals(ProviderConfigService.endpointKey(db.getRoute(route.id)))) {
+                JSONObject probe = DeploymentResolver.json(current.probe);
+                for (String field : new String[]{"inputModalities", "clientToolCalling", "toolCapabilities"}) {
+                    if (values.has(field)) probe.put(field, values.get(field));
+                }
+                current.probe = probe.put("capabilities", result).toString();
+                DeploymentResolver.apply(db.getRoute(route.id), current);
+                db.saveModelProfile(current);
+            }
+        }
+        return result;
+    }
+
+    private static CanonicalPrompt probePrompt(JSONArray messages) {
+        return new CanonicalPrompt("You are a capability test. Keep any answer to one word.", messages, false, 0, 0, messages.length());
+    }
+
+    private static JSONObject check(String field, String verdict, Outcome outcome) throws org.json.JSONException {
+        JSONObject out = new JSONObject().put("field", field).put("verdict", verdict);
+        if (outcome.code != null) out.put("code", outcome.code).put("summary", outcome.summary == null ? "" : outcome.summary);
+        return out;
+    }
+
+    /** One capability check's outcome. */
+    static final class Outcome {
+        boolean ok, toolCall;
+        String code, summary;
+        /** The request itself was refused (a 4xx about the request), so the deployment does not accept it. */
+        boolean refused() { return code != null && (code.equals("http_400") || code.equals("http_415") || code.equals("http_422")); }
+    }
+
+    private static Outcome runCheck(ChatTransport transport, ChatDatabase.Provider provider, String key, String model,
+                                    CanonicalPrompt prompt, ChatTurnOptions options) throws InterruptedException {
+        Outcome out = new Outcome();
+        CountDownLatch done = new CountDownLatch(1);
+        ChatTransport.Sink sink = new ChatTransport.Sink() {
+            @Override public void onCompleted() { synchronized (out) { if (out.code == null) out.ok = true; } done.countDown(); }
+            @Override public void onError(String code, String summary, boolean retryable) {
+                synchronized (out) { if (!out.toolCall && !out.ok && out.code == null) { out.code = code == null ? "provider_error" : code; out.summary = summary; } }
+                done.countDown();
+            }
+            @Override public void onClientToolBatch(JSONArray calls) { synchronized (out) { out.toolCall = true; } done.countDown(); }
+            @Override public void onUsage(Integer in, Integer output) { }
+            @Override public void onTextDelta(String delta) { }
+        };
+        ChatTransport.Turn turn = transport.stream(provider, key, model, ReasoningPolicy.DEFAULT, prompt, options, sink);
+        boolean finished = done.await(CAPABILITY_CHECK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        if (turn != null) try { if (finished) turn.cancel(); else turn.timeout(); } catch (Exception ignored) { }
+        synchronized (out) {
+            if (!finished && out.code == null && !out.toolCall) { out.code = "timeout"; out.summary = "45 秒内没有完成"; }
+            return out;
+        }
+    }
+
     // ---------- HTTP ----------
 
     private static final class Call {
