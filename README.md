@@ -4,7 +4,7 @@ Moyu Chat is an Android-local multi-model Chat client with optional bounded tool
 
 It is a personal model test bench for comparing what different models and protocols return and what native orchestration designs can achieve. The native complexity is intentional.
 
-Current version: **v0.0.6** (Android versionCode 6, SQLite layout version 1 in `moyu-beta.db`, applicationId `com.moyu.chat.beta`). During 0.0.x the database is not migrated: a layout change recreates it. See `CHANGELOG.md`.
+Current version: **v0.0.6** (Android versionCode 6, SQLite layout version 1 in `moyu-chat.db`, applicationId `com.moyu.chat`). During 0.0.x the database is not migrated: a layout change recreates it. See `CHANGELOG.md`.
 
 ## Build and verify
 

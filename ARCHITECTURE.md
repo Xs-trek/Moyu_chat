@@ -1,6 +1,6 @@
 # Moyu Chat architecture
 
-Current source: v0.0.6; SQLite `moyu-beta.db` schema 2 (beta numbering restarts at 1; v2 adds `turn_archive` by a forward migration).
+Current source: v0.0.6; SQLite `moyu-chat.db` layout version 1. During 0.0.x there are no migrations: a file of another layout version is dropped and recreated.
 
 ## 1. Product boundary
 
@@ -43,24 +43,27 @@ Owns intent validation, local session lifecycle, local branching, turn admission
 accept → context → route → checkpoint → web plan → tools → web retrieve → generate → verify/repair → finish
 ```
 
-Preparation stages run synchronously on the preparation pool and share one `TurnRun`. `ProviderRoundLoop` is the generate stage: provider rounds, bounded client-tool batches and the coalesced live projection. Verification runs on the preparation pool after the last round. Each stage records a `TurnTrace` span (status, duration, a small decision summary); a skipped helper records why (`mode_off`, `task_profile_cached`, `within_budget`, `web_not_needed`, `provider_hosted`, `not_needed`, …). Helper model calls are tracked per issuing stage, so each helper's cost is visible next to what it decided.
+Preparation stages run synchronously on the preparation pool and share one `TurnRun`. `ProviderRoundLoop` is the generate stage: provider rounds, bounded client-tool batches and the coalesced live projection. Verification runs on the preparation pool after the last round. Each stage records a `TurnTrace` span (status, duration, a small decision summary); a skipped helper records why (`mode_off`, `within_budget`, `web_not_needed`, `provider_hosted`, `not_needed`, …). Helper model calls are tracked per issuing stage, so each helper's cost is visible next to what it decided.
 
 ### Durable Chat domain
 
 `ChatDatabase` owns Providers, Model Profiles, Sessions, timeline rows and immutable branch snapshots. A branch snapshot is owned by the sessions that reference it and is collected when the last one is deleted. The durable visible transcript is the product source of truth; provider-native conversation/reasoning state is optional derived metadata.
 
-The beta line keeps its own file, `moyu-beta.db`, with schema numbering restarted at 1. The pre-beta `moyu-chat.db` is deleted, a newer file is dropped and recreated, and there is no pre-beta migration chain. Tables:
+The whole schema is created in `onCreate`; a file of any other layout version is dropped and recreated (no migration chain during 0.0.x). Tables:
 
 ```text
-providers        shared endpoint + credential_epoch (bumped when a new key is stored)
-model_profiles   one deployment: wire protocol, limits, capabilities, catalog provenance
+providers        account: preset, credential_epoch (bumped when a new key is stored), key status, budget
+provider_routes  one endpoint of an account: protocol, Base URL, auth, dialect, headers, confirmed host
+model_profiles   one deployment: route + model id, limits, capabilities, per-field sources, pricing
 sessions         identity, lineage (parent / origin snapshot), frozen deployment, per-session
-                 choices, derived context state, knowledge_indexed_at
-timeline         one JSON item per row (what the user sees); kind (message / error) mirrors body.kind
-turns            one accepted user turn: frozen turn config, usage summary, status / terminal code
+                 choices, derived context state (checkpoint), leaf_key (end of the shown path)
+timeline         one JSON item per row (what the user sees); kind (message / error) mirrors body.kind;
+                 parent_key makes the rows a tree: edits, retries and re-answers are versions
+turns            one answer to one question (a question can have several): frozen turn config,
+                 usage summary, status / terminal code, rating
 turn_spans       the turn's pipeline stages: status, skip reason, duration, helper usage, decision
 turn_payloads    protocol inspector: redacted request / response text per model call, recent turns only
-                 (turns also carry rating and rerun_of: a re-answer points at the turn it re-asks)
+turn_archive     a deleted Chat's turn records, still counted by statistics and budgets
 snapshots        immutable branch origin + snapshot_items
 knowledge_fts    FTS4 lexical index, scope chat:<session> / snapshot:<snapshot>
 verifier_labels  explicit verifier feedback per calibration key (bounded)
@@ -71,7 +74,7 @@ The layout follows the common local-agent pattern (OpenAI Agents SDK `SQLiteSess
 
 The protocol inspector records, per model call, the request body and the raw response stream. Transports emit them through `Sink.onWire`; `TurnUsage` tags each record with its stage and call index. `WireCapture` never sees request headers (the only place the credential travels), scrubs the API key from all text as a second line of defence, replaces inline base64 and long opaque strings by their length, and caps each record at 256K characters. Payloads are kept for the 30 most recent turns, read on demand with `turn.payload.get`, and can be switched off in Settings.
 
-Comparison and feedback stay on the same records. `turn.rerun` branches the session just before a user message (optionally switching model and/or context mode, with a fresh routing decision) and the next turn in that branch is stored with `rerun_of`; `turn.answers.get` returns the original answer and every re-answer of it. `turn.rate` stores a good / bad mark on the turn. `stats.get` aggregates finished turns per model × context mode with `TurnStats`: latency, tokens, the helper stages' share of tokens and how often each helper actually acted. These are in-use trends, not benchmarks.
+Comparison and feedback stay on the same records. `turn.rerun` answers a question again in the same session (optionally switching the session's model and/or context mode) as a new version; `turn.answers.get` returns every version of the answer to that question. `turn.rate` stores a good / bad mark on the turn. `stats.get` aggregates finished turns per model × context mode with `TurnStats`: latency, tokens, the helper stages' share of tokens and how often each helper actually acted. These are in-use trends, not benchmarks.
 
 ## 3. Account / Route / Model Profile / Session
 

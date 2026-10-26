@@ -69,7 +69,7 @@ if (!db.includes('source_item_count') || !db.includes('truncated')) fail('snapsh
 if (!db.includes(`static final int VERSION = ${SCHEMA_VERSION};`)) fail(`SQLite schema must be v${SCHEMA_VERSION}`);
 if (/CREATE TABLE handoffs/.test(db)) fail('the removed Remote handoff table must never be recreated');
 // 0.0.x: no migrations. A layout change edits onCreate and bumps VERSION; a file of any other version is recreated.
-if (!db.includes('static final String FILE_NAME = "moyu-beta.db";')
+if (!db.includes('static final String FILE_NAME = "moyu-chat.db";')
     || !db.includes('public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }')
     || !db.includes('public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) { dropAll(db); onCreate(db); }')) fail('a database file of another layout version must be recreated, not migrated');
 if (/ALTER TABLE/.test(db)) fail('the schema is created whole in onCreate; no migrations during 0.0.x');
@@ -515,7 +515,7 @@ try {
 } catch (error) { fail('usage timeline projection failed: ' + error.message); }
 const gradle = read('android/app/build.gradle');
 if (packageJson.version !== VERSION_NAME || !gradle.includes(`versionName '${VERSION_NAME}'`) || !gradle.includes(`versionCode ${VERSION_CODE}`)) fail(`v${VERSION_NAME} product version metadata is not aligned`);
-if (!gradle.includes("applicationId 'com.moyu.chat.beta'")) fail('beta line must keep a distinct applicationId so it installs beside com.moyu.chat');
+if (!gradle.includes("applicationId 'com.moyu.chat'") || gradle.includes('com.moyu.chat.beta')) fail('the mainline installs as com.moyu.chat');
 if (!mainUi.includes(`uiVersion: '${VERSION_NAME}'`)) fail(`WebView app.ready version must match v${VERSION_NAME}`);
 
 if (failed) process.exit(1);

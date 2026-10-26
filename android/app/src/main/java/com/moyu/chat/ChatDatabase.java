@@ -21,7 +21,7 @@ import java.util.UUID;
  * branch snapshots, verifier labels and app preferences. API keys never live here (see {@link ChatSecretStore}).
  */
 public final class ChatDatabase extends SQLiteOpenHelper {
-    static final String FILE_NAME = "moyu-beta.db";
+    static final String FILE_NAME = "moyu-chat.db";
     /**
      * Layout version. During 0.0.x there are no migrations: a layout change edits {@link #onCreate} and bumps this,
      * and a file of any other version is dropped and recreated (see {@link #onUpgrade}).

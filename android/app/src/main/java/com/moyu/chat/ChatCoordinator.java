@@ -122,7 +122,7 @@ final class ChatCoordinator implements AutoCloseable {
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
     }
 
-    /** Keys and images whose owners no longer exist (deleted rows, or a beta baseline reset) never outlive them. */
+    /** Keys and images whose owners no longer exist (deleted rows, or a database recreated for a new layout) never outlive them. */
     private void pruneOrphans() {
         try {
             java.util.HashSet<String> providerIds = new java.util.HashSet<>();
