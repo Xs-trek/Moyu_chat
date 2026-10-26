@@ -12,7 +12,14 @@ Current version: **v0.0.6** (Android versionCode 6, SQLite layout version 1 in `
 npm run verify
 ```
 
-This runs the frontend static checks (`npm run build`) and then `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` with the bundled JDK 17 and Gradle 8.5 under `.tools/`. The Android SDK comes from `ANDROID_HOME`. Frontend sources live in `src/` and `index.html`; `android/app/src/main/assets/ui/` is a generated copy synced at build time.
+This runs the frontend static checks (`npm run build`) and then `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug`. Frontend sources live in `src/` and `index.html`; `android/app/src/main/assets/ui/` is a generated copy synced at build time.
+
+The toolchain is not in the repository (`.tools/` is Git-ignored and there is no Gradle wrapper). Before the first build, provide:
+
+- Node.js (the frontend checks and tests use only its built-in modules);
+- Gradle 8.5, unpacked to `.tools/gradle-8.5/` (`scripts/verify.sh` runs `.tools/gradle-8.5/bin/gradle`);
+- JDK 17, unpacked to `.tools/jdk-17*` (used as `JAVA_HOME` when present; otherwise the system `JAVA_HOME` must be JDK 17);
+- the Android SDK, from `ANDROID_HOME` or `android/local.properties`.
 
 ### Release APK
 
