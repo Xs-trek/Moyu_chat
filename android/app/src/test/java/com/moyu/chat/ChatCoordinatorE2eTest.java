@@ -1931,7 +1931,6 @@ public class ChatCoordinatorE2eTest {
     @Test public void theRouterStartsSwitchedOff() throws Exception {
         await("view", () -> latestView() != null && latestView().optJSONObject("ui") != null);
         assertEquals("[\"router\"]", String.valueOf(latestView().getJSONObject("ui").optJSONArray("helpersOff")));
-        assertEquals(String.valueOf(HelperSwitches.DEFAULTS_REVISION), app.database().setting(HelperSwitches.DEFAULTS_KEY, ""));
     }
 
     @Test public void historyRecallReturnsTheVerbatimTurnsTheCheckpointReplaced() throws Exception {

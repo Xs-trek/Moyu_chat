@@ -14,26 +14,11 @@ import java.util.Set;
 final class HelperSwitches {
     static final String ROUTER = "router", COMPACTION = "compaction", WEB_PLAN = "webPlan",
             RECALL = "recall", VERIFY = "verify", SUBAGENT = "subagent";
-    /**
-     * Spec M3, D5: there is no "Web tools" switch any more; the Web mode controls Web. A stored "webTools" is an unknown
-     * id and is dropped on read (and statistics group by the remaining switches).
-     */
+    /** Spec M3, D5: there is no "Web tools" switch; the Web mode controls Web. */
     static final String[] ALL = {ROUTER, COMPACTION, RECALL, WEB_PLAN, VERIFY, SUBAGENT};
     static final String SETTING_KEY = "helpersOff";
-    /**
-     * Revision of the default switch set, applied once per install (settings key {@link #DEFAULTS_KEY}).
-     * 2: the Router starts off. A session-long first-turn classification is an experiment to opt into, not a
-     * default; switching it back on is kept.
-     */
-    static final int DEFAULTS_REVISION = 2;
-    static final String DEFAULTS_KEY = "helpersDefaults";
-
-    /** The switched-off set after applying default revisions newer than {@code appliedRevision}. */
-    static Set<String> withDefaults(Set<String> off, int appliedRevision) {
-        Set<String> out = new LinkedHashSet<>(off == null ? Collections.<String>emptySet() : off);
-        if (appliedRevision < 2) out.add(ROUTER);
-        return canonical(out);
-    }
+    /** Until the user changes a switch: the Router starts off (an experiment to opt into, spec D8). */
+    static final String DEFAULT_OFF = "[\"" + ROUTER + "\"]";
     /** Trace skip reason of a helper the user switched off. */
     static final String USER_OFF = "user_off";
 

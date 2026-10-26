@@ -272,24 +272,9 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized Session createSession(ModelProfile profile, String title, String originSnapshotId,
                                               String parentSessionId, String reasoningEffort, String contextMode, String webMode) {
         if (profile == null) throw new IllegalArgumentException("model profile required");
-        Session s = new Session();
+        Session s = deploymentSession(profile, reasoningEffort);
         s.id = UUID.randomUUID().toString();
-        s.providerId = profile.providerId;
-        s.modelProfileId = profile.id;
-        s.model = profile.modelId;
-        s.contextTokens = profile.contextTokens;
-        s.inputTokens = profile.inputTokens;
-        s.maxOutputTokens = profile.maxOutputTokens;
-        s.inputModalities = normalizeModalities(profile.inputModalities); s.outputModalities = normalizeModalities(profile.outputModalities);
-        s.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
-        freezeDeployment(s, profile);
-        s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); s.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
-        s.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
-        s.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
-        s.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
         s.webMode = ChatTurnOptions.normalizeWebMode(webMode);
-        s.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
-        s.reasoningEffort = ReasoningPolicy.normalizeEffort(reasoningEffort == null ? ReasoningPolicy.DEFAULT : reasoningEffort);
         if (!ReasoningPolicy.allows(s.reasoningLevels, s.reasoningEffort)) throw new IllegalArgumentException("这个会话的模型不支持所选推理深度");
         s.title = title == null || title.trim().isEmpty() ? SessionTitles.DEFAULT_TITLE : title.trim();
         s.state = "idle";
@@ -307,6 +292,27 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         s.contextCheckpoint = "";
         s.checkpointCoveredItems = 0;
         saveSession(s);
+        return s;
+    }
+
+    /** A detached session carrying {@code profile}'s deployment (no id, nothing stored): a new Chat's start, or a helper model's turn view (spec D15). */
+    static Session deploymentSession(ModelProfile profile, String reasoningEffort) {
+        Session s = new Session();
+        s.providerId = profile.providerId;
+        s.modelProfileId = profile.id;
+        s.model = profile.modelId;
+        s.contextTokens = profile.contextTokens;
+        s.inputTokens = profile.inputTokens;
+        s.maxOutputTokens = profile.maxOutputTokens;
+        s.inputModalities = normalizeModalities(profile.inputModalities); s.outputModalities = normalizeModalities(profile.outputModalities);
+        s.toolCapabilities = ChatTurnOptions.normalizeCapabilities(profile.toolCapabilities);
+        freezeDeployment(s, profile);
+        s.thinkingMode = ReasoningPolicy.normalizeThinkingMode(profile.thinkingMode); s.thinkingBudgetTokens = Math.max(0, profile.thinkingBudgetTokens);
+        s.continuationMode = ProviderContinuationPolicy.normalize(profile.continuationMode);
+        s.harnessPreset = HarnessProfile.normalize(profile.harnessPreset);
+        s.clientToolCalling = ClientToolRuntime.normalizeCalling(profile.clientToolCalling);
+        s.reasoningLevels = ReasoningPolicy.normalizeLevels(profile.reasoningLevels);
+        s.reasoningEffort = ReasoningPolicy.normalizeEffort(reasoningEffort == null ? ReasoningPolicy.DEFAULT : reasoningEffort);
         return s;
     }
 
@@ -574,6 +580,25 @@ public final class ChatDatabase extends SQLiteOpenHelper {
         if (cost != null && add != null && cost.optString("currency").equals(add.optString("currency"))) {
             cost.put("amount", cost.optDouble("amount", 0d) + add.optDouble("amount", 0d));
             if (add.optBoolean("partial", false)) cost.put("partial", true);
+        }
+        // A helper model's calls on another account (spec D15): summed per account and currency.
+        JSONArray foreign = delta.optJSONArray("foreignCost");
+        if (foreign == null) return;
+        JSONArray into = usage.optJSONArray("foreignCost");
+        if (into == null) { into = new JSONArray(); usage.put("foreignCost", into); }
+        for (int i = 0; i < foreign.length(); i++) {
+            JSONObject entry = foreign.optJSONObject(i);
+            if (entry == null) continue;
+            JSONObject same = null;
+            for (int j = 0; j < into.length() && same == null; j++) {
+                JSONObject o = into.optJSONObject(j);
+                if (o != null && o.optString("providerId").equals(entry.optString("providerId")) && o.optString("currency").equals(entry.optString("currency"))) same = o;
+            }
+            if (same == null) into.put(new JSONObject(entry.toString()));
+            else {
+                same.put("amount", same.optDouble("amount", 0d) + entry.optDouble("amount", 0d));
+                if (entry.optBoolean("partial", false)) same.put("partial", true);
+            }
         }
     }
 
@@ -1466,20 +1491,29 @@ public final class ChatDatabase extends SQLiteOpenHelper {
     public synchronized JSONObject spendSince(String providerId, String sinceIso) {
         JSONObject out = new JSONObject();
         if (providerId == null || sinceIso == null) return out;
-        String sql = "SELECT config,usage FROM turns WHERE started_at>=? AND instr(usage,'\"cost\"')>0"
-                + " UNION ALL SELECT config,usage FROM turn_archive WHERE started_at>=? AND provider_id=? AND instr(usage,'\"cost\"')>0";
-        try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sinceIso, sinceIso, providerId})) {
+        // A turn bills its own calls to its account (cost) and a helper model's calls to that model's account (foreignCost, spec D15).
+        String sql = "SELECT config,usage FROM turns WHERE started_at>=? AND instr(usage,'Cost\"')+instr(usage,'\"cost\"')>0"
+                + " UNION ALL SELECT config,usage FROM turn_archive WHERE started_at>=? AND instr(usage,'Cost\"')+instr(usage,'\"cost\"')>0";
+        try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{sinceIso, sinceIso})) {
             while (c.moveToNext()) {
                 try {
-                    if (!providerId.equals(new JSONObject(c.getString(0)).optString("providerId", ""))) continue;
-                    JSONObject cost = new JSONObject(c.getString(1)).optJSONObject("cost");
-                    if (cost == null || !cost.has("amount")) continue;
-                    String currency = cost.optString("currency", "USD");
-                    out.put(currency, out.optDouble(currency, 0d) + cost.optDouble("amount", 0d));
+                    JSONObject usage = new JSONObject(c.getString(1));
+                    if (providerId.equals(new JSONObject(c.getString(0)).optString("providerId", ""))) addCost(out, usage.optJSONObject("cost"));
+                    JSONArray foreign = usage.optJSONArray("foreignCost");
+                    if (foreign != null) for (int i = 0; i < foreign.length(); i++) {
+                        JSONObject entry = foreign.optJSONObject(i);
+                        if (entry != null && providerId.equals(entry.optString("providerId", ""))) addCost(out, entry);
+                    }
                 } catch (Exception ignored) { }
             }
         }
         return out;
+    }
+
+    private static void addCost(JSONObject out, JSONObject cost) throws org.json.JSONException {
+        if (cost == null || !cost.has("amount")) return;
+        String currency = cost.optString("currency", "USD");
+        out.put(currency, out.optDouble(currency, 0d) + cost.optDouble("amount", 0d));
     }
 
     /** Saves the account row only (routes and models untouched). */

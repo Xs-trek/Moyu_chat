@@ -15,8 +15,21 @@ final class TurnUsage {
     private volatile WireRecorder wireRecorder;
     void setWireRecorder(WireRecorder recorder) { wireRecorder = recorder; }
 
+    /** Where a call is billed when it is not the turn's own account: a helper model (spec D15). */
+    static final class Billing {
+        final String providerId;
+        /** Its prices (ModelPricing shape); null = no estimate. */
+        final JSONObject pricing;
+        Billing(String providerId, JSONObject pricing) {
+            this.providerId = providerId == null ? "" : providerId;
+            this.pricing = pricing == null || pricing.length() == 0 ? null : pricing;
+        }
+    }
+
     private static final class RequestUsage {
         final Kind kind;
+        /** null = the turn's account and prices. */
+        final Billing billing;
         /** Pipeline stage that issued the call (TurnTrace stage id), so helper cost is attributable. */
         final String stage;
         /** Order of the call within the turn, shared with the wire records. */
@@ -26,7 +39,7 @@ final class TurnUsage {
         boolean ended;
         /** Why the call produced no usable result: the provider's error code, or "timeout" / "cancelled". */
         String failure;
-        RequestUsage(Kind kind, String stage, int index) { this.kind = kind; this.stage = stage; this.index = index; }
+        RequestUsage(Kind kind, String stage, int index, Billing billing) { this.kind = kind; this.stage = stage; this.index = index; this.billing = billing; }
     }
 
     private final ArrayList<RequestUsage> requests = new ArrayList<>();
@@ -35,8 +48,8 @@ final class TurnUsage {
     void setPricing(JSONObject value) { pricing = value == null || value.length() == 0 ? null : value; }
     synchronized boolean hasRequests() { return !requests.isEmpty(); }
 
-    private synchronized RequestUsage begin(Kind kind, String stage) {
-        RequestUsage request = new RequestUsage(kind, stage, requests.size());
+    private synchronized RequestUsage begin(Kind kind, String stage, Billing billing) {
+        RequestUsage request = new RequestUsage(kind, stage, requests.size(), billing);
         requests.add(request);
         return request;
     }
@@ -72,7 +85,10 @@ final class TurnUsage {
 
     ChatTransport track(ChatTransport delegate, Kind kind) { return track(delegate, kind, kind.name().toLowerCase(java.util.Locale.ROOT)); }
 
-    ChatTransport track(ChatTransport delegate, Kind kind, String stage) {
+    ChatTransport track(ChatTransport delegate, Kind kind, String stage) { return track(delegate, kind, stage, null); }
+
+    /** As {@link #track(ChatTransport, Kind, String)}, billed to {@code billing} (another account) when not null. */
+    ChatTransport track(ChatTransport delegate, Kind kind, String stage, Billing billing) {
         return new ChatTransport() {
             @Override public Turn stream(ChatDatabase.Provider provider, String key, String model, String effort,
                                          CanonicalPrompt prompt, Sink sink) {
@@ -81,7 +97,7 @@ final class TurnUsage {
 
             @Override public Turn stream(ChatDatabase.Provider provider, String key, String model, String effort,
                                          CanonicalPrompt prompt, ChatTurnOptions options, Sink sink) {
-                RequestUsage request = begin(kind, stage);
+                RequestUsage request = begin(kind, stage, billing);
                 Sink tracked = new Sink() {
                     @Override public void onStage(String stage) { sink.onStage(stage); }
                     @Override public void onReasoningDelta(String text) { sink.onReasoningDelta(text); }
@@ -183,27 +199,50 @@ final class TurnUsage {
     }
 
     /**
-     * Estimated cost of every call of the turn (helpers and subagents run on the same deployment), each priced
-     * by its own prompt size and time. {@code partial} when some call reported no usage, so the sum is low.
+     * Estimated cost of the turn's calls, each priced by its own prompt size and time. {@code cost} holds the calls billed
+     * to the turn's account; calls on a helper model of another account (spec D15) go to {@code foreignCost}, one entry
+     * per account, so budgets count them where they are spent. {@code partial} when some call reported no usage.
      */
     private void projectCost(JSONObject target) throws org.json.JSONException {
-        JSONObject prices = pricing;
-        if (prices == null) return;
-        double amount = 0;
-        String currency = null;
-        boolean partial = false, offPeak = false, any = false;
+        java.util.LinkedHashMap<String, Estimate> foreign = new java.util.LinkedHashMap<>();
+        Estimate own = new Estimate();
         for (RequestUsage request : requests) {
-            if (request.input == null && request.output == null) { partial = true; continue; }
+            boolean elsewhere = request.billing != null && !request.billing.providerId.isEmpty();
+            Estimate into = elsewhere ? foreign.computeIfAbsent(request.billing.providerId, id -> new Estimate()) : own;
+            into.add(elsewhere ? request.billing.pricing : pricing, request);
+        }
+        JSONObject cost = own.toJson();
+        if (cost != null) target.put("cost", cost);
+        JSONArray others = new JSONArray();
+        for (java.util.Map.Entry<String, Estimate> e : foreign.entrySet()) {
+            JSONObject entry = e.getValue().toJson();
+            if (entry != null) others.put(entry.put("providerId", e.getKey()));
+        }
+        if (others.length() > 0) target.put("foreignCost", others);
+    }
+
+    /** One account's estimate; unknown when its prices are unknown. */
+    private static final class Estimate {
+        double amount;
+        String currency;
+        boolean partial, offPeak, any, unpriced;
+
+        void add(JSONObject prices, RequestUsage request) {
+            if (prices == null) { unpriced = true; return; }
+            if (request.input == null && request.output == null) { partial = true; return; }
             if (request.input == null || request.output == null) partial = true;
             JSONObject estimate = ModelPricing.estimate(prices, request.input == null ? 0 : request.input, request.output == null ? 0 : request.output,
                     request.cached == null ? 0 : request.cached, request.cacheWrite == null ? 0 : request.cacheWrite, request.startedAt);
-            if (estimate == null) return;
+            if (estimate == null) { unpriced = true; return; }
             amount += estimate.optDouble("amount", 0);
             currency = estimate.optString("currency", "USD");
             offPeak |= estimate.optBoolean("offPeak", false);
             any = true;
         }
-        if (!any) return;
-        target.put("cost", new JSONObject().put("currency", currency).put("amount", amount).put("partial", partial).put("offPeak", offPeak));
+
+        JSONObject toJson() throws org.json.JSONException {
+            if (!any || unpriced) return null;
+            return new JSONObject().put("currency", currency).put("amount", amount).put("partial", partial).put("offPeak", offPeak);
+        }
     }
 }

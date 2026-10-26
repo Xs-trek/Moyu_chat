@@ -196,6 +196,23 @@ function rerunSheet(view, state) {
     h('div', { class: 'sheet-foot' }, button('重答', 'rerun-confirm', {}, 'btn primary'))];
 }
 
+/** Spec D15: pick the helper model, or the session's model. */
+export function openHelperModel() {
+  sheet = { kind: 'helpermodel' };
+  paintSheet(getState().view);
+}
+
+function helperModelSheet(view) {
+  const current = vm.helperModelView(view).id;
+  return [h('h2', { class: 'sheet-title', text: '辅助模型' }),
+    h('p', { class: 'sheet-note', text: '用于设置里打开了“用辅助模型”的辅助调用。会话内容会发给它所在的服务商。' }),
+    h('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': '辅助模型' },
+      h('button', { type: 'button', role: 'radio', 'aria-checked': current ? 'false' : 'true', class: `choice-row${current ? '' : ' selected'}`,
+        dataset: { key: 'session-model', action: 'helper-model-set', modelProfileId: '', closeSheet: '1' } },
+      h('span', { class: 'radio' }), h('span', { class: 'grow truncate', text: '用会话的模型' }))),
+    modelChoiceList(view, current, (model) => ({ action: 'helper-model-set', modelProfileId: model.modelProfileId, closeSheet: '1' }))];
+}
+
 /** Every answer to one question side by side (stacked on phones). */
 export function openAnswers(sessionId, turnId) {
   const opened = { kind: 'answers', state: 'loading', sessionId };
@@ -301,6 +318,8 @@ function paintSheet(view) {
     body = payloadSheet(sheet);
   } else if (sheet.kind === 'answers') {
     body = answersSheet(sheet);
+  } else if (sheet.kind === 'helpermodel') {
+    body = helperModelSheet(view || getState().view);
   } else if (sheet.kind === 'rerun') {
     body = rerunSheet(view || getState().view, sheet);
   } else if (sheet.kind === 'choice') {

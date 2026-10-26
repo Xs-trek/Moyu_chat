@@ -16,6 +16,8 @@ final class TurnConfig {
     static final int MAX_CUSTOM_INSTRUCTION_CHARS = 4000;
     /** Helper modules the user had switched off when the turn was accepted (HelperSwitches ids). */
     final java.util.Set<String> helpersOff;
+    /** Spec D15: the helper model of this turn and which helpers use it ({@link HelperModel#NONE} = all on the session's model). */
+    final HelperModel.Resolved helper;
 
     TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
                ChatDatabase.Session session, ChatDatabase.ModelProfile profile) {
@@ -30,6 +32,13 @@ final class TurnConfig {
     TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
                ChatDatabase.Session session, ChatDatabase.ModelProfile profile, String customInstruction,
                java.util.Set<String> helpersOff) {
+        this(provider, apiKey, deploymentFingerprint, session, profile, customInstruction, helpersOff, HelperModel.NONE);
+    }
+
+    TurnConfig(ChatDatabase.Provider provider, String apiKey, String deploymentFingerprint,
+               ChatDatabase.Session session, ChatDatabase.ModelProfile profile, String customInstruction,
+               java.util.Set<String> helpersOff, HelperModel.Resolved helper) {
+        this.helper = helper == null ? HelperModel.NONE : helper;
         this.helpersOff = HelperSwitches.canonical(helpersOff);
         String instruction = customInstruction == null ? "" : customInstruction.trim();
         this.customInstruction = instruction.length() > MAX_CUSTOM_INSTRUCTION_CHARS ? instruction.substring(0, MAX_CUSTOM_INSTRUCTION_CHARS) : instruction;

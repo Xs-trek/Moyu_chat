@@ -189,3 +189,14 @@ test('versions: "i/n" with the seqs to switch to, the resume target, and version
   ] });
   assert.deepEqual(view.items.map((item) => [item.title, item.versionSeq]), [['第 1 次回答', 2], ['第 2 次回答', 6]]);
 });
+
+test('helper model: the setting rows and the trace note, including why it was not used (spec D15)', () => {
+  const none = vm.helperModelView({ ui: { helperModel: { modelProfileId: '', use: ['title', 'router', 'web_plan'] } } });
+  assert.equal(none.id, '');
+  assert.deepEqual(none.uses.filter((u) => u.on).map((u) => u.id), ['title', 'router', 'web_plan']);
+  const gone = vm.helperModelView({ ui: { helperModel: { modelProfileId: 'm1', missing: true, use: [] } } });
+  assert.equal(gone.name, '已删除或停用');
+  assert.equal(vm.helperModelNote({}), '');
+  assert.equal(vm.helperModelNote({ helperModel: { profileId: 'm1', modelName: 'Flash', use: ['title', 'router'] } }), '辅助模型：Flash（会话命名、路由）');
+  assert.equal(vm.helperModelNote({ helperModel: { profileId: 'm1', fallback: 'helper_model_no_key' } }), '辅助模型没用上（它的账号没有 API Key），辅助调用用了会话的模型');
+});

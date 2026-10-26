@@ -2,7 +2,7 @@ import { bindHost, postIntent, requestIntent } from './bridge.js';
 import { react } from './mascot.js';
 import * as director from './mascot-director.js';
 import { createGame } from './fish-game.js';
-import { closeImageViewer, closeSheet, handleBack, openCustomSheet, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTextSheet, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
+import { closeImageViewer, closeSheet, handleBack, openCustomSheet, openHelperModel, newChatChoice, openActions, openAnswers, openConfirmDialog, openImageViewer, openNewChat, openPayload, openRerun, openTextDialog, openTextSheet, openTurnSettings, payloadText, pickChoice, rerunChoice, selectPayloadPart, setDrawer, setNewChatChoice, setRerunChoice } from './overlays.js';
 import { openModelEditor, openProviderEditor } from './editors.js';
 import { syncSegment } from './dom.js';
 import { reducedMotion } from './morph.js';
@@ -446,6 +446,9 @@ document.addEventListener('click', (event) => {
       note: '对所有会话生效，放在系统提示词的最后；当前提问与它冲突时以提问为准。每一轮会记下当时用的指令（调用链的本轮配置里能看到）。清空即关闭。',
       onConfirm: (text) => postIntent('instruction.global.set', { text }) });
   }
+  else if (action === 'open-helper-model') openHelperModel();
+  else if (action === 'helper-model-set') postIntent('helper.model.set', { modelProfileId: target.dataset.modelProfileId || '' });
+  else if (action === 'toggle-helper-model-use') { postIntent('helper.model.use.set', { helper: target.dataset.helper, enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'toggle-helper') { postIntent('helper.switch.set', { helper: target.dataset.helper, enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'toggle-notify') { postIntent('notify.background.set', { enabled: target.dataset.enabled === 'true' }); optimisticSwitch(target); }
   else if (action === 'open-session') {

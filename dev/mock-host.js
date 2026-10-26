@@ -306,6 +306,17 @@ function handle(type, p) {
       world.ui.helpersOff = ['router', 'compaction', 'recall', 'webPlan', 'verify', 'subagent'].filter((id) => off.has(id));
       break;
     }
+    case 'helper.model.set': {
+      const model = world.providers.flatMap((x) => x.models).find((m) => m.modelProfileId === p.modelProfileId);
+      world.ui.helperModel = { ...world.ui.helperModel, modelProfileId: p.modelProfileId || '', modelName: model ? (model.displayName || model.modelId) : undefined };
+      break;
+    }
+    case 'helper.model.use.set': {
+      const use = new Set(world.ui.helperModel?.use || []);
+      if (p.enabled) use.add(p.helper); else use.delete(p.helper);
+      world.ui.helperModel = { ...world.ui.helperModel, use: ['title', 'router', 'web_plan', 'compaction', 'verify', 'subagent'].filter((id) => use.has(id)) };
+      break;
+    }
     case 'instruction.global.set': world.ui.customInstruction = String(p.text || '').trim(); break;
     case 'context.mode.default.set': world.ui.defaultContextMode = p.mode; break;
     case 'web.mode.default.set': world.ui.defaultWebMode = p.mode; break;

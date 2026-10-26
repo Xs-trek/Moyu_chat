@@ -166,12 +166,12 @@ final class TurnPipeline {
         try { usage.setPricing(ModelPricing.normalize(new JSONObject(turnConfig.pricing))); }
         catch (Exception unpriced) { usage.setPricing(null); } // a bad stored price never blocks a turn
         r.mainTransport = usage.track(rawTransport, TurnUsage.Kind.MAIN, TurnTrace.GENERATE);
-        r.routeTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE);
-        r.checkpointTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.CHECKPOINT);
-        r.webPlanTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.WEB_PLAN);
-        r.verifyTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY);
-        r.repairTransport = usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.REPAIR);
-        r.subagentTransport = usage.track(rawTransport, TurnUsage.Kind.SUBAGENT, "subagent");
+        r.routeCall = helperCall(r, rawTransport, usage, HelperModel.ROUTER, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE);
+        r.checkpointCall = helperCall(r, rawTransport, usage, HelperModel.COMPACTION, TurnUsage.Kind.AUXILIARY, TurnTrace.CHECKPOINT);
+        r.webPlanCall = helperCall(r, rawTransport, usage, HelperModel.WEB_PLAN, TurnUsage.Kind.AUXILIARY, TurnTrace.WEB_PLAN);
+        r.verifyCall = helperCall(r, rawTransport, usage, HelperModel.VERIFY, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY);
+        r.repairCall = helperCall(r, rawTransport, usage, HelperModel.VERIFY, TurnUsage.Kind.AUXILIARY, TurnTrace.REPAIR);
+        r.subagentCall = helperCall(r, rawTransport, usage, HelperModel.SUBAGENT, TurnUsage.Kind.SUBAGENT, "subagent");
         // Resolve only stable session policy before durable mutation. Once the user taps Send the
         // message belongs in the transcript and the composer draft must be cleared even if later
         // context preparation, Web retrieval, or provider startup fails.
@@ -223,10 +223,20 @@ final class TurnPipeline {
         r.trace().end(span, TurnTrace.OK, new JSONObject().put("contextMode", turnConfig.contextMode)
                 .put("effectiveContextMode", r.contextPolicy.effectiveLabel).put("harnessPreset", turnConfig.harnessPreset)
                 .put("webMode", turnConfig.webMode).put("subagentMode", r.adaptivePolicy.subagentMode)
-                .put("attachments", pendingMedia.length()).put("modules", r.modules.toJson()));
+                .put("attachments", pendingMedia.length()).put("modules", r.modules.toJson()).putOpt("helperModel", turnConfig.helper.toJson()));
         env.emitView();
         if (cancelled(r)) return null;
         return r;
+    }
+
+    /** A helper stage's deployment: the helper model when this turn uses it for {@code helper} (spec D15), else the session's model. */
+    private HelperModel.Call helperCall(TurnRun r, ChatTransport sessionTransport, TurnUsage usage, String helper, TurnUsage.Kind kind, String stage) {
+        HelperModel.Resolved h = r.config.helper;
+        if (h.uses(helper)) {
+            ChatTransport raw = transports.forProtocol(h.config.provider.protocol);
+            if (raw != null) return new HelperModel.Call(usage.track(raw, kind, stage, h.billing()), h.config.provider, h.config.apiKey, h.config.model, h.config);
+        }
+        return new HelperModel.Call(usage.track(sessionTransport, kind, stage), r.provider, r.key, r.config.model, r.config);
     }
 
     /** What this turn was configured to do; stored with the turn so results stay attributable after settings change. */
@@ -240,7 +250,8 @@ final class TurnPipeline {
                 .put("continuationMode", c.continuationMode).put("clientToolCalling", c.clientToolCalling)
                 .put("contextTokens", c.contextTokens).put("inputTokens", c.inputTokens).put("maxOutputTokens", c.maxOutputTokens)
                 .put("routeId", r.provider.routeId == null ? "" : r.provider.routeId)
-                .put("customInstruction", c.customInstruction).put("helpersOff", HelperSwitches.toJson(c.helpersOff));
+                .put("customInstruction", c.customInstruction).put("helpersOff", HelperSwitches.toJson(c.helpersOff))
+                .putOpt("helperModel", c.helper.toJson());
     }
 
     // ---------- context ----------
@@ -296,7 +307,7 @@ final class TurnPipeline {
             if (r.needsRouter) {
                 stage = r.trace().begin(TurnTrace.ROUTE);
                 long routeStarted = System.nanoTime();
-                TaskProfile routed = taskRouter.route(r.routeTransport, r.provider, r.key, c.model, r.prompt);
+                TaskProfile routed = taskRouter.route(r.routeCall.transport, r.routeCall.provider, r.routeCall.key, r.routeCall.model, r.prompt);
                 r.addHelperTime(routeStarted);
                 // Spec M5 Router: the result is this turn's only (task prompt, whether to verify) and never stored. A
                 // failed or unclear call means "no Router result" for this turn.
@@ -355,7 +366,7 @@ final class TurnPipeline {
                 detail.put("mode", "none").put("reason", "nothing_to_compact");
             } else {
                 int budget = new ContextBudgetManager().effectiveInputBudget(c.contextTokens, c.inputTokens, c.maxOutputTokens);
-                CompactionService.Result result = compactions.summarize(r.checkpointTransport, r.provider, r.key, c.model, source, budget);
+                CompactionService.Result result = compactions.summarize(r.checkpointCall.transport, r.checkpointCall.provider, r.checkpointCall.key, r.checkpointCall.model, source, budget);
                 // The turn holds the session, so its history cannot change meanwhile; the check costs nothing.
                 boolean applied = result.ok() && result.checkpoint.covers(contexts.neutralHistory(latest), result.coveredItems);
                 if (applied) db.setContextCheckpoint(session.id, result.checkpoint.toJson().toString(), result.coveredItems);
@@ -390,7 +401,8 @@ final class TurnPipeline {
         int next = reported ? r.lastCallInputTokens + r.lastCallOutputTokens
                 : (r.prompt == null ? 0 : r.prompt.estimatedInputTokens) + budgets.estimate(answer);
         if (!CompactionService.dueAfterTurn(next, budget)) return;
-        ChatTransport raw = transports.forProtocol(r.provider.protocol);
+        boolean onHelper = r.config.helper.uses(HelperModel.COMPACTION);
+        ChatTransport raw = transports.forProtocol(onHelper ? r.config.helper.config.provider.protocol : r.provider.protocol);
         String turnId = r.control.turnId;
         if (raw == null || turnId == null) return;
         compactions.startBackground(r.id, job -> runBackgroundCompaction(job, r, raw, turnId, budget, next, reported));
@@ -409,8 +421,11 @@ final class TurnPipeline {
             source = session == null ? null : contexts.compactionSource(session);
         } catch (Exception error) { source = null; }
         if (source == null) { compactions.settle(job, false, "nothing_to_compact"); return; }
-        CompactionService.Result result = compactions.summarize(usage.track(raw, TurnUsage.Kind.AUXILIARY, TurnTrace.CHECKPOINT),
-                r.provider, r.key, c.model, source, budget);
+        HelperModel.Resolved h = c.helper;
+        boolean onHelper = h.uses(HelperModel.COMPACTION); // spec D15
+        CompactionService.Result result = onHelper
+                ? compactions.summarize(usage.track(raw, TurnUsage.Kind.AUXILIARY, TurnTrace.CHECKPOINT, h.billing()), h.config.provider, h.config.apiKey, h.config.model, source, budget)
+                : compactions.summarize(usage.track(raw, TurnUsage.Kind.AUXILIARY, TurnTrace.CHECKPOINT), r.provider, r.key, c.model, source, budget);
         long durationMs = (System.nanoTime() - started) / 1_000_000L;
         JSONObject delta = new JSONObject();
         try { usage.project(delta); } catch (Exception ignored) { }
@@ -478,8 +493,8 @@ final class TurnPipeline {
         }
         TurnTrace.Span span = r.trace().begin(TurnTrace.WEB_PLAN);
         try {
-            r.webPlan = webOrchestrator.plan(c.webMode, r.input, r.prompt, r.webPlanTransport, r.provider, r.key,
-                    c.model, r.control, r.webFollowUp, plannerOn);
+            r.webPlan = webOrchestrator.plan(c.webMode, r.input, r.prompt, r.webPlanCall.transport, r.webPlanCall.provider, r.webPlanCall.key,
+                    r.webPlanCall.model, r.control, r.webFollowUp, plannerOn);
         } finally {
             if (r.webPlanning && env.clearWebStage(r.id)) env.emitStreamingView(r.id);
         }
@@ -813,7 +828,7 @@ final class TurnPipeline {
                 mainPrompt.summarizedItems > 0 ? currentCheckpoint(id) : null, r.config.customInstruction, toolEvidence);
         JSONArray attempts = new JSONArray();
         long verifyStarted = System.nanoTime();
-        SmartVerifierService.Result verification = smartVerifier.verify(r.verifyTransport, r.provider, r.key, r.config,
+        SmartVerifierService.Result verification = smartVerifier.verify(r.verifyCall.transport, r.verifyCall.provider, r.verifyCall.key, r.verifyCall.config,
                 mainPrompt, currentUserText, finalText, evidence);
         r.addHelperTime(verifyStarted);
         if (r.control.isCancelled()) {
@@ -837,7 +852,7 @@ final class TurnPipeline {
             setPostProcessingStage(r, "repairing");
             repairSpan = r.trace().begin(TurnTrace.REPAIR);
             long repairStarted = System.nanoTime();
-            String repairedText = smartVerifier.repair(r.repairTransport, r.provider, r.key, r.config,
+            String repairedText = smartVerifier.repair(r.repairCall.transport, r.repairCall.provider, r.repairCall.key, r.repairCall.config,
                     currentUserText, finalText, verification, evidence);
             r.addHelperTime(repairStarted);
             if (r.control.isCancelled()) {
@@ -852,7 +867,7 @@ final class TurnPipeline {
             } else if (repairedText != null && !repairedText.trim().isEmpty()) {
                 setPostProcessingStage(r, "verifying");
                 long recheckStarted = System.nanoTime();
-                SmartVerifierService.Result recheck = smartVerifier.verify(r.verifyTransport, r.provider, r.key, r.config,
+                SmartVerifierService.Result recheck = smartVerifier.verify(r.verifyCall.transport, r.verifyCall.provider, r.verifyCall.key, r.verifyCall.config,
                         mainPrompt, currentUserText, repairedText, evidence);
                 r.addHelperTime(recheckStarted);
                 if (r.control.isCancelled()) {

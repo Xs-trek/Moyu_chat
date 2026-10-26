@@ -200,7 +200,7 @@ function mainSessions() {
   ];
 }
 
-const baseUi = { pendingRequestIds: [], showReasoning: true, crossChatMemoryEnabled: true, notifyInBackground: true, customInstruction: '', helpersOff: ['router'], defaultContextMode: 'standard', defaultWebMode: 'auto', standardSubagentMode: 'off', mascot: { disguise: false, gameBest: 0, koiDay: '' } };
+const baseUi = { pendingRequestIds: [], showReasoning: true, crossChatMemoryEnabled: true, notifyInBackground: true, customInstruction: '', helpersOff: ['router'], helperModel: { modelProfileId: '', use: ['title', 'router', 'web_plan'] }, defaultContextMode: 'standard', defaultWebMode: 'auto', standardSubagentMode: 'off', mascot: { disguise: false, gameBest: 0, koiDay: '' } };
 
 /** Each fixture returns a fresh mutable world for the mock host. */
 export const fixtures = {

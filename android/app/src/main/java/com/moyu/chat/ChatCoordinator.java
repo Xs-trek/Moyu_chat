@@ -81,6 +81,8 @@ final class ChatCoordinator implements AutoCloseable {
     private String customInstruction;
     /** Helper modules the user switched off (HelperSwitches ids, settings), frozen into each accepted turn's config. */
     private java.util.Set<String> helpersOff;
+    /** Spec D15: the helper model and which helpers use it (settings), resolved into each accepted turn's config. */
+    private HelperModel.Choice helperChoice;
     private boolean wireCapture;
     private String defaultContextMode;
     private String defaultWebMode;
@@ -109,14 +111,8 @@ final class ChatCoordinator implements AutoCloseable {
         this.wireCapture = !"false".equals(db.setting("wireCapture", "true"));
         this.notifyInBackground = !"false".equals(db.setting("notifyInBackground", "true"));
         this.customInstruction = db.setting("customInstruction", "");
-        java.util.Set<String> storedOff = HelperSwitches.parse(db.setting(HelperSwitches.SETTING_KEY, "[]"));
-        int defaultsApplied;
-        try { defaultsApplied = Integer.parseInt(db.setting(HelperSwitches.DEFAULTS_KEY, "1")); } catch (NumberFormatException unreadable) { defaultsApplied = 1; }
-        this.helpersOff = HelperSwitches.withDefaults(storedOff, defaultsApplied);
-        if (defaultsApplied < HelperSwitches.DEFAULTS_REVISION) {
-            db.putSetting(HelperSwitches.SETTING_KEY, HelperSwitches.toJson(helpersOff).toString());
-            db.putSetting(HelperSwitches.DEFAULTS_KEY, String.valueOf(HelperSwitches.DEFAULTS_REVISION));
-        }
+        this.helpersOff = HelperSwitches.parse(db.setting(HelperSwitches.SETTING_KEY, HelperSwitches.DEFAULT_OFF));
+        this.helperChoice = HelperModel.Choice.parse(db.setting(HelperModel.SETTING_KEY, ""));
         this.defaultContextMode = ContextMode.normalize(db.setting("defaultContextMode", ContextMode.STANDARD));
         this.defaultWebMode = ChatTurnOptions.normalizeWebMode(db.setting("defaultWebMode", ChatTurnOptions.WEB_AUTO));
         this.standardSubagentMode = HarnessPolicyResolver.normalizeSubagentMode(db.setting("standardSubagentMode", HarnessPolicyResolver.SUBAGENT_OFF));
@@ -181,6 +177,23 @@ final class ChatCoordinator implements AutoCloseable {
                     String text = p.optString("text", "").trim();
                     if (text.length() > TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS) throw new IllegalArgumentException("自定义指令不能超过 " + TurnConfig.MAX_CUSTOM_INSTRUCTION_CHARS + " 字");
                     customInstruction = text; db.putSetting("customInstruction", text);
+                    break;
+                }
+                case "helper.model.set": {
+                    String profileId = p.optString("modelProfileId", "").trim();
+                    if (!profileId.isEmpty()) {
+                        ChatDatabase.ModelProfile chosen = db.getModelProfile(profileId);
+                        if (chosen == null || !chosen.enabled) throw new IllegalArgumentException("这个模型不存在或已停用");
+                    }
+                    helperChoice = helperChoice.withProfile(profileId);
+                    db.putSetting(HelperModel.SETTING_KEY, helperChoice.toJson().toString());
+                    break;
+                }
+                case "helper.model.use.set": {
+                    String helper = required(p, "helper");
+                    if (!HelperModel.ALL.contains(helper)) throw new IllegalArgumentException("未知的辅助模块");
+                    helperChoice = helperChoice.withUse(helper, p.optBoolean("enabled", true));
+                    db.putSetting(HelperModel.SETTING_KEY, helperChoice.toJson().toString());
                     break;
                 }
                 case "helper.switch.set": {
@@ -551,7 +564,52 @@ final class ChatCoordinator implements AutoCloseable {
         if (transports.forProtocol(provider.protocol) == null) throw new IllegalStateException("不支持这个账号的协议");
         ProviderEndpoint.normalize(provider.baseUrl, provider.protocol);
         ReasoningPolicy.validateEffortForProvider(provider, session.reasoningLevels, session.reasoningEffort);
-        return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile, customInstruction, helpersOff);
+        return new TurnConfig(provider, key, ProviderContinuationIdentity.fingerprint(db, provider, session), session, profile, customInstruction, helpersOff,
+                resolveHelper(session));
+    }
+
+    /**
+     * Spec D15: the helper model's frozen deployment for a turn of {@code session}, or why it cannot be used (the helpers
+     * then run on the session's model). Its key goes only to its own confirmed host; its account's budget is checked.
+     */
+    private HelperModel.Resolved resolveHelper(ChatDatabase.Session session) {
+        HelperModel.Choice choice = helperChoice;
+        if (choice == null || choice.profileId.isEmpty() || choice.profileId.equals(session.modelProfileId)) return HelperModel.NONE;
+        ChatDatabase.ModelProfile profile = db.getModelProfile(choice.profileId);
+        if (profile == null || !profile.enabled) return HelperModel.unavailable(choice.profileId, HelperModel.MISSING);
+        ChatDatabase.Provider account = db.getProvider(profile.providerId);
+        ChatDatabase.Route route = db.getRoute(profile.routeId);
+        if (account == null || route == null) return HelperModel.unavailable(choice.profileId, HelperModel.MISSING);
+        String key = secrets.get(profile.providerId);
+        if (key == null) return HelperModel.unavailable(choice.profileId, HelperModel.NO_KEY);
+        try { config.requireConfirmedHost(route); } catch (IllegalStateException unconfirmed) { return HelperModel.unavailable(choice.profileId, HelperModel.HOST_UNCONFIRMED); }
+        try { if (config.budgetReached(profile.providerId) != null) return HelperModel.unavailable(choice.profileId, HelperModel.OVER_BUDGET); }
+        catch (Exception unreadable) { return HelperModel.unavailable(choice.profileId, HelperModel.OVER_BUDGET); }
+        try {
+            ChatDatabase.Provider view = ChatDatabase.deploymentProvider(account, route, profile);
+            if (transports.forProtocol(view.protocol) == null) return HelperModel.unavailable(choice.profileId, HelperModel.UNSUPPORTED);
+            ProviderEndpoint.normalize(view.baseUrl, view.protocol);
+            ChatDatabase.Session helperSession = ChatDatabase.deploymentSession(profile, ReasoningPolicy.DEFAULT);
+            helperSession.contextMode = session.contextMode; helperSession.webMode = session.webMode; helperSession.subagentMode = session.subagentMode;
+            TurnConfig helper = new TurnConfig(view, key, ProviderContinuationIdentity.fingerprint(db, view, helperSession), helperSession, profile,
+                    customInstruction, helpersOff);
+            return new HelperModel.Resolved(choice.profileId, helper, choice.use, "");
+        } catch (RuntimeException unusable) {
+            return HelperModel.unavailable(choice.profileId, HelperModel.UNSUPPORTED);
+        }
+    }
+
+    /** Settings view of the helper model (spec D15). */
+    private JSONObject helperModelView() throws org.json.JSONException {
+        JSONArray use = new JSONArray();
+        for (String id : helperChoice.use) use.put(id);
+        JSONObject out = new JSONObject().put("modelProfileId", helperChoice.profileId).put("use", use);
+        if (!helperChoice.profileId.isEmpty()) {
+            ChatDatabase.ModelProfile profile = db.getModelProfile(helperChoice.profileId);
+            if (profile == null || !profile.enabled) out.put("missing", true);
+            else out.put("modelName", profile.displayName == null || profile.displayName.isEmpty() ? profile.modelId : profile.displayName);
+        }
+        return out;
     }
 
     private boolean sessionBusy(String id) {
@@ -709,18 +767,21 @@ final class ChatCoordinator implements AutoCloseable {
      * "title" stage on the answered turn and its tokens and cost are added to that turn's helper usage.
      */
     private void nameSession(String requestId, String sessionId, String expectedTitle, Exchange exchange) throws Exception {
-        TurnConfig c = freezeTurnConfig(sessionId);
+        TurnConfig session = freezeTurnConfig(sessionId);
+        boolean onHelper = session.helper.uses(HelperModel.TITLE);
+        TurnConfig c = onHelper ? session.helper.config : session; // spec D15: naming uses the helper model by default
+        TurnUsage.Billing billing = onHelper ? session.helper.billing() : null;
         ChatTransport transport = transports.forProtocol(c.provider.protocol);
         if (transport == null) throw new IllegalStateException("不支持这个账号的协议");
         CanonicalPrompt prompt = SessionTitles.prompt(exchange.firstQuestion, exchange.question, exchange.answer);
         namedSessions.add(sessionId);
         titleWorker.execute(() -> {
             TurnUsage usage = new TurnUsage();
-            try { usage.setPricing(ModelPricing.normalize(new JSONObject(c.pricing))); } catch (Exception unpriced) { usage.setPricing(null); }
+            try { usage.setPricing(ModelPricing.normalize(new JSONObject(session.pricing))); } catch (Exception unpriced) { usage.setPricing(null); }
             long startedAt = System.currentTimeMillis(), started = System.nanoTime();
             String title = null;
             try {
-                ModelPreflight.Output output = ModelPreflight.runLight(usage.track(transport, TurnUsage.Kind.AUXILIARY, SessionTitles.STAGE),
+                ModelPreflight.Output output = ModelPreflight.runLight(usage.track(transport, TurnUsage.Kind.AUXILIARY, SessionTitles.STAGE, billing),
                         c.provider, c.apiKey, c.model, prompt, SessionTitles.OUTPUT_CAP, SessionTitles.TIMEOUT_MS, null);
                 title = output == null ? null : SessionTitles.clean(output.text);
             } catch (Exception ignored) { }
@@ -737,7 +798,8 @@ final class ChatCoordinator implements AutoCloseable {
                     if (delta.has("auxiliaryOutputTokens")) spanUsage.put("outputTokens", delta.optLong("auxiliaryOutputTokens"));
                     JSONObject span = new JSONObject().put("stage", SessionTitles.STAGE).put("status", named != null ? TurnTrace.OK : TurnTrace.FAILED)
                             .put("startedAtMs", startedAt).put("durationMs", durationMs).put("usage", spanUsage)
-                            .put("detail", new JSONObject().put("applied", applied).put("manual", requestId != null));
+                            .put("detail", new JSONObject().put("applied", applied).put("manual", requestId != null)
+                                    .put("model", c.modelName).put("helperModel", onHelper));
                     if (named == null) span.put("reason", failure == null ? "no_title" : failure);
                     db.addHelperToTurn(exchange.turnId, span, delta);
                 } catch (Exception ignored) { }
@@ -1038,7 +1100,7 @@ final class ChatCoordinator implements AutoCloseable {
             }
             view.put("ui", new JSONObject().put("pendingRequestIds", new JSONArray()).put("showReasoning", showReasoning)
                     .put("crossChatMemoryEnabled", crossChatMemoryEnabled).put("wireCapture", wireCapture).put("notifyInBackground", notifyInBackground).put("customInstruction", customInstruction)
-                    .put("helpersOff", HelperSwitches.toJson(helpersOff))
+                    .put("helpersOff", HelperSwitches.toJson(helpersOff)).put("helperModel", helperModelView())
                     .put("defaultContextMode", defaultContextMode).put("defaultWebMode", defaultWebMode)
                     .put("standardSubagentMode", standardSubagentMode).put("mascot", mascot.toJson()));
             host.dispatch(new JSONObject().put("version", 1).put("type", "view.full").put("revision", ++revision).put("view", view));

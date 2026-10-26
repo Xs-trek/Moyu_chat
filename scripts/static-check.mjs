@@ -160,7 +160,7 @@ if (!wireTerminal.includes('@Override public void onWire(String direction, Strin
 if (!db.includes('rating INTEGER CHECK(rating IN (-1,1))') || !db.includes('public synchronized JSONObject answerGroup(') || !db.includes('public synchronized JSONArray turnStats(')) fail('ratings, answer groups and statistics must live on turn records');
 if (!coordinatorOnly.includes('case "turn.rerun"') || !db.includes('" FROM turns WHERE session_id=? AND user_seq=? ORDER BY started_at"')) fail('a re-answer is a version of the answer to the same question, grouped with the others (spec H5, D9)');
 if (!db.includes('db.execSQL("CREATE TABLE turn_payloads(turn_id TEXT NOT NULL REFERENCES turns(turn_id) ON DELETE CASCADE,"') || !db.includes('PAYLOAD_TURNS_KEPT') || !coordinatorOnly.includes('case "turn.payload.get"') || !coordinatorOnly.includes('db.putSetting("wireCapture"')) fail('wire payloads must be stored per call, kept for recent turns only, read on demand and switchable');
-if (!turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('usage.track(rawTransport, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)')) fail('helper model calls must be attributed to the stage that issued them');
+if (!turnPipeline.includes('helperCall(r, rawTransport, usage, HelperModel.ROUTER, TurnUsage.Kind.AUXILIARY, TurnTrace.ROUTE)') || !turnPipeline.includes('helperCall(r, rawTransport, usage, HelperModel.VERIFY, TurnUsage.Kind.AUXILIARY, TurnTrace.VERIFY)') || !turnPipeline.includes('usage.track(sessionTransport, kind, stage)')) fail('helper model calls must be attributed to the stage that issued them');
 if (!coordinator.includes('r.prompt = committedPrompt(r, r.session);') || !coordinator.includes('contexts.buildCommitted(session, c.contextTokens, c.inputTokens, c.maxOutputTokens, "", r.modules)')) fail('accepted turns must build provider context from the already-committed user row using frozen TurnConfig limits without duplicating the pending input');
 if (coordinator.includes('input + preparedWeb.promptSuffix, pendingMedia')) fail('ephemeral Web context must augment the committed user turn instead of duplicating it');
 if (!db.includes('CREATE TABLE model_profiles') || !db.includes('model_profile_id')) fail('deployment-scoped model profile/session binding missing');
@@ -522,7 +522,7 @@ if (failed) process.exit(1);
 // Automatic session titles never overwrite a rename (compare-and-set on the title they expect), run off the intent
 // worker as a light helper call recorded on the turn, and unused blank Chats are dropped rather than listed.
 if (!coordinatorOnly.includes('db.replaceTitleIf(sessionId, expectedTitle, named)') || !coordinatorOnly.includes('db.replaceTitleIf(sessionId, SessionTitles.DEFAULT_TITLE, placeholder)')
-    || !coordinatorOnly.includes('ModelPreflight.runLight(usage.track(transport, TurnUsage.Kind.AUXILIARY, SessionTitles.STAGE)') || !coordinatorOnly.includes('db.addHelperToTurn(exchange.turnId, span, delta)'))
+    || !coordinatorOnly.includes('ModelPreflight.runLight(usage.track(transport, TurnUsage.Kind.AUXILIARY, SessionTitles.STAGE, billing)') || !coordinatorOnly.includes('db.addHelperToTurn(exchange.turnId, span, delta)'))
   fail('automatic titles must compare-and-set the title and record the naming call as a helper stage of the named turn');
 if (!coordinatorOnly.includes('dropBlankSessions(null); // a new Chat replaces') || !coordinatorOnly.includes('if (draft.isEmpty() && !images) continue;')) fail('blank Chats must be replaced by a new Chat and listed only with an unsent draft');
 // Runtime consistency (6Astra audit A01-A05): helper stages write only what they produced, a Router that does not run
@@ -562,7 +562,15 @@ if (!knowledgeStore.includes('search("scope_id IN (?,?)", new String[]{chatScope
 if (!coordinator.includes('final CanonicalPrompt roundPrompt = activeRoundPrompt.get();') || !coordinator.includes('p.recallHistory(id, roundPrompt, query)'))
   fail('history_recall must judge visibility by the round that asked, not by the first round');
 if (!clientTools.includes('MAX_RECALLS_PER_TURN = 3') || !clientTools.includes('history_recall limit is')) fail('history_recall must be bounded per turn');
-if (!helperSwitches.includes('if (appliedRevision < 2) out.add(ROUTER);') || !coordinatorOnly.includes('HelperSwitches.withDefaults(storedOff, defaultsApplied)')) fail('the Router must start off once per install, keeping a later choice to turn it on');
+if (!helperSwitches.includes('static final String DEFAULT_OFF = "[\\"" + ROUTER + "\\"]";') || !coordinatorOnly.includes('HelperSwitches.parse(db.setting(HelperSwitches.SETTING_KEY, HelperSwitches.DEFAULT_OFF))')) fail('the Router must start off until the user changes the switches');
+// Spec D15: helper stages run on the helper model when the turn uses it for them, billed to its account; the choice is
+// frozen with the turn and falls back to the session's model with a reason.
+const helperModel = read('android/app/src/main/java/com/moyu/chat/HelperModel.java');
+if (!turnPipeline.includes('r.routeCall = helperCall(r, rawTransport, usage, HelperModel.ROUTER,') || !turnPipeline.includes('usage.track(raw, kind, stage, h.billing())')
+    || !coordinatorOnly.includes('resolveHelper(session));') || !coordinatorOnly.includes('config.requireConfirmedHost(route); } catch (IllegalStateException unconfirmed) { return HelperModel.unavailable(choice.profileId, HelperModel.HOST_UNCONFIRMED); }')
+    || !helperModel.includes('DEFAULT_USE = Collections.unmodifiableSet(new LinkedHashSet<>(java.util.Arrays.asList(TITLE, ROUTER, WEB_PLAN)))')
+    || !read('android/app/src/main/java/com/moyu/chat/TurnUsage.java').includes('target.put("foreignCost", others);') || !db.includes('usage.optJSONArray("foreignCost")'))
+  fail('helper calls may use the helper model: frozen per turn, key only to its confirmed host, billed to its account (spec D15)');
 // The app icon is a vector adaptive icon with a themed (monochrome) layer; minSdk 26 needs no bitmap fallback.
 const launcherIcon = read('android/app/src/main/res/mipmap-anydpi/ic_launcher.xml');
 if (!manifest.includes('android:icon="@mipmap/ic_launcher"') || !manifest.includes('android:roundIcon="@mipmap/ic_launcher_round"') || !launcherIcon.includes('<monochrome android:drawable="@drawable/ic_launcher_monochrome" />')) fail('the app must ship its adaptive launcher icon with a monochrome layer');
@@ -605,8 +613,8 @@ if (!verifier.includes('return "conversation_recall";') || !verifier.includes('r
   fail('verifier evidence must label tool results by tool and report a cut one as incomplete coverage (spec M7, N5)');
 // N7, T2a: the finalize fallback writes only the state; helper calls take model and effort from the turn config.
 if (!turnPipeline.includes('db.setSessionState(id, "failed")')) fail('the finalize fallback writes only the session state (spec R1, N7)');
-if (/session\.(model|reasoningEffort|maxOutputTokens)/.test(verifier) || !turnPipeline.includes('taskRouter.route(r.routeTransport, r.provider, r.key, c.model,')
-    || !turnPipeline.includes('compactions.summarize(r.checkpointTransport, r.provider, r.key, c.model,'))
+if (/session\.(model|reasoningEffort|maxOutputTokens)/.test(verifier) || !turnPipeline.includes('taskRouter.route(r.routeCall.transport, r.routeCall.provider, r.routeCall.key, r.routeCall.model,')
+    || !turnPipeline.includes('compactions.summarize(r.checkpointCall.transport, r.checkpointCall.provider, r.checkpointCall.key, r.checkpointCall.model,'))
   fail('helper calls take model and reasoning effort from the frozen turn config (spec T2)');
 // Phase 3, context mechanisms (spec C1-C3, T3, H3).
 const toolHistory = read('android/app/src/main/java/com/moyu/chat/ToolHistory.java');

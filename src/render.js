@@ -216,6 +216,7 @@ function settings(view) {
         settingRow('跨 Chat 用户记忆', '总开关只决定用户级 Memory/RAG 是否允许使用。关闭时所有模式都不跨 Chat；开启时标准/智能可检索相关本地历史，极简没有 Memory 调用。', switchControl('跨 Chat 用户记忆', memoryEnabled, 'toggle-memory', { enabled: memoryEnabled ? 'false' : 'true' }))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '辅助模块' }),
         h('p', { class: 'setting-desc', text: '对所有会话生效。关闭只会去掉当前模式本来会运行的辅助，不会给极简模式加功能；每轮都记下当时的开关，可在统计里按“辅助开关”对比。' }),
+        helperModelRows(view),
         vm.helperSwitches(view).map((helper) => settingRow(helper.label, helper.description,
           switchControl(helper.label, helper.on, 'toggle-helper', { helper: helper.id, enabled: helper.on ? 'false' : 'true' })))),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '新会话默认' }),
@@ -224,6 +225,17 @@ function settings(view) {
         settingRow('标准模式子 Agent', '自动：仅当 Model Profile 明确支持 client tool calling 时，允许模型委派最多 4 个隔离的同模型子任务。极简永远关闭，智能默认自动。', segmentedSetting('标准模式子 Agent', 'default-subagent', 'mode', [['off', '关闭'], ['auto', '自动']], view.ui?.standardSubagentMode === 'auto' ? 'auto' : 'off'), true)),
       h('section', { class: 'card' }, h('h2', { class: 'card-title', text: '数据边界' }),
         h('p', { class: 'setting-desc', text: 'Chat 使用自己的本地数据库；API Key 只保存在 Android 安全存储，不进入 WebView 或 SQLite。TaskProfile 与 Checkpoint 只是可重建的上下文控制状态。' }))));
+}
+
+/** Spec D15: the helper model and, once one is chosen, which helpers use it. */
+function helperModelRows(view) {
+  const helper = vm.helperModelView(view);
+  return [settingRow('辅助模型', helper.id
+    ? `${helper.missing ? '所选模型已删除或停用，辅助调用暂用会话的模型。' : ''}下面打开的辅助改用它；它不可用（Key、域名、预算）时退回会话的模型，调用链里写明原因。会话内容会发给它所在的服务商。`
+    : '命名、路由这类杂活可以交给更便宜的模型。没选时，所有辅助调用都用会话的模型。',
+  button(helper.id ? helper.name : '用会话的模型', 'open-helper-model', {}, 'btn small')),
+  helper.id ? helper.uses.map((use) => settingRow(`${use.label}用辅助模型`, null,
+    switchControl(`${use.label}用辅助模型`, use.on, 'toggle-helper-model-use', { helper: use.id, enabled: use.on ? 'false' : 'true' }))) : null];
 }
 
 // ---------- Stats ----------

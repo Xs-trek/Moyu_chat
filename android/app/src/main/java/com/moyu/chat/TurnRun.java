@@ -22,8 +22,10 @@ final class TurnRun {
     /** Route whose concurrency slot this turn holds (RouteGate); released exactly once when the turn ends. */
     final java.util.concurrent.atomic.AtomicReference<String> routeSlot = new java.util.concurrent.atomic.AtomicReference<>();
 
-    /** Stage-tagged transports: usage is attributed to the stage that issued the call. */
-    ChatTransport mainTransport, routeTransport, checkpointTransport, webPlanTransport, verifyTransport, repairTransport, subagentTransport;
+    /** Stage-tagged transport of the main call: usage is attributed to the stage that issued the call. */
+    ChatTransport mainTransport;
+    /** Helper stages: the helper model when it is used for that helper (spec D15), else the session's model; stage-tagged too. */
+    HelperModel.Call routeCall, checkpointCall, webPlanCall, verifyCall, repairCall, subagentCall;
 
     ContextMode.Policy contextPolicy;
     HarnessPolicyResolver.Policy adaptivePolicy;

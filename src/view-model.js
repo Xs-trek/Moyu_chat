@@ -379,6 +379,36 @@ export function helperSwitches(view) {
   return HELPER_SWITCHES.map(([id, label, description]) => ({ id, label, description, on: !off.has(id) }));
 }
 
+/** Spec D15: helpers that can run on the helper model, in the native order (HelperModel.ALL). */
+export const HELPER_MODEL_USES = [['title', '会话命名'], ['router', '路由'], ['web_plan', '联网规划'], ['compaction', '历史压缩'], ['verify', '校验与修正'], ['subagent', '子任务']];
+const HELPER_MODEL_USE_NAMES = Object.fromEntries(HELPER_MODEL_USES);
+const HELPER_MODEL_FALLBACKS = {
+  helper_model_missing: '它已删除或停用', helper_model_no_key: '它的账号没有 API Key', helper_model_host_unconfirmed: '它的域名还没确认',
+  helper_model_over_budget: '它的账号已到预算', helper_model_unsupported: '它的配置不可用',
+};
+
+/** Settings view of the helper model: the chosen model ('' = the session's model) and which helpers use it. */
+export function helperModelView(view) {
+  const h = view?.ui?.helperModel || {};
+  const id = String(h.modelProfileId || '');
+  const use = new Set(Array.isArray(h.use) ? h.use : []);
+  return {
+    id,
+    name: id ? (h.missing ? '已删除或停用' : String(h.modelName || '')) : '',
+    missing: Boolean(h.missing),
+    uses: HELPER_MODEL_USES.map(([key, label]) => ({ id: key, label, on: use.has(key) })),
+  };
+}
+
+/** A turn's helper model in its trace: which model ran which helpers, or why it was not used; '' when none was chosen. */
+export function helperModelNote(config) {
+  const h = config?.helperModel;
+  if (!h) return '';
+  if (h.fallback) return `辅助模型没用上（${HELPER_MODEL_FALLBACKS[h.fallback] || h.fallback}），辅助调用用了会话的模型`;
+  const names = (Array.isArray(h.use) ? h.use : []).map((id) => HELPER_MODEL_USE_NAMES[id] || id);
+  return `辅助模型：${h.modelName || h.model || '—'}${names.length ? `（${names.join('、')}）` : ''}`;
+}
+
 /** "已关闭：路由、校验与修正" for a turn config's helpersOff; '' when every helper was on. */
 export function helpersOffLabel(ids) {
   const names = (Array.isArray(ids) ? ids : []).map((id) => HELPER_NAMES[id] || id);
@@ -459,6 +489,8 @@ export function traceView(trace) {
   }
   const off = helpersOffLabel(trace.config?.helpersOff);
   if (off) notes.push(off);
+  const helper = helperModelNote(trace.config);
+  if (helper) notes.push(helper);
   return { rows, notes, status: trace.status, statusLabel: STATUS_LABELS[trace.status] || trace.status, terminalCode: trace.terminalCode || '', helperShare: total > 0 && helperTokens > 0 ? helperTokens / total : null };
 }
 

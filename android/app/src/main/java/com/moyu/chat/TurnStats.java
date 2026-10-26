@@ -131,6 +131,14 @@ final class TurnStats {
                 row.costedTurns++;
                 if (cost.optBoolean("partial", false)) row.partialCostTurns++;
             }
+            // A helper model's calls (spec D15) are part of what the turn cost, whichever account paid.
+            org.json.JSONArray foreign = usage.optJSONArray("foreignCost");
+            if (foreign != null) for (int i = 0; i < foreign.length(); i++) {
+                JSONObject entry = foreign.optJSONObject(i);
+                if (entry == null || !entry.has("amount")) continue;
+                String currency = entry.optString("currency", "USD");
+                row.cost.put(currency, row.cost.getOrDefault(currency, 0d) + entry.optDouble("amount", 0));
+            }
         }
         boolean compacted = false;
         for (JSONObject span : spans) {

@@ -434,8 +434,8 @@ final class ProviderRoundLoop {
                     turnControl.bindCurrentThread();
                     try {
                         ClientToolRuntime.BatchResult batch = ClientToolRuntime.executeBatch(batchCalls, batchNumber, r.clientToolCsv,
-                                env.clientTools(), p.webService, p.focusedSubagent, r.subagentTransport, r.provider, r.key, r.config.model,
-                                r.config.reasoningEffort, turnControl, query -> p.recallHistory(id, roundPrompt, query),
+                                env.clientTools(), p.webService, p.focusedSubagent, r.subagentCall.transport, r.subagentCall.provider, r.subagentCall.key, r.subagentCall.model,
+                                r.subagentCall.config.reasoningEffort, turnControl, query -> p.recallHistory(id, roundPrompt, query),
                                 recallsLeft, query -> p.searchConversations(id, query), searchesLeft);
                         env.authority().execute(() -> applyToolBatch(batch, batchNumber));
                     } finally { turnControl.clearCurrentThread(); }

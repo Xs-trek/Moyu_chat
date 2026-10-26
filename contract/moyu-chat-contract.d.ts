@@ -109,6 +109,10 @@ export type MoyuChatIntent =
   | UiIntent<'instruction.global.set', { text: string }>
   /** Global helper switch (settings). Off removes a helper the context mode would run; never adds one. Frozen into each turn's config.helpersOff. */
   | UiIntent<'helper.switch.set', { helper: HelperId; enabled: boolean }>
+  /** Spec D15: the helper model ('' = the session's model); must be an enabled Model Profile. */
+  | UiIntent<'helper.model.set', { modelProfileId: string }>
+  /** Spec D15: whether one helper uses the helper model (defaults: title, router, web_plan). */
+  | UiIntent<'helper.model.use.set', { helper: HelperModelUse; enabled: boolean }>
   /** 1 = good answer, -1 = bad answer, 0 clears. */
   | UiIntent<'turn.rate', { localSessionId: string; turnId: string; rating: 1 | -1 | 0 }>
   /** Re-ask the user message at localSeq in a new branch; result `data: { localSessionId, text }`, then send `text` there. */
@@ -500,7 +504,7 @@ export interface AppViewModel {
   sessions: SessionView[];
   activeLocalSessionId?: string;
   activeSession?: SessionDetailView;
-  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; customInstruction: string; helpersOff: HelperId[]; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; mascot: MascotState; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
+  ui: { pendingRequestIds: string[]; showReasoning: boolean; crossChatMemoryEnabled: boolean; wireCapture: boolean; notifyInBackground: boolean; customInstruction: string; helpersOff: HelperId[]; helperModel: HelperModelView; defaultContextMode: ContextMode; defaultWebMode: WebMode; standardSubagentMode: SubagentMode; mascot: MascotState; banner?: { level: 'info' | 'warning' | 'error'; text: string } };
 }
 
 declare global {
@@ -588,3 +592,9 @@ export interface NoticeEnvelope { version: 1; type: 'notice'; level: 'info' | 'w
 
 /** Boss-key disguise, the waiting mini-game's best score and the day the rare koi colours were rolled. */
 export interface MascotState { disguise: boolean; gameBest: number; koiDay: string }
+
+/** Spec D15: helpers that can run on the helper model. */
+export type HelperModelUse = 'title' | 'router' | 'web_plan' | 'compaction' | 'verify' | 'subagent';
+
+/** Spec D15: the helper model setting. modelName is absent when none is chosen; missing when the chosen profile is gone or disabled. */
+export interface HelperModelView { modelProfileId: string; modelName?: string; missing?: boolean; use: HelperModelUse[] }

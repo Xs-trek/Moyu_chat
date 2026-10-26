@@ -44,10 +44,9 @@ public class ContextModeTest {
         assertTrue("evidence still triggers", HarnessPolicyResolver.shouldVerify(session, null, "写诗", true, false, false));
     }
 
-    @Test public void theRouterStartsOffOnceAndAChoiceToTurnItOnIsKept() {
-        assertEquals(java.util.Collections.singleton(HelperSwitches.ROUTER),
-                HelperSwitches.withDefaults(java.util.Collections.<String>emptySet(), 1));
-        assertTrue(HelperSwitches.withDefaults(java.util.Collections.<String>emptySet(), HelperSwitches.DEFAULTS_REVISION).isEmpty());
+    @Test public void theRouterStartsOffUntilTheUserChanges() {
+        assertEquals(java.util.Collections.singleton(HelperSwitches.ROUTER), HelperSwitches.parse(HelperSwitches.DEFAULT_OFF));
+        assertTrue("a stored choice is kept", HelperSwitches.parse("[]").isEmpty());
         assertTrue(HelperSwitches.known(HelperSwitches.RECALL));
         assertFalse("spec D5: the Web mode controls the model's Web tools; a stored webTools switch is dropped",
                 HelperSwitches.known("webTools") || HelperSwitches.parse("[\"webTools\",\"verify\"]").contains("webTools"));
