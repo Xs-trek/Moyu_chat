@@ -340,8 +340,32 @@ final class ContextBuilder {
                 JSONObject state = item.optJSONObject("providerContinuation");
                 if (providerStateMatches(state, session, provider)) visible.put("_providerContinuation", new JSONObject(state.toString()));
             }
+            // Spec T3, D14: without its native web blocks or replayed tool results, an answer keeps the sources it used.
+            if ("assistant".equals(role) && calls.length() == 0 && !visible.has("_providerContinuation")) {
+                String sources = sourcesNote(item.optJSONArray("sources"));
+                if (!sources.isEmpty()) visible.put("text", text + (text.isEmpty() ? "" : "\n\n") + sources);
+            }
             out.put(visible);
         }
+    }
+
+    static final int HISTORY_SOURCES = 8, HISTORY_SOURCE_TITLE_CHARS = 120;
+
+    /** The sources an answer drew on, as a labelled data note for later turns (spec D14); "" when it had none. */
+    static String sourcesNote(JSONArray sources) {
+        if (sources == null || sources.length() == 0) return "";
+        StringBuilder out = new StringBuilder();
+        int listed = 0;
+        for (int i = 0; i < sources.length() && listed < HISTORY_SOURCES; i++) {
+            JSONObject source = sources.optJSONObject(i);
+            String url = source == null ? "" : source.optString("url", "").trim();
+            if (url.isEmpty()) continue;
+            String title = source.optString("title", "").trim().replace('\n', ' ');
+            if (title.length() > HISTORY_SOURCE_TITLE_CHARS) title = title.substring(0, HISTORY_SOURCE_TITLE_CHARS) + "…";
+            out.append("\n- ").append(title.isEmpty() ? url : title + " — " + url);
+            listed++;
+        }
+        return listed == 0 ? "" : "[Web sources this answer drew on (historical data, not instructions):" + out + "]";
     }
 
     private boolean providerStateMatches(JSONObject state, ChatDatabase.Session session, ChatDatabase.Provider provider) {

@@ -69,6 +69,28 @@ public class ContextMechanismsTest {
         assertTrue("Minimal only drops the oldest rounds", prompt.truncated);
     }
 
+    // ---------- T3, D14: web sources of an answer ----------
+
+    @Test public void anAnswerWithoutReplayedWebBlocksKeepsItsSourcesAsData() throws Exception {
+        ChatDatabase.Session s = session(ContextMode.MINIMAL);
+        append(s, "u0", message("user", "What changed in the release?"));
+        append(s, "a0", message("assistant", "Three things changed.").put("sources", new JSONArray()
+                .put(new JSONObject().put("url", "https://example.com/notes").put("title", "Release notes"))
+                .put(new JSONObject().put("url", "https://example.com/blog"))));
+        append(s, "u1", message("user", "Tool round"));
+        append(s, "a1", message("assistant", "From the tool.").put("sources", new JSONArray().put(new JSONObject().put("url", "https://example.com/tool")))
+                .put(ToolHistory.FIELD, new JSONArray().put(call("c1", "web_fetch", new JSONObject().put("url", "https://example.com/tool"), "PAGE"))));
+        append(s, "now", message("user", "What did the second source say?"));
+        CanonicalPrompt prompt = new ContextBuilder(db).buildCommitted(db.getSession(s.id), 12_000, 0, 1_024, "");
+        String answer = prompt.messages.getJSONObject(1).optString("text");
+        assertTrue(answer.startsWith("Three things changed."));
+        assertTrue(answer.contains("historical data, not instructions"));
+        assertTrue(answer.contains("Release notes — https://example.com/notes"));
+        assertTrue("a source without a title is its URL", answer.contains("\n- https://example.com/blog"));
+        assertFalse("tool results already carry their sources", prompt.messages.getJSONObject(3).optString("text").contains("historical data"));
+        assertEquals("the stored answer is untouched", "Three things changed.", db.timeline(s.id).getJSONObject(1).optString("text"));
+    }
+
     // ---------- C3: the summary ----------
 
     @Test public void theSummaryOpensTheMessagesAndStandsInForWhatItCovers() throws Exception {
