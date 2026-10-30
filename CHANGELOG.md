@@ -338,7 +338,7 @@
 
 ### 前端重做
 
-依据 `docs/frontend-audit.md`。数据库 schema 不变。
+数据库 schema 不变。
 
 - 视觉：大面积底色降亮降饱和（浅色灰绿纸面、深色青炭灰，不用纯白纯黑），回答放在略亮的面板上，以 1px 细线分层；代码、表格、引用各有底色。设置里可选灰绿 / 暖米 / 中性三种底色。
 - 深色跟随：原生按 Android 夜间模式解析“跟随系统”，并按同一 canvas 颜色设置窗口背景、状态栏和导航栏；新增 `values-night` 窗口主题，冷启动不再白屏；系统栏图标深浅在 Android 11+ 用 `WindowInsetsController`，8–10 回退到旧的 View 标志。修正视图 `resolvedTheme` 在“跟随系统”时恒为 light 的问题。
