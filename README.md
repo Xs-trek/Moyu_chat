@@ -4,6 +4,14 @@ Moyu Chat is an Android-local multi-model Chat client with optional bounded tool
 
 It is a personal model test bench for comparing what different models and protocols return and what native orchestration designs can achieve. The native complexity is intentional.
 
+<p>
+  <img src="docs/images/chat.webp" width="250" alt="A conversation: collapsed reasoning and a long Markdown answer">
+  <img src="docs/images/compare.webp" width="250" alt="Side-by-side answers: one question, two model × mode variants to pick from">
+  <img src="docs/images/trace.webp" width="250" alt="Per-turn details in dark theme: usage, verification and the stage-by-stage trace">
+</p>
+
+A conversation · side-by-side answers (model × mode) · per-turn usage and stage trace. Screenshots come from the browser preview with mock data, at phone width.
+
 Current version: **v0.0.6** (Android versionCode 6, SQLite layout version 1 in `moyu-chat.db`, applicationId `com.moyu.chat`). During 0.0.x the database is not migrated: a layout change recreates it. See `CHANGELOG.md`.
 
 ## Status
