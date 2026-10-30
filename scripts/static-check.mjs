@@ -124,6 +124,10 @@ for (const preset of presetData.presets || []) for (const route of preset.routes
 }
 for (const entry of presetData.models || []) if (!(presetData.presets || []).some((p) => p.id === entry.preset && (p.routes || []).some((r) => r.id === entry.route))) fail(`catalog entry ${entry.preset}/${entry.route}/${entry.id} points at no preset route`);
 if (!read('dev/serve.mjs').includes("provider-presets.json")) fail('the preview must use the shipped preset data, not a copy');
+// R8 renames and repackages classes in the release build: a class-relative resource name would no longer resolve.
+walk(join(projectRoot, 'android/app/src/main/java'), '.java', (file, text) => {
+  for (const m of text.matchAll(/getResourceAsStream\(\s*"([^"]*)"/g)) if (!m[1].startsWith('/')) fail(`${file}: getResourceAsStream("${m[1]}") must use an absolute resource path`);
+});
 if (!modelValidator.includes('requireHarnessPreset(') || !modelValidator.includes('requireClientToolCalling(') || !modelValidator.includes('requireNativeWebCapabilities(') || !modelValidator.includes('requireThinkingMode(') || !modelValidator.includes('requireContinuationMode(') || !modelValidator.includes('requireTextModality(')) fail('editable Model Profile fields require strict user-facing validation instead of silent normalization');
 if (!harnessResolver.includes('shouldVerify(') || !harnessResolver.includes('SUBAGENT_AUTO') || !harnessResolver.includes('HarnessProfile.LEAN')) fail('v0.0.4 adaptive Harness/verifier/subagent policy missing');
 if (!clientTools.includes('MAX_PARALLEL_SUBAGENTS = 4') || !clientTools.includes('MAX_TOOL_CALLS_PER_BATCH = 8') || !clientTools.includes('client tool was not exposed for this turn') || !clientTools.includes('DELEGATE_SUBTASK') || !clientTools.includes('&& !entry.has("error")')) fail('v0.0.4 bounded capability-gated client tool runtime missing');

@@ -95,7 +95,8 @@ final class ProviderPresets {
     }
 
     private static ProviderPresets load() {
-        try (InputStream in = ProviderPresets.class.getResourceAsStream("provider-presets.json")) {
+        // Absolute: R8 moves this class to another package in the release build, and a relative name would follow it.
+        try (InputStream in = ProviderPresets.class.getResourceAsStream("/com/moyu/chat/provider-presets.json")) {
             if (in == null) throw new IllegalStateException("provider-presets.json missing");
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buffer = new byte[8192];

@@ -6,6 +6,10 @@ It is a personal model test bench for comparing what different models and protoc
 
 Current version: **v0.0.6** (Android versionCode 6, SQLite layout version 1 in `moyu-chat.db`, applicationId `com.moyu.chat`). During 0.0.x the database is not migrated: a layout change recreates it. See `CHANGELOG.md`.
 
+## Status
+
+The main features work in daily use on the author's device. No APK or GitHub Release is published: device testing so far does not cover enough cases for even an internal test release, and the minified release build has not been tried on a device. To try it, build from source (below). This is a personal project; there is no support.
+
 ## Build and verify
 
 ```bash
